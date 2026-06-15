@@ -1,0 +1,17 @@
+{
+  "name": "Inventaire terrain — Production LEP",
+  "short_name": "Inventaire LEP",
+  "description": "Saisie d'inventaire physique — Hunter's Food",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f5f2",
+  "theme_color": "#13202b",
+  "lang": "fr",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
