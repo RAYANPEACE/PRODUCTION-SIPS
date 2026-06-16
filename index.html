@@ -224,6 +224,13 @@
   .frag-step .fst-h{font-size:13px;font-weight:700;margin-bottom:8px}
   .fst-btn{width:100%;padding:11px;border-radius:9px;border:none;font-weight:700;font-size:14px}
   .fst-btn.b-prim{background:var(--steel);color:#fff}.fst-btn.b-sec{background:#eef0ee;color:var(--ink)}.fst-btn.b-go{background:var(--green);color:#fff}
+  .etat-date{border:1px solid #d4e3f3;background:#f6f9fd;border-radius:10px;padding:10px;margin:0 0 12px}
+  .etat-date label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
+  .etat-date input{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px}
+  .etat-date .etat-date-h{font-size:12px;color:var(--mute);margin-top:6px;line-height:1.4}
+  .bil-pair{border-radius:9px;padding:9px 11px;font-size:12.5px;margin:0 0 10px;line-height:1.45}
+  .bil-pair.ok{background:#eef8f1;border:1px solid #c5e4d2;color:#155b38}
+  .bil-pair.warn{background:#fdf3e7;border:1px solid #e8cfa6;color:#8a5a14}
   .ref-wrap{max-width:680px;margin:0 auto}
   .ref-nav{display:flex;gap:6px;overflow-x:auto;margin:2px 0 12px;position:sticky;top:0;background:var(--paper);padding:8px 0;z-index:5}
   .ref-nav button{flex:none;background:#fff;border:1.5px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap}
@@ -706,6 +713,7 @@ let ST=freshCounts();              // remplacé au chargement IndexedDB
 let RO=false;                      // mode consultation (lecture seule)
 function mergeAndMigrate(){
   if(!ST.id)ST.id='inv_'+Date.now();
+  if(ST.sessionStart==null)ST.sessionStart=Date.now();  // début de la session de comptage en cours
   REFS.forEach(r=>{
     if(CFG[r.code]) Object.assign(r.p,CFG[r.code]);
     ST.c[r.code]??=blankEntry(r);
@@ -722,7 +730,7 @@ function mergeAndMigrate(){
   });
 }
 
-function freshCounts(){return {id:'inv_'+Date.now(),agent:'',date:new Date().toISOString().slice(0,10),c:{}};}
+function freshCounts(){return {id:'inv_'+Date.now(),agent:'',date:new Date().toISOString().slice(0,10),c:{},sessionStart:Date.now()};}
 function blankEntry(r){
   const e={counted:false};
   if(r.m==='carton'||r.m==='sac') Object.assign(e,{pleines:[''],entamees:[]});
@@ -814,7 +822,7 @@ function hasInput(r){
       ||(e.partielles||[]).some(v=>String(v).trim())||String(e.kg).trim()!=='';
   if(r.m==='cartvide') return [e.palStd,e.paqPlus,e.vrac].some(v=>String(v).trim()!=='')
       ||(e.autres||[]).some(a=>[a.pal,a.et,a.pe].some(v=>String(v).trim()!==''));
-  return Object.keys(e).some(k=>k!=='counted'&&k!=='emb'&&String(e[k]).trim()!=='');
+  return Object.keys(e).some(k=>k!=='counted'&&k!=='emb'&&k[0]!=='_'&&String(e[k]).trim()!=='');
 }
 
 /* ====== RENDU ====== */
@@ -1309,6 +1317,7 @@ function importInventory(text){
   const etat=(o&&o.etat)?o.etat:o;
   if(!etat||!etat.c){toast('Format non reconnu');return;}
   if(!etat.id)etat.id='imp_'+Date.now();
+  etat.sessionStart=Date.now();   // inventaire reçu = base ; rien n'est « frais » tant qu'on ne recompte pas
   // Valeurs calculées par le compteur = autoritaires (évite tout recalcul avec d'autres réglages)
   if(o&&Array.isArray(o.articles)){
     o.articles.forEach(a=>{const e=etat.c[a.code];if(!e)return;
@@ -1481,6 +1490,7 @@ function reprendreArchive(rec){
   archiveCurrent();
   RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
   ST=JSON.parse(JSON.stringify(rec.st));mergeAndMigrate();
+  ST.sessionStart=Date.now();   // base chargée : nouvelle session de recomptage (seuls les articles recomptés seront « frais »)
   // On garde les valeurs ET les réglages du compteur (cfg embarqué/reconstruit) : pas de recalcul
   // aveugle. Le recalcul d'un article ne se fait que si on en modifie une saisie (voir #app input).
   $('#agent').value=ST.agent;$('#date').value=ST.date;saveCounts();render();window.scrollTo(0,0);
@@ -1515,8 +1525,8 @@ function unfreezeCard(code){const en=ST.c[code];if(!en)return false;let ch=false
   if(RO||!e.target)return;
   const card=e.target.closest&&e.target.closest('.card[data-code]');
   if(!card)return;
-  // En mode fragmenté : horodate l'article édité (la fusion garde la saisie la plus récente)
-  if(FRAG&&ST.c[card.dataset.code])ST.c[card.dataset.code]._ts=Date.now();
+  // Horodate l'article réellement édité (sert à distinguer un recomptage frais d'une valeur héritée lors de la fusion)
+  if(ST.c[card.dataset.code])ST.c[card.dataset.code]._ts=Date.now();
   if(unfreezeCard(card.dataset.code))refresh();
 }));
 $('#collapseAll').onclick=()=>document.querySelectorAll('.sub.open,.card.open').forEach(c=>c.classList.remove('open'));
@@ -1543,7 +1553,7 @@ $('#newInv').onclick=async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
   if(!keep){REFS.forEach(r=>ST.c[r.code]=blankEntry(r));ST.agent='';}
-  ST.id='inv_'+Date.now();
+  ST.id='inv_'+Date.now();ST.sessionStart=Date.now();   // nouvelle session de comptage
   ST.date=new Date().toISOString().slice(0,10);$('#date').value=ST.date;$('#agent').value=ST.agent;
   saveCounts();render();toast(keep?'Inventaire archivé · base conservée':'Inventaire archivé · comptages vidés');
 };
@@ -1587,6 +1597,7 @@ function clone(o){return JSON.parse(JSON.stringify(o));}
 let META=lsGet('lep_meta',{});                 // {code:{des?,ub?,cat?}}
 let ADDED=lsGet('lep_added',[]);               // [{code,des,ub,cat}]
 let ETAT=lsGet('lep_etat',null); if(ETAT===null){ETAT={...SEED_ETAT};lsSet('lep_etat',ETAT);}
+let ETAT_DATE=lsGet('lep_etat_date','');   // date de l'état de stock (ERP) : le Bilan s'apparie à l'inventaire ≤ cette date
 let COND=lsGet('lep_cond',null); if(COND===null){COND=clone(SEED_COND);lsSet('lep_cond',COND);}
 let RECF=lsGet('lep_recf',null); if(RECF===null){RECF=clone(SEED_RECF);lsSet('lep_recf',RECF);}
 
@@ -1680,7 +1691,7 @@ async function switchTab(id){
   if(isC){render();}
   else if(id==='accueil'){renderAccueil();}
   else if(id==='ref'){renderRef();}
-  else if(id==='bilan'){renderBilan();}
+  else if(id==='bilan'){await renderBilan();}
   else if(id==='feuillet'){renderFeuillet();}
   else if(id==='capacite'){renderCapacite();}
   else if(id==='plan'){renderPlan();}
@@ -1769,10 +1780,12 @@ function delArticle(code){
 function renderEtat(body){
   const rows=REFS.map(r=>'<div class="ref-row etat" data-code="'+r.code+'"><div class="rc">'+r.code+'</div><div class="ed">'+esc(r.des)+'</div><input class="eval" inputmode="decimal" enterkeyhint="done" value="'+(ETAT[r.code]!=null?ETAT[r.code]:'')+'"></div>').join('');
   body.innerHTML='<p class="ref-hint">Stock théorique de référence — <b>seule base du Bilan et des écarts</b>. Une valeur par article ; vide = 0.</p>'
+    +'<div class="etat-date"><label for="etatDate">📅 Date de cet état de stock</label><input id="etatDate" type="date" value="'+esc(ETAT_DATE||'')+'"><div class="etat-date-h">Le Bilan le comparera automatiquement à l’inventaire du même jour ou juste avant (jamais postérieur).</div></div>'
     +'<button class="ref-add" id="etatXlsx">Importer le fichier Excel (.xlsx)</button>'
     +'<div class="ref-paste"><textarea id="etatPaste" placeholder="Ou coller depuis Excel : une ligne par article&#10;code[tab ou ;]valeur"></textarea><button id="etatPasteBtn">Importer le collage</button></div>'
     +'<div class="ref-list">'+rows+'</div>'
     +'<button class="ref-sec" id="etatReset">Recharger l\u2019exemple de test</button>';
+  const ed=$('#etatDate');if(ed)ed.addEventListener('input',e=>{ETAT_DATE=e.target.value||'';lsSet('lep_etat_date',ETAT_DATE);});
   body.querySelectorAll('.eval').forEach(inp=>{
     const code=inp.closest('.ref-row').dataset.code;
     inp.addEventListener('input',e=>{const v=e.target.value.trim();if(v==='')delete ETAT[code];else ETAT[code]=pnum(v);lsSet('lep_etat',ETAT);});
@@ -2520,15 +2533,41 @@ function perimHTML(){
   });
   h+='</div>';return h;
 }
-function renderBilan(){
-  const app=$('#app');const r=buildBilan();
+function bilPairBanner(swapped,pair,posterior){
+  if(!ETAT_DATE)
+    return '<div class="bil-pair warn">ℹ Renseigne la <b>date de l’état de stock</b> (Référentiels → État de stock) pour l’apparier tout seul au bon inventaire. Pour l’instant : inventaire actuellement chargé.</div>';
+  if(swapped)
+    return '<div class="bil-pair ok">📅 État de stock du <b>'+esc(ETAT_DATE)+'</b> comparé à l’inventaire du <b>'+esc(pair.date||'?')+'</b>'+(pair.agent?(' · '+esc(pair.agent)):'')+' — apparié automatiquement (≤ date de l’état).'+(posterior?(' '+posterior+' inventaire(s) postérieur(s) ignoré(s).'):'')+'</div>';
+  return '<div class="bil-pair warn">⚠ Aucun inventaire daté du <b>'+esc(ETAT_DATE)+'</b> ou avant à comparer'+(posterior?(' ('+posterior+' inventaire(s) postérieur(s) existent mais ne doivent pas servir de référence)'):'')+'. Affichage sur l’inventaire chargé.</div>';
+}
+/* Trouve l'inventaire à apparier à l'état de stock : date ≤ ETAT_DATE, le plus proche (jamais postérieur) */
+async function findBilanPair(){
+  if(!ETAT_DATE)return {pair:null,posterior:0};
+  let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
+  const invs=recs.filter(r=>r&&r.st&&r.st.c&&r.id!=='current'&&!r.demo
+    &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
+    &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0);
+  const le=invs.filter(r=>String(r.date||'')<=ETAT_DATE).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
+  const posterior=invs.filter(r=>String(r.date||'')>ETAT_DATE).length;
+  return {pair:le[0]||null,posterior:posterior};
+}
+async function renderBilan(){
+  const app=$('#app');
+  // Appariement automatique : l'état de stock (daté) se compare à l'inventaire du même jour ou juste avant
+  const prevST=ST,prevRO=RO;let swapped=false,pair=null,posterior=0;
+  if(ETAT_DATE){const f=await findBilanPair();pair=f.pair;posterior=f.posterior;
+    if(pair){ST=JSON.parse(JSON.stringify(pair.st));mergeAndMigrate();RO=true;swapped=true;}}
+  const r=buildBilan();
+  r.srcDate=swapped?(pair.date||''):(ST.date||'');
+  r.srcAgent=swapped?(pair.agent||''):(ST.agent||'');
   const counted=r.rows.filter(x=>x.counted).length;
   const recoOk=r.reco==='VALIDER';
   let h='<div class="bilan-wrap">';
   h+='<div class="bil-ctrl"><label for="bilPeriode">Période entre 2 inventaires</label>'
     +'<select id="bilPeriode">'+['semaine','mois','2mois'].map(p=>'<option value="'+p+'" '+(p===PERIODE?'selected':'')+'>'+(p==='2mois'?'2 mois':p)+'</option>').join('')+'</select>'
     +'<button id="bilPrint" class="bil-print">Imprimer</button><button id="bilPDF" class="bil-print">📄 PDF</button></div>';
-  h+='<div class="bil-src">Comptage : <b>'+(ST.date||'—')+'</b>'+(ST.agent?(' · '+esc(ST.agent)):'')+' — <b>'+counted+'</b> / '+r.rows.length+' article(s) compté(s)</div>';
+  h+=bilPairBanner(swapped,pair,posterior);
+  h+='<div class="bil-src">Référence physique : <b>'+(r.srcDate||'—')+'</b>'+(r.srcAgent?(' · '+esc(r.srcAgent)):'')+' — <b>'+counted+'</b> / '+r.rows.length+' article(s) compté(s)</div>';
   if(!counted)h+='<div class="bil-note">Aucun article compté dans l\u2019inventaire chargé : tout est reporté au théorique. Compte des articles (onglet Comptage) ou ouvre un inventaire via l\u2019Historique.</div>';
   h+='<div class="bil-reco '+(recoOk?'ok':'ko')+'">'+r.reco+'<span class="meta">'+r.alertes.length+' à vérifier / '+r.rows.length+' articles</span></div>';
   h+=perimHTML();
@@ -2546,6 +2585,7 @@ function renderBilan(){
   h+='<div class="bil-foot">Total des écarts (articles comptés, unités mêlées, indicatif) : <b>'+fsign(Math.round(r.total*1000)/1000)+'</b>.<br>Convention : écart = théorique − physique ; ▲ surplus (physique &gt; théo), ▼ manque (physique &lt; théo).</div>';
   h+='</div>';
   app.innerHTML=h;
+  if(swapped){ST=prevST;RO=prevRO;}   // restaure le brouillon : l'appariement n'altère pas l'état courant
   $('#bilPeriode').onchange=e=>{PERIODE=e.target.value;lsSet('lep_periode',PERIODE);renderBilan();};
   $('#bilPrint').onclick=()=>{const f=$('#bilFull');if(f)f.style.display='block';window.print();};
   $('#bilPDF').onclick=()=>bilanPDF(r);
@@ -2567,7 +2607,7 @@ async function bilanPDF(r){
     const INK=PDFLib.rgb(0.07,0.12,0.17),GREY=PDFLib.rgb(0.4,0.45,0.5),RED=PDFLib.rgb(0.69,0.27,0.35);
     const T=(s,x,yy,sz,bold,col)=>page.drawText(String(s==null?'':s),{x:x,y:yy,size:sz,font:bold?FB:F,color:col||INK});
     T('Bilan d\u2019inventaire',M,y,18,true);y-=22;
-    T('Comptage : '+(ST.date||'—')+(ST.agent?(' · '+ST.agent):''),M,y,10,false,GREY);y-=14;
+    T('Etat de stock : '+(ETAT_DATE||'—')+'   Inventaire : '+(r.srcDate||'—')+((r.srcAgent)?(' · '+r.srcAgent):''),M,y,10,false,GREY);y-=14;
     T(r.reco+' — '+r.alertes.length+' à vérifier / '+r.rows.length+' articles',M,y,10,false,GREY);y-=20;
     const cols=[M,M+62,M+300,M+360,M+425,M+500];
     const head=()=>{T('Code',cols[0],y,9,true);T('Article',cols[1],y,9,true);T('Théo',cols[2],y,9,true);T('Phys',cols[3],y,9,true);T('Écart',cols[4],y,9,true);T('%',cols[5],y,9,true);y-=4;page.drawLine({start:{x:M,y:y},end:{x:W-M,y:y},thickness:.7,color:PDFLib.rgb(0.8,0.82,0.8)});y-=12;};
@@ -2586,7 +2626,7 @@ async function bilanPDF(r){
     y-=6;if(y<M+20){page=doc.addPage([W,H]);y=H-M;}
     T('Total des écarts (indicatif, unités mêlées) : '+fsign(Math.round(r.total*1000)/1000),M,y,9,true);
     const bytes=await doc.save();
-    shareBlob('bilan_'+(ST.date||todayStr())+'.pdf',bytes,'application/pdf','Bilan d\u2019inventaire');
+    shareBlob('bilan_'+(r.srcDate||todayStr())+'.pdf',bytes,'application/pdf','Bilan d\u2019inventaire');
     toast('PDF généré');
   }catch(e){toast('Échec de la génération PDF');}
 }
@@ -3090,26 +3130,39 @@ function fragAddAgentLive(){
   idbPut(FRAG).catch(()=>{});fragEnterAgent(name);
 }
 
-/* Fusion : pour chaque article, la saisie la plus récente (par _ts, sinon doneAt/savedAt) gagne */
+/* Fusion roulante : pour chaque article,
+   1) si quelqu'un l'a RECOMPTÉ cette session (fresh), on garde le recomptage le plus récent ;
+   2) sinon on REPORTE la valeur héritée du dernier inventaire (base commune aux parts) ;
+   3) sinon rien (= théorique).
+   `fr.fresh` est l'ensemble des codes recomptés ; absent ⇒ tout compté est considéré frais (rétro-compat). */
 function mergeFragments(sess){
   const merged=freshCounts();merged.id='inv_'+Date.now();merged.date=sess.date;
   merged.agent='Fusion · '+(sess.agents||[]).join(', ');merged.cfg={};
   REFS.forEach(r=>merged.c[r.code]=blankEntry(r));
-  const tsBy={},srcBy={};
-  (sess.agents||[]).forEach(name=>{
-    const fr=sess.fragments[name];if(!fr||!fr.st||!fr.st.c)return;
-    const base=fr.doneAt||fr.savedAt||0;
-    Object.keys(fr.st.c).forEach(code=>{
+  const srcBy={};
+  REFS.forEach(r=>{
+    const code=r.code;
+    let fEntry=null,fTs=-1,fName=null,fCfg=null;        // meilleur recomptage frais
+    let bEntry=null,bSess=-1,bName=null,bCfg=null;       // meilleure valeur de base (report)
+    (sess.agents||[]).forEach(name=>{
+      const fr=sess.fragments[name];if(!fr||!fr.st||!fr.st.c)return;
       const e=fr.st.c[code];if(!e||!e.counted)return;
-      const ts=e._ts||base;
-      if(tsBy[code]==null||ts>=tsBy[code]){
-        tsBy[code]=ts;srcBy[code]=name;merged.c[code]=clone(e);
-        if(fr.st.cfg&&fr.st.cfg[code])merged.cfg[code]=clone(fr.st.cfg[code]);
-      }
+      const isFresh=fr.fresh?fr.fresh.has(code):true;
+      const cfg=(fr.st.cfg&&fr.st.cfg[code])?fr.st.cfg[code]:null;
+      if(isFresh){const ts=(e._ts!=null?e._ts:(fr.doneAt||fr.savedAt||0));
+        if(ts>=fTs){fTs=ts;fEntry=e;fName=name;fCfg=cfg;}}
+      else{const ss=fr.sessionStart||0;                  // report : on garde la base la plus récente
+        if(ss>=bSess){bSess=ss;bEntry=e;bName=name;bCfg=cfg;}}
     });
+    const chosen=fEntry||bEntry;
+    if(chosen){
+      merged.c[code]=clone(chosen);
+      srcBy[code]=fEntry?fName:(bName+' · report');
+      const cfg=fEntry?fCfg:bCfg;if(cfg)merged.cfg[code]=clone(cfg);
+    }
   });
   REFS.forEach(r=>{if(!merged.cfg[r.code])merged.cfg[r.code]={...r.p};});
-  return {st:merged,sources:srcBy,timestamps:tsBy};
+  return {st:merged,sources:srcBy};
 }
 /* Coeur partagé : fusionne une session, calcule bilan/détail, archive l'inventaire final.
    Utilisé à la fois par le mode « même téléphone » et le mode « par fichier ». */
@@ -3220,16 +3273,25 @@ function fragResume(sess,wantMerge){
    (pour chaque article, la part la plus récente gagne — gère aussi le
    comptage étalé sur plusieurs jours). Réutilise le format d'export existant. */
 
+/* Codes des articles réellement (re)comptés pendant la session de comptage en cours */
+function freshCodes(){
+  const ss=ST.sessionStart||0;
+  return REFS.filter(r=>{const e=ST.c[r.code];return e&&e.counted&&e._ts!=null&&e._ts>=ss;}).map(r=>r.code);
+}
 /* Exporte le comptage courant comme « part » partageable */
 function buildFragmentFile(){
   const o=JSON.parse(buildJSON());           // {meta,articles,etat,cfg?}
-  o.type='lep-fragment';o.v=1;o.ts=Date.now();
+  o.type='lep-fragment';o.v=2;o.ts=Date.now();
+  o.sessionStart=ST.sessionStart||0;
+  o.freshCodes=freshCodes();                 // articles recomptés cette session (les seuls « frais » à la fusion)
   return JSON.stringify(o,null,2);
 }
 async function shareFragment(){
   ST.agent=$('#agent').value;ST.date=$('#date').value;
   const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;
   if(!counted){toast('Compte au moins un article avant d’exporter ta part');return;}
+  const fresh=freshCodes().length;
+  if(!fresh&&!confirm('Tu n’as recompté aucun article cette session (tout vient d’un inventaire chargé).\n\nÀ la fusion, ta part n’apportera aucun nouveau comptage. Exporter quand même ?'))return;
   if(!String(ST.agent||'').trim()&&!confirm('Aucun nom de compteur saisi. Continuer quand même ?\n(Le nom aide à reconnaître ta part lors de la fusion.)'))return;
   const name='ma_part_'+(ST.date||'sansdate')+(slug(ST.agent)?'_'+slug(ST.agent):'')+'.txt';
   const content=buildFragmentFile();
@@ -3242,18 +3304,29 @@ async function shareFragment(){
   download(name,content,'text/plain');
 }
 
-/* Transforme un fichier reçu (part OU inventaire complet) en fragment fusionnable */
+/* Transforme un fichier reçu (part OU inventaire complet) en fragment fusionnable.
+   Détermine l'ensemble « fresh » = articles réellement recomptés pendant la session
+   du compteur (le reste = valeurs héritées de l'inventaire de base, non « frais »). */
 function fragIngestFile(o){
   const etat=(o&&o.etat)?o.etat:o;
   if(!etat||!etat.c)return null;
   const agent=(etat.agent||(o.meta&&o.meta.agent)||'Compteur').trim()||'Compteur';
   const ts=Date.parse((o.meta&&o.meta.exporte)||'')||o.ts||etat.savedAt||Date.now();
+  const sessionStart=(o.sessionStart!=null?o.sessionStart:(etat.sessionStart!=null?etat.sessionStart:0));
   // Valeurs calculées par le compteur = autoritaires (évite tout recalcul avec d'autres réglages)
   if(o&&Array.isArray(o.articles))o.articles.forEach(a=>{const e=etat.c[a.code];if(!e)return;if(a.compte&&a.physique!=null)e._phys=a.physique;});
-  // Horodatage par article (si absent) = date d'export de la part
-  Object.keys(etat.c).forEach(code=>{const e=etat.c[code];if(e&&e.counted&&e._ts==null)e._ts=ts;});
+  // Ensemble des articles recomptés pendant la session du compteur
+  let fresh=null;
+  if(Array.isArray(o.freshCodes))fresh=new Set(o.freshCodes.filter(c=>etat.c[c]&&etat.c[c].counted));
+  else{
+    const codesWithTs=Object.keys(etat.c).filter(c=>etat.c[c]&&etat.c[c]._ts!=null);
+    const hasSession=(o.sessionStart!=null)||(etat.sessionStart!=null);
+    if(!hasSession&&!codesWithTs.length)fresh=null;   // vieux fichier sans horodatage : tout compté = frais (rétro-compat)
+    else fresh=new Set(Object.keys(etat.c).filter(c=>{const e=etat.c[c];return e&&e.counted&&e._ts!=null&&e._ts>=sessionStart;}));
+  }
   const cnt=Object.values(etat.c).filter(e=>e&&e.counted).length;
-  return {agent,date:etat.date||'',ts,count:cnt,st:{c:etat.c,cfg:(o.cfg||etat.cfg||{})}};
+  const freshCnt=fresh?fresh.size:cnt;
+  return {agent,date:etat.date||'',ts,sessionStart,fresh,count:cnt,freshCount:freshCnt,st:{c:etat.c,cfg:(o.cfg||etat.cfg||{})}};
 }
 
 let FRAGFILES=[];   // parts chargées dans le dialogue, en attente de fusion
@@ -3274,7 +3347,7 @@ function fragRenderFileList(){
     const el=document.createElement('div');el.className='frag-sess';
     const d=new Date(fr.ts);
     el.innerHTML=`<div class="fs-info"><b>${esc(fr.agent)}</b>
-      <span>${fr.count} article(s) · ${fr.date||'—'} · reçu ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div>`;
+      <span><b style="color:var(--green)">${fr.freshCount} recompté(s)</b> · ${fr.count} compté(s) au total · ${fr.date||'—'} · reçu ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div>`;
     const acts=document.createElement('div');acts.className='fs-acts';
     const del=document.createElement('button');del.className='del';del.textContent='Retirer';del.onclick=()=>{FRAGFILES.splice(i,1);fragRenderFileList();};
     acts.append(del);el.append(acts);wrap.append(el);
@@ -3287,7 +3360,7 @@ async function fragMergeFiles(){
   const date=dates[dates.length-1]||new Date().toISOString().slice(0,10);
   const agents=[],fragments={};
   FRAGFILES.forEach(fr=>{agents.push(fr.agent);
-    fragments[fr.agent]={agent:fr.agent,status:'done',startedAt:fr.ts,savedAt:fr.ts,doneAt:fr.ts,st:fr.st};});
+    fragments[fr.agent]={agent:fr.agent,status:'done',startedAt:fr.ts,savedAt:fr.ts,doneAt:fr.ts,sessionStart:fr.sessionStart,fresh:fr.fresh,st:fr.st};});
   const sess={id:'fragsess_files_'+Date.now(),date,title:$('#fragMergeTitle')?$('#fragMergeTitle').value.trim():'',source:'files',agents,fragments};
   const {rec,filled}=await fragArchiveMerged(sess);
   FRAGFILES=[];
