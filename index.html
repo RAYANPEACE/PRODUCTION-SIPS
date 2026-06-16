@@ -217,6 +217,13 @@
   .frag-sess .fs-acts .fs-merge{border-color:#2c7a55;color:var(--green)}
   .frag-sess .fs-acts .del{border-color:#e3c7cd;color:var(--red)}
   .frag-tag{display:inline-block;background:#e7f3ec;color:var(--green);border:1px solid #c5e4d2;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700;margin-left:6px;vertical-align:middle}
+  .frag-modes{display:flex;gap:7px;margin-bottom:12px}
+  .frag-modes button{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:9px;padding:10px 8px;font-size:13px;font-weight:700;color:var(--mute)}
+  .frag-modes button.active{border-color:var(--green);background:#eef8f1;color:var(--green)}
+  .frag-step{border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:10px;background:#fcfdfc}
+  .frag-step .fst-h{font-size:13px;font-weight:700;margin-bottom:8px}
+  .fst-btn{width:100%;padding:11px;border-radius:9px;border:none;font-weight:700;font-size:14px}
+  .fst-btn.b-prim{background:var(--steel);color:#fff}.fst-btn.b-sec{background:#eef0ee;color:var(--ink)}.fst-btn.b-go{background:var(--green);color:#fff}
   .ref-wrap{max-width:680px;margin:0 auto}
   .ref-nav{display:flex;gap:6px;overflow-x:auto;margin:2px 0 12px;position:sticky;top:0;background:var(--paper);padding:8px 0;z-index:5}
   .ref-nav button{flex:none;background:#fff;border:1.5px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap}
@@ -612,18 +619,46 @@
 <dialog id="fragDlg">
   <div class="dlg-h"><b>Comptage fragmenté</b><button onclick="fragDlg.close()">×</button></div>
   <div class="dlg-b">
-    <div id="fragOpenWrap"></div>
-    <div class="frag-form">
-      <p style="margin:0 0 6px;font-size:13px;color:#6a7280;line-height:1.5">Plusieurs personnes comptent des zones/articles différents. Chacune saisit sa part, marque « j'ai fini », puis l'app fusionne tout (pour chaque article, la saisie la plus récente est retenue).</p>
-      <label>Date de l'inventaire</label>
-      <input id="fragDate" type="date">
-      <label>Zone / libellé (facultatif)</label>
-      <input id="fragTitle" placeholder="ex. Magasin + Quai + Production" autocomplete="off">
-      <label>Compteurs (un par ligne)</label>
-      <div class="frag-agents" id="fragAgents"></div>
-      <button id="fragAddAgent" style="margin-top:8px;width:100%;border:1.5px dashed var(--line);background:#fff;border-radius:8px;padding:9px;font-weight:600;font-size:13px;color:var(--steel-d)">+ Ajouter un compteur</button>
-      <div class="dlg-actions" style="margin-top:14px">
-        <button class="b-go" id="fragStart">Démarrer la session</button>
+    <div class="frag-modes" id="fragModes">
+      <button class="active" data-fmode="files">📱 Chacun son téléphone</button>
+      <button data-fmode="device">📲 Un seul téléphone</button>
+    </div>
+
+    <!-- MODE 1 : chacun son téléphone, échange par fichier -->
+    <div id="fragModeFiles">
+      <p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Chaque compteur compte sa partie sur <b>son</b> téléphone, puis exporte sa part et te l'envoie (WhatsApp, mail…). Toi, tu ajoutes toutes les parts reçues et l'app fusionne. La part la plus récente gagne pour chaque article (gère aussi le comptage sur plusieurs jours).</p>
+      <div class="frag-step">
+        <div class="fst-h">① Toi : envoyer ta propre part</div>
+        <button id="fragExportMine" class="fst-btn b-prim">📤 Exporter mon comptage (à envoyer)</button>
+      </div>
+      <div class="frag-step">
+        <div class="fst-h">② Ajouter les parts reçues des autres</div>
+        <button id="fragImportFiles" class="fst-btn b-sec">📥 Ajouter un fichier reçu</button>
+        <input id="fragFileIn" type="file" accept=".txt,.json,text/plain" multiple style="display:none">
+        <div id="fragFileList" style="margin-top:8px"></div>
+      </div>
+      <div class="frag-step">
+        <div class="fst-h">③ Fusionner</div>
+        <input id="fragMergeTitle" placeholder="Libellé (facultatif) — ex. Inventaire juin" autocomplete="off" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;margin-bottom:8px">
+        <button id="fragMergeFiles" class="fst-btn b-go" disabled style="opacity:.5">⚙ Fusionner & archiver</button>
+      </div>
+    </div>
+
+    <!-- MODE 2 : un seul téléphone partagé -->
+    <div id="fragModeDevice" style="display:none">
+      <div id="fragOpenWrap"></div>
+      <div class="frag-form">
+        <p style="margin:0 0 6px;font-size:13px;color:#6a7280;line-height:1.5">Le même téléphone passe de main en main. Chacun choisit sa pastille, compte sa part, marque « j'ai fini », puis fusion automatique.</p>
+        <label>Date de l'inventaire</label>
+        <input id="fragDate" type="date">
+        <label>Zone / libellé (facultatif)</label>
+        <input id="fragTitle" placeholder="ex. Magasin + Quai + Production" autocomplete="off">
+        <label>Compteurs (un par ligne)</label>
+        <div class="frag-agents" id="fragAgents"></div>
+        <button id="fragAddAgent" style="margin-top:8px;width:100%;border:1.5px dashed var(--line);background:#fff;border-radius:8px;padding:9px;font-weight:600;font-size:13px;color:var(--steel-d)">+ Ajouter un compteur</button>
+        <div class="dlg-actions" style="margin-top:14px">
+          <button class="b-go" id="fragStart">Démarrer la session</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1526,6 +1561,11 @@ $('#roClose').onclick=closeArchive;
 $('#fragBtn').onclick=openFragDlg;
 $('#fragAddAgent').onclick=()=>$('#fragAgents').appendChild(fragAgentRow(''));
 $('#fragStart').onclick=fragStartFromDlg;
+$('#fragModes').querySelectorAll('button').forEach(b=>b.onclick=()=>fragSetMode(b.dataset.fmode));
+$('#fragExportMine').onclick=shareFragment;
+$('#fragImportFiles').onclick=()=>$('#fragFileIn').click();
+$('#fragFileIn').onchange=e=>{const fs=[...e.target.files];fs.forEach(f=>{const rd=new FileReader();rd.onload=()=>fragAddFile(rd.result);rd.readAsText(f);});e.target.value='';};
+$('#fragMergeFiles').onclick=fragMergeFiles;
 $('#newInv').onclick=async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
@@ -3045,11 +3085,9 @@ function mergeFragments(sess){
   REFS.forEach(r=>{if(!merged.cfg[r.code])merged.cfg[r.code]={...r.p};});
   return {st:merged,sources:srcBy,timestamps:tsBy};
 }
-/* Fusionne, archive l'inventaire final, marque la session comme fusionnée, ouvre le résultat */
-async function fragFinalize(){
-  if(!FRAG)return;const sess=FRAG;fragPersist();
-  if(!fragDoneCount(sess)&&!confirm('Aucun compteur n’a marqué « j’ai fini ». Fusionner quand même les saisies actuelles ?'))return;
-  clearTimeout(_saveTimer);
+/* Coeur partagé : fusionne une session, calcule bilan/détail, archive l'inventaire final.
+   Utilisé à la fois par le mode « même téléphone » et le mode « par fichier ». */
+async function fragArchiveMerged(sess){
   const {st,sources}=mergeFragments(sess);
   // Calcul du bilan/détail en basculant temporairement ST (réutilise buildBilan/snapshot)
   const prevST=ST,prevRO=RO;ST=st;RO=true;mergeAndMigrate();
@@ -3058,13 +3096,21 @@ async function fragFinalize(){
     detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
   const filled=REFS.filter(r=>st.c[r.code].counted).length;
   const snap=snapshot();
-  const frag={sessionId:sess.id,date:sess.date,title:sess.title||'',agents:sess.agents.slice(),
+  ST=prevST;RO=prevRO;
+  const frag={sessionId:sess.id,date:sess.date,title:sess.title||'',source:sess.source||'device',agents:sess.agents.slice(),
     fragments:sess.agents.map(n=>{const fr=sess.fragments[n]||{};return {agent:n,status:fr.status||'pending',doneAt:fr.doneAt||null,savedAt:fr.savedAt||null,count:fragCount(fr)};}),
     sources:sources};
-  ST=prevST;RO=prevRO;
   const rec={id:st.id,date:st.date,agent:st.agent,savedAt:Date.now(),filled,bilan,detail,st:snap,frag};
   await idbPut(rec);
-  sess.status='merged';sess.mergedInvId=st.id;sess.savedAt=Date.now();await idbPut(sess);
+  return {rec,filled};
+}
+/* Mode « même téléphone » : fusionne la session active, l'archive, ouvre le résultat */
+async function fragFinalize(){
+  if(!FRAG)return;const sess=FRAG;fragPersist();
+  if(!fragDoneCount(sess)&&!confirm('Aucun compteur n’a marqué « j’ai fini ». Fusionner quand même les saisies actuelles ?'))return;
+  clearTimeout(_saveTimer);
+  const {rec,filled}=await fragArchiveMerged(sess);
+  sess.status='merged';sess.mergedInvId=rec.id;sess.savedAt=Date.now();await idbPut(sess);
   fragExitState();
   openArchive(rec);
   toast('Inventaire fusionné · '+filled+' article(s) · '+sess.agents.length+' compteurs');
@@ -3117,11 +3163,17 @@ function fragAgentRow(val){
   row.querySelector('button').onclick=()=>{const wrap=$('#fragAgents');row.remove();if(!wrap.children.length)wrap.appendChild(fragAgentRow(''));};
   return row;
 }
+function fragSetMode(mode){
+  $('#fragModeFiles').style.display=mode==='files'?'':'none';
+  $('#fragModeDevice').style.display=mode==='device'?'':'none';
+  $('#fragModes').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.fmode===mode));
+}
 async function openFragDlg(){
+  FRAGFILES=[];$('#fragMergeTitle').value='';fragRenderFileList();fragSetMode('files');
   const wrap=$('#fragAgents');wrap.innerHTML='';[ '','' ].forEach(()=>wrap.appendChild(fragAgentRow('')));
   $('#fragDate').value=(ST&&ST.date)||new Date().toISOString().slice(0,10);
   $('#fragTitle').value='';
-  // Sessions ouvertes à reprendre
+  // Sessions ouvertes à reprendre (mode « un seul téléphone »)
   const open=(await idbAll()).filter(r=>String(r.id).indexOf('fragsess_')===0&&r.status==='open').sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   const ow=$('#fragOpenWrap');ow.innerHTML='';
   if(open.length){
@@ -3160,6 +3212,88 @@ function fragResume(sess,wantMerge){
   if(wantMerge){fragFinalize();return;}
   fragEnterAgent(sess.active&&sess.fragments[sess.active]?sess.active:sess.agents[0]);
   toast('Session fragmentée ouverte');
+}
+
+/* ====== MODE « CHACUN SON TÉLÉPHONE » : échange de parts par fichier ======
+   Chaque personne exporte son comptage (fichier .txt) et l'envoie (WhatsApp,
+   mail…). Une personne importe toutes les parts reçues : l'app les fusionne
+   (pour chaque article, la part la plus récente gagne — gère aussi le
+   comptage étalé sur plusieurs jours). Réutilise le format d'export existant. */
+
+/* Exporte le comptage courant comme « part » partageable */
+function buildFragmentFile(){
+  const o=JSON.parse(buildJSON());           // {meta,articles,etat,cfg?}
+  o.type='lep-fragment';o.v=1;o.ts=Date.now();
+  return JSON.stringify(o,null,2);
+}
+async function shareFragment(){
+  ST.agent=$('#agent').value;ST.date=$('#date').value;
+  const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;
+  if(!counted){toast('Compte au moins un article avant d’exporter ta part');return;}
+  if(!String(ST.agent||'').trim()&&!confirm('Aucun nom de compteur saisi. Continuer quand même ?\n(Le nom aide à reconnaître ta part lors de la fusion.)'))return;
+  const name='ma_part_'+(ST.date||'sansdate')+(slug(ST.agent)?'_'+slug(ST.agent):'')+'.txt';
+  const content=buildFragmentFile();
+  let file=null;try{file=new File([content],name,{type:'text/plain'});}catch(_){}
+  try{
+    if(file&&navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
+      await navigator.share({files:[file],title:'Ma part d’inventaire',text:'Part d’inventaire '+(ST.date||'')+(ST.agent?(' — '+ST.agent):'')});return;
+    }
+  }catch(e){}
+  download(name,content,'text/plain');
+}
+
+/* Transforme un fichier reçu (part OU inventaire complet) en fragment fusionnable */
+function fragIngestFile(o){
+  const etat=(o&&o.etat)?o.etat:o;
+  if(!etat||!etat.c)return null;
+  const agent=(etat.agent||(o.meta&&o.meta.agent)||'Compteur').trim()||'Compteur';
+  const ts=Date.parse((o.meta&&o.meta.exporte)||'')||o.ts||etat.savedAt||Date.now();
+  // Valeurs calculées par le compteur = autoritaires (évite tout recalcul avec d'autres réglages)
+  if(o&&Array.isArray(o.articles))o.articles.forEach(a=>{const e=etat.c[a.code];if(!e)return;if(a.compte&&a.physique!=null)e._phys=a.physique;});
+  // Horodatage par article (si absent) = date d'export de la part
+  Object.keys(etat.c).forEach(code=>{const e=etat.c[code];if(e&&e.counted&&e._ts==null)e._ts=ts;});
+  const cnt=Object.values(etat.c).filter(e=>e&&e.counted).length;
+  return {agent,date:etat.date||'',ts,count:cnt,st:{c:etat.c,cfg:(o.cfg||etat.cfg||{})}};
+}
+
+let FRAGFILES=[];   // parts chargées dans le dialogue, en attente de fusion
+function fragAddFile(text){
+  let o;try{o=JSON.parse(text);}catch(e){toast('Fichier illisible');return;}
+  const fr=fragIngestFile(o);
+  if(!fr){toast('Format non reconnu (ce n’est pas une part / un inventaire)');return;}
+  // Même compteur renvoyé plusieurs fois : on garde la part la plus récente
+  const i=FRAGFILES.findIndex(x=>x.agent.toLowerCase()===fr.agent.toLowerCase());
+  if(i>=0){if(fr.ts>=FRAGFILES[i].ts){FRAGFILES[i]=fr;toast('Part de '+fr.agent+' mise à jour (plus récente)');}else toast('Part de '+fr.agent+' ignorée (une plus récente est déjà chargée)');}
+  else{FRAGFILES.push(fr);toast('Part de '+fr.agent+' ajoutée');}
+  fragRenderFileList();
+}
+function fragRenderFileList(){
+  const wrap=$('#fragFileList');if(!wrap)return;wrap.innerHTML='';
+  if(!FRAGFILES.length){wrap.innerHTML='<div style="font-size:12.5px;color:#6a7280;padding:4px 0">Aucune part chargée. Ajoute les fichiers reçus des compteurs.</div>';$('#fragMergeFiles').disabled=true;$('#fragMergeFiles').style.opacity=.5;return;}
+  FRAGFILES.forEach((fr,i)=>{
+    const el=document.createElement('div');el.className='frag-sess';
+    const d=new Date(fr.ts);
+    el.innerHTML=`<div class="fs-info"><b>${esc(fr.agent)}</b>
+      <span>${fr.count} article(s) · ${fr.date||'—'} · reçu ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div>`;
+    const acts=document.createElement('div');acts.className='fs-acts';
+    const del=document.createElement('button');del.className='del';del.textContent='Retirer';del.onclick=()=>{FRAGFILES.splice(i,1);fragRenderFileList();};
+    acts.append(del);el.append(acts);wrap.append(el);
+  });
+  const mb=$('#fragMergeFiles');mb.disabled=false;mb.style.opacity=1;mb.textContent='⚙ Fusionner '+FRAGFILES.length+' part'+(FRAGFILES.length>1?'s':'')+' & archiver';
+}
+async function fragMergeFiles(){
+  if(!FRAGFILES.length){toast('Ajoute au moins une part');return;}
+  const dates=FRAGFILES.map(f=>f.date).filter(Boolean).sort();
+  const date=dates[dates.length-1]||new Date().toISOString().slice(0,10);
+  const agents=[],fragments={};
+  FRAGFILES.forEach(fr=>{agents.push(fr.agent);
+    fragments[fr.agent]={agent:fr.agent,status:'done',startedAt:fr.ts,savedAt:fr.ts,doneAt:fr.ts,st:fr.st};});
+  const sess={id:'fragsess_files_'+Date.now(),date,title:$('#fragMergeTitle')?$('#fragMergeTitle').value.trim():'',source:'files',agents,fragments};
+  const {rec,filled}=await fragArchiveMerged(sess);
+  FRAGFILES=[];
+  $('#fragDlg').close();
+  openArchive(rec);
+  toast('Fusion réussie · '+filled+' article(s) · '+agents.length+' compteurs');
 }
 
 /* ====== INITIALISATION (asynchrone à cause d'IndexedDB) ====== */

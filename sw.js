@@ -1,4 +1,4 @@
-const C='inv-lep-v49';
+const C='inv-lep-v50';
 const LIBC='inv-lib-v1';
 const APP=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const LIBS=['./xlsx.full.min.js','./pdf-lib.min.js','./pdf.min.js','./pdf.worker.min.js'];
