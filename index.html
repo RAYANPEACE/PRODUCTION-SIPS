@@ -618,6 +618,10 @@
     <div class="dlg-actions" style="margin-top:8px">
       <button class="b-sec" id="dlBtn">Télécharger le fichier</button>
     </div>
+    <div class="dlg-actions" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+      <button class="b-go" id="validBtn" style="background:#0e1a12;color:#5dffb0">🔒 Valider cet inventaire (devient la référence)</button>
+    </div>
+    <div style="font-size:11.5px;color:#6a7280;margin-top:6px;line-height:1.4">Verrouille ce comptage et en fait la référence du Bilan / Capacité / Plan. Déverrouillable depuis l’Historique.</div>
   </div>
 </dialog>
 
@@ -1618,6 +1622,24 @@ async function shareJSON(){
 }
 $('#shareBtn').onclick=shareJSON;
 $('#dlBtn').onclick=()=>{archiveCurrent();download(exportName(),buildJSON(),'text/plain');toast('Fichier enregistré');};
+$('#validBtn').onclick=validateCurrent;
+/* Valide et verrouille l'inventaire EN COURS (l'archive + locked), puis ouvre un comptage vierge */
+async function validateCurrent(){
+  if(RO){toast('Mode consultation — non modifiable');return;}
+  if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
+  const filled=REFS.filter(r=>ST.c[r.code].counted).length;
+  if(!filled){toast('Aucun article compté à valider');return;}
+  if(!confirm('Valider et VERROUILLER cet inventaire ('+(ST.date||'—')+(ST.agent?(' · '+ST.agent):'')+') ?\n\nIl devient la référence (Bilan, Capacité, Plan), figé en lecture seule (déverrouillable depuis l’Historique) et protégé contre l’écrasement. Un nouveau comptage vierge sera ouvert.'))return;
+  if(!ST.id)ST.id='inv_'+Date.now();
+  try{const ex=await idbGet(ST.id);if(ex&&ex.locked)ST.id='inv_'+Date.now();}catch(e){}
+  let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
+  try{await idbPut({id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snapshot(),locked:true,validatedAt:Date.now()});}
+  catch(e){toast('Échec de la validation');return;}
+  $('#dlg').close();
+  REFS.forEach(r=>ST.c[r.code]=blankEntry(r));
+  ST.id='inv_'+Date.now();ST.sessionStart=Date.now();
+  saveCounts();render();toast('Inventaire validé 🔒 · nouveau comptage ouvert');
+}
 
 /* ================= ÉTAPE 1 — RÔLES (PIN) + ONGLETS + RÉFÉRENTIELS ADMIN ================= */
 /* Amorçage (catégorie issue de inventaire_lep.py ; unité de base issue du conditionnement) */
@@ -2583,40 +2605,47 @@ function perimHTML(){
   h+='</div>';return h;
 }
 function bilPairBanner(swapped,pair,posterior){
-  if(!ETAT_DATE)
-    return '<div class="bil-pair warn">ℹ Renseigne la <b>date de l’état de stock</b> (Référentiels → État de stock) pour l’apparier tout seul au bon inventaire. Pour l’instant : inventaire actuellement chargé.</div>';
-  if(swapped)
-    return '<div class="bil-pair ok">📅 État de stock du <b>'+esc(ETAT_DATE)+'</b> comparé à l’inventaire <b>validé 🔒</b> du <b>'+esc(pair.date||'?')+'</b>'+(pair.agent?(' · '+esc(pair.agent)):'')+' — apparié automatiquement (≤ date de l’état).'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) ignoré(s).'):'')+'</div>';
-  return '<div class="bil-pair warn">⚠ Aucun inventaire <b>validé 🔒</b> daté du <b>'+esc(ETAT_DATE)+'</b> ou avant. Valide l’inventaire de référence (Historique → 🔒 Valider) pour activer la comparaison.'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) existent mais ne servent pas de référence.'):'')+' Affichage sur l’inventaire chargé.</div>';
+  if(swapped){
+    if(ETAT_DATE)
+      return '<div class="bil-pair ok">📅 État de stock du <b>'+esc(ETAT_DATE)+'</b> comparé à l’inventaire <b>validé 🔒</b> du <b>'+esc(pair.date||'?')+'</b>'+(pair.agent?(' · '+esc(pair.agent)):'')+' — apparié automatiquement (≤ date de l’état).'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) ignoré(s).'):'')+'</div>';
+    return '<div class="bil-pair ok">🔒 Comparé au dernier inventaire <b>validé</b> du <b>'+esc(pair.date||'?')+'</b>'+(pair.agent?(' · '+esc(pair.agent)):'')+'. Renseigne la <b>date de l’état de stock</b> pour cibler une date précise.</div>';
+  }
+  if(ETAT_DATE)
+    return '<div class="bil-pair warn">⚠ Aucun inventaire <b>validé 🔒</b> daté du <b>'+esc(ETAT_DATE)+'</b> ou avant. Valide l’inventaire de référence (Historique → 🔒 Valider).'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) existent mais ne servent pas de référence.'):'')+'</div>';
+  return '<div class="bil-pair warn">⚠ Aucun inventaire <b>validé 🔒</b>. Valide un inventaire (Historique → 🔒 Valider) pour comparer l’état de stock à un comptage. (Le brouillon en cours n’est pas utilisé comme référence.)</div>';
 }
 /* Trouve l'inventaire à apparier à l'état de stock : date ≤ ETAT_DATE, le plus proche (jamais postérieur) */
 async function findBilanPair(){
-  if(!ETAT_DATE)return {pair:null,posterior:0};
   let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
   // Seuls les inventaires VALIDÉS (verrouillés) servent de référence
   const invs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'&&!r.demo
     &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
-    &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0);
-  const le=invs.filter(r=>String(r.date||'')<=ETAT_DATE).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
-  const posterior=invs.filter(r=>String(r.date||'')>ETAT_DATE).length;
-  return {pair:le[0]||null,posterior:posterior};
+    &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
+    .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
+  if(!invs.length)return {pair:null,posterior:0};
+  if(ETAT_DATE){
+    const le=invs.filter(r=>String(r.date||'')<=ETAT_DATE);
+    return {pair:le[0]||null,posterior:invs.length-le.length};
+  }
+  return {pair:invs[0],posterior:0};   // sans date d'état : dernier inventaire validé
 }
 async function renderBilan(){
   const app=$('#app');
-  // Appariement automatique : l'état de stock (daté) se compare à l'inventaire du même jour ou juste avant
-  const prevST=ST,prevRO=RO;let swapped=false,pair=null,posterior=0;
-  if(ETAT_DATE){const f=await findBilanPair();pair=f.pair;posterior=f.posterior;
-    if(pair){ST=JSON.parse(JSON.stringify(pair.st));mergeAndMigrate();RO=true;swapped=true;}}
+  // Référence physique = dernier inventaire VALIDÉ (≤ date de l'état de stock si renseignée). Jamais le brouillon :
+  // sans inventaire validé, on bascule sur un état VIDE (tout reporté au théorique).
+  const prevST=ST,prevRO=RO;let pair=null,posterior=0;
+  {const f=await findBilanPair();pair=f.pair;posterior=f.posterior;}
+  ST=pair?JSON.parse(JSON.stringify(pair.st)):freshCounts();mergeAndMigrate();RO=true;
   const r=buildBilan();
-  r.srcDate=swapped?(pair.date||''):(ST.date||'');
-  r.srcAgent=swapped?(pair.agent||''):(ST.agent||'');
+  r.srcDate=pair?(pair.date||''):'';
+  r.srcAgent=pair?(pair.agent||''):'';
   const counted=r.rows.filter(x=>x.counted).length;
   const recoOk=r.reco==='VALIDER';
   let h='<div class="bilan-wrap">';
   h+='<div class="bil-ctrl"><label for="bilPeriode">Période entre 2 inventaires</label>'
     +'<select id="bilPeriode">'+['semaine','mois','2mois'].map(p=>'<option value="'+p+'" '+(p===PERIODE?'selected':'')+'>'+(p==='2mois'?'2 mois':p)+'</option>').join('')+'</select>'
     +'<button id="bilPrint" class="bil-print">Imprimer</button><button id="bilPDF" class="bil-print">📄 PDF</button></div>';
-  h+=bilPairBanner(swapped,pair,posterior);
+  h+=bilPairBanner(!!pair,pair,posterior);
   h+='<div class="bil-src">Référence physique : <b>'+(r.srcDate||'—')+'</b>'+(r.srcAgent?(' · '+esc(r.srcAgent)):'')+' — <b>'+counted+'</b> / '+r.rows.length+' article(s) compté(s)</div>';
   if(!counted)h+='<div class="bil-note">Aucun article compté dans l\u2019inventaire chargé : tout est reporté au théorique. Compte des articles (onglet Comptage) ou ouvre un inventaire via l\u2019Historique.</div>';
   h+='<div class="bil-reco '+(recoOk?'ok':'ko')+'">'+r.reco+'<span class="meta">'+r.alertes.length+' à vérifier / '+r.rows.length+' articles</span></div>';
@@ -2635,7 +2664,7 @@ async function renderBilan(){
   h+='<div class="bil-foot">Total des écarts (articles comptés, unités mêlées, indicatif) : <b>'+fsign(Math.round(r.total*1000)/1000)+'</b>.<br>Convention : écart = théorique − physique ; ▲ surplus (physique &gt; théo), ▼ manque (physique &lt; théo).</div>';
   h+='</div>';
   app.innerHTML=h;
-  if(swapped){ST=prevST;RO=prevRO;}   // restaure le brouillon : l'appariement n'altère pas l'état courant
+  ST=prevST;RO=prevRO;   // restaure le brouillon : l'appariement n'altère jamais l'état courant
   $('#bilPeriode').onchange=e=>{PERIODE=e.target.value;lsSet('lep_periode',PERIODE);renderBilan();};
   $('#bilPrint').onclick=()=>{const f=$('#bilFull');if(f)f.style.display='block';window.print();};
   $('#bilPDF').onclick=()=>bilanPDF(r);
@@ -2835,17 +2864,21 @@ async function refreshLiveStock(){
     &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||((a.savedAt||0)-(b.savedAt||0)));
   const base=invs[invs.length-1]||null;
-  const baseDate=base?String(base.date||''):'';
-  LIVEMETA.hasBase=!!base;LIVEMETA.baseDate=baseDate||null;
-  // Base par code : physique du dernier inventaire validé (calculé depuis son état), sinon état de stock manuel
+  // Base par code : physique du dernier inventaire VALIDÉ (calculé depuis son état) ;
+  // à défaut, l'état de stock manuel daté (ETAT_DATE) sert de base.
   const baseMap={};
   REFS.forEach(r=>{const v=ETAT[r.code];baseMap[r.code]=(v!=null&&v!=='')?num(v):0;});
+  let baseDate='',baseKind='';
   if(base&&base.st){
+    baseDate=String(base.date||'');baseKind='inventory';
     const prevST=ST,prevRO=RO;ST=JSON.parse(JSON.stringify(base.st));RO=true;mergeAndMigrate();
     REFS.forEach(r=>{if(ST.c[r.code]&&ST.c[r.code].counted)baseMap[r.code]=round2(total(r));});
     ST=prevST;RO=prevRO;
+  }else if(ETAT_DATE){
+    baseDate=ETAT_DATE;baseKind='etat';
   }
-  // Flux postérieurs à la date de base (ou tous si aucun inventaire), jusqu'à aujourd'hui
+  LIVEMETA.hasBase=!!baseDate;LIVEMETA.baseDate=baseDate||null;LIVEMETA.baseKind=baseKind;
+  // Flux postérieurs à la date de base, jusqu'à aujourd'hui
   const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
   const today=new Date().toISOString().slice(0,10);
   // Sans inventaire daté, on ne projette aucun flux (impossible de savoir lesquels sont « postérieurs »)
@@ -2866,17 +2899,22 @@ async function refreshLiveStock(){
 }
 /* Note explicative affichée sur Capacité / Plan */
 function liveStockNote(){
-  if(LIVEMETA&&LIVEMETA.hasBase)
-    return 'Stock estimé = dernier inventaire <b>validé 🔒</b> du <b>'+esc(LIVEMETA.baseDate||'?')+'</b> + production + entrées − sorties − consommation depuis ('+LIVEMETA.nbMov+' mouvement(s) pris en compte). Un article recompté maintenant prime.';
-  return 'Stock estimé = <b>état de stock manuel</b> (aucun inventaire <b>validé 🔒</b> : les sorties/entrées ne sont pas projetées). Valide un inventaire (Historique → 🔒 Valider) pour activer la projection.';
+  if(LIVEMETA&&LIVEMETA.hasBase){
+    const src=LIVEMETA.baseKind==='inventory'
+      ?('dernier inventaire <b>validé 🔒</b> du <b>'+esc(LIVEMETA.baseDate||'?')+'</b>')
+      :('<b>état de stock</b> du <b>'+esc(LIVEMETA.baseDate||'?')+'</b>');
+    return 'Stock estimé = '+src+' + production + entrées − sorties − consommation depuis ('+LIVEMETA.nbMov+' mouvement(s) pris en compte).';
+  }
+  return 'Stock estimé = <b>état de stock manuel</b> (aucune date de référence : flux non projetés). Valide un inventaire (Historique → 🔒 Valider) ou renseigne la date de l’état de stock.';
 }
-/* Stock disponible d'une matière : physique compté maintenant, sinon stock vivant
-   (dernier inventaire + flux), sinon état de stock manuel, sinon 0 */
+/* Stock disponible d'une matière pour Capacité/Plan : stock VIVANT prioritaire
+   (dernier inventaire validé + production + entrées − sorties − conso depuis sa date).
+   Le brouillon en cours n'est PAS utilisé ici. Repli : état de stock manuel. */
 function stockDispo(code){
   if(!code)return 0;
-  const r=REFS.find(x=>x.code===code);
-  if(r&&ST.c[code]&&ST.c[code].counted)return total(r);
   if(LIVESTOCK&&code in LIVESTOCK)return LIVESTOCK[code];
+  const r=REFS.find(x=>x.code===code);
+  if(r&&ST.c[code]&&ST.c[code].counted)return round2(total(r));
   const v=ETAT[code];return (v!=null&&v!=='')?num(v):0;
 }
 function catOf(code){const r=REFS.find(x=>x.code===code);return (r&&r.cat)||SEED_CAT[code]||'';}
