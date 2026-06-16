@@ -27,24 +27,24 @@
     return JSON.parse(JSON.stringify(v));
   }
 
-  /* Crée un nouvel inventaire (comptage vierge à figer plus tard) à partir
+  /* Crée un nouvel inventaire (comptage modifiable, à figer plus tard) à partir
      du dernier inventaire validé.
      - last == null  -> renvoie null (rien à reprendre).
-     - last.c est COPIÉ EN PROFONDEUR : modifier last.c après coup ne touche
-       jamais le résultat (et inversement).
+     - TOUT `last` est COPIÉ EN PROFONDEUR (comptages `c`, réglages `cfg`, etc.) :
+       modifier `last` après coup ne touche jamais le résultat (et inversement).
      - locked = false : le nouvel inventaire est modifiable.
-     - date = aujourd'hui. */
+     - date = aujourd'hui ; nouvel `id` ; nouvelle session de comptage.
+     - `sourceId` garde une trace de l'inventaire validé d'origine. */
   function createInventoryFromLastValidated(last) {
     if (last == null) return null;
-    return {
-      id: 'inv_' + Date.now(),
-      date: todayISO(),
-      agent: last.agent || '',
-      c: deepCopy(last.c),
-      locked: false,
-      createdAt: Date.now(),
-      sourceId: last.id || null
-    };
+    const inv = deepCopy(last);
+    inv.id = 'inv_' + Date.now();
+    inv.date = todayISO();
+    inv.locked = false;
+    inv.sessionStart = Date.now();
+    inv.createdAt = Date.now();
+    inv.sourceId = last.id || null;
+    return inv;
   }
 
   return {

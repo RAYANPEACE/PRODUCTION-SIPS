@@ -1,6 +1,6 @@
-const C='inv-lep-v57';
+const C='inv-lep-v58';
 const LIBC='inv-lib-v1';
-const APP=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const APP=['./','./index.html','./domain/inventory.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const LIBS=['./xlsx.full.min.js','./pdf-lib.min.js','./pdf.min.js','./pdf.worker.min.js'];
 self.addEventListener('install',e=>{e.waitUntil(Promise.all([
   caches.open(C).then(c=>c.addAll(APP)),
