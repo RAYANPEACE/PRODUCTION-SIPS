@@ -1777,6 +1777,8 @@ function delArticle(code){
   renderRef();toast('Article supprimé');
 }
 
+/* Convertit un n° de série Excel (jours depuis 1899-12-30) en date ISO AAAA-MM-JJ */
+function excelSerialToISO(n){const ms=Math.round((n-25569)*86400000);const d=new Date(ms);return isNaN(d.getTime())?'':d.toISOString().slice(0,10);}
 function renderEtat(body){
   const rows=REFS.map(r=>'<div class="ref-row etat" data-code="'+r.code+'"><div class="rc">'+r.code+'</div><div class="ed">'+esc(r.des)+'</div><input class="eval" inputmode="decimal" enterkeyhint="done" value="'+(ETAT[r.code]!=null?ETAT[r.code]:'')+'"></div>').join('');
   body.innerHTML='<p class="ref-hint">Stock théorique de référence — <b>seule base du Bilan et des écarts</b>. Une valeur par article ; vide = 0.</p>'
@@ -1809,11 +1811,19 @@ function renderEtat(body){
         const wb=XLSX.read(new Uint8Array(rd.result),{type:'array'});
         const ws=wb.Sheets[wb.SheetNames[0]];
         const arr=XLSX.utils.sheet_to_json(ws,{header:1,raw:true});
-        let n=0;
-        arr.forEach(row=>{const code=String((row&&row[0])||'').trim();if(/^\d{6}$/.test(code)){
-          let val=null;for(let k=row.length-1;k>=1;k--){if(typeof row[k]==='number'){val=row[k];break;}}
-          if(val!=null){ETAT[code]=val;n++;}}});
-        lsSet('lep_etat',ETAT);renderRef();toast(n+' valeur(s) importée(s) depuis Excel');
+        let n=0,foundDate='';
+        arr.forEach(row=>{const code=String((row&&row[0])||'').trim();
+          if(/^\d{6}$/.test(code)){
+            let val=null;for(let k=row.length-1;k>=1;k--){if(typeof row[k]==='number'){val=row[k];break;}}
+            if(val!=null){ETAT[code]=val;n++;}
+          }else if(!foundDate&&row){   // zone d'en-tête : repérer la date de l'état (n° de série Excel ou texte JJ/MM/AAAA)
+            row.forEach(cell=>{if(foundDate)return;
+              if(typeof cell==='number'&&cell>=40000&&cell<=60000)foundDate=excelSerialToISO(cell);
+              else if(typeof cell==='string'){const m=cell.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);if(m)foundDate=m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');}
+            });
+          }});
+        if(foundDate){ETAT_DATE=foundDate;lsSet('lep_etat_date',ETAT_DATE);}
+        lsSet('lep_etat',ETAT);renderRef();toast(n+' valeur(s) importée(s)'+(foundDate?(' · état daté du '+foundDate):''));
       }catch(err){toast('Excel illisible : '+(err&&err.message||err));}};
       rd.readAsArrayBuffer(f);
     };
