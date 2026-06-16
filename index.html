@@ -165,6 +165,9 @@
   .hist-item .info span{display:block;font-size:12px;color:var(--mute)}
   .hist-item button{padding:7px 11px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:600;font-size:13px}
   .hist-item .del{border-color:#e3c7cd;color:var(--red)}
+  .hist-item .valid{border-color:#c5e4d2;color:var(--green)}
+  .hist-item.locked{background:#f3f8f4;border-radius:8px}
+  .lock-tag{display:inline-block;background:#e7f3ec;color:var(--green);border:1px solid #c5e4d2;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700;margin-left:6px;vertical-align:middle}
   body.ro .body input,body.ro .body select,body.ro .addbtn,body.ro .x,body.ro .photo-btn,body.ro footer button#export{pointer-events:none;opacity:.55}
   body.ro .photo-thumb{pointer-events:auto;opacity:1}
 
@@ -1265,7 +1268,12 @@ function archiveCurrent(){ // une fiche par inventaire (mise à jour, pas de dou
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;if(!filled)return Promise.resolve();
   if(!ST.id)ST.id='inv_'+Date.now();
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
-  return idbPut({id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snapshot()});
+  const snap=snapshot();
+  // Ne jamais écraser un inventaire validé : si l'id courant pointe sur un verrouillé, on archive sous un nouvel id
+  return idbGet(ST.id).then(function(ex){
+    if(ex&&ex.locked)ST.id='inv_'+Date.now();
+    return idbPut({id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snap});
+  });
 }
 
 /* ====== PHOTOS ====== */
@@ -1342,7 +1350,11 @@ function importInventory(text){
     });
   }
   const filled=Object.values(etat.c).filter(x=>x&&x.counted).length;
-  idbPut({id:etat.id,date:etat.date,agent:etat.agent,savedAt:Date.now(),filled,st:etat}).then(function(){
+  // Un inventaire reçu ne doit jamais écraser un inventaire validé local : nouvel id en cas de collision
+  idbGet(etat.id).then(function(ex){
+    if(ex&&ex.locked)etat.id='imp_'+Date.now();
+    return idbPut({id:etat.id,date:etat.date,agent:etat.agent,savedAt:Date.now(),filled,st:etat});
+  }).then(function(){
     $('#histDlg').close();openArchive({st:etat});toast('Inventaire importé');
   });
 }
@@ -1403,11 +1415,19 @@ async function exportLight(){
 async function importAll(text){
   let data;try{data=JSON.parse(text);}catch(e){alert('Fichier illisible.');return;}
   if(!data||data.type!=='lep-backup'){alert('Ce fichier n\u2019est pas une sauvegarde complète (utilise « Importer un inventaire reçu » pour un inventaire seul).');return;}
-  if(!confirm('Restaurer cette sauvegarde ? Elle remplacera les réglages et inventaires actuels de l\u2019application.'))return;
+  // Protection anti-contamination : une sauvegarde recue n'ecrase JAMAIS un inventaire valide localement
+  const lockedIds=new Set();
+  try{(await idbAll()).forEach(r=>{if(r&&r.locked)lockedIds.add(r.id);});}catch(e){}
+  const nLocked=lockedIds.size;
+  if(!confirm('Restaurer cette sauvegarde ? Elle remplacera les réglages et les inventaires NON validés.'+(nLocked?('\n\n🔒 '+nLocked+' inventaire(s) VALIDÉ(S) chez toi seront PROTÉGÉS (jamais écrasés).'):'')))return;
   try{
     if(data.ls)Object.keys(data.ls).forEach(k=>{try{localStorage.setItem(k,data.ls[k]);}catch(e){}});
-    if(Array.isArray(data.idb))for(const rec of data.idb){try{await idbPut(rec);}catch(e){}}
-    alert('Sauvegarde restaurée. L\u2019application va se recharger.');location.reload();
+    let skipped=0;
+    if(Array.isArray(data.idb))for(const rec of data.idb){
+      if(rec&&lockedIds.has(rec.id)){skipped++;continue;}
+      try{await idbPut(rec);}catch(e){}
+    }
+    alert('Sauvegarde restaurée.'+(skipped?(' '+skipped+' inventaire(s) validé(s) protégé(s).'):'')+' L’application va se recharger.');location.reload();
   }catch(e){alert('Échec de la restauration.');}
 }
 async function genDemoData(){
@@ -1467,25 +1487,44 @@ async function openHistory(){
   else{
     const clear=document.createElement('button');clear.className='del';clear.style.cssText='width:100%;margin-bottom:10px;padding:9px;border-radius:8px';
     clear.textContent='Vider tout l\'historique';
-    clear.onclick=async()=>{if(confirm('Effacer tous les inventaires archivés ?')){for(const r of recs)await idbDel(r.id);openHistory();}};
+    clear.onclick=async()=>{
+      const lk=recs.filter(r=>r.locked).length;
+      if(!confirm('Effacer les inventaires archivés ?'+(lk?('\n\n'+lk+' inventaire(s) VALIDÉ(S) seront conservés (protégés).'):'')))return;
+      for(const r of recs){if(r.locked)continue;await idbDel(r.id);}openHistory();
+    };
     list.append(clear);
     recs.forEach(rec=>{
       const ph=(rec.st&&rec.st.c)?Object.values(rec.st.c).reduce((s,e)=>s+((e.weighings||[]).filter(w=>w.photo).length),0):0;
       const d=new Date(rec.savedAt);
-      const it=document.createElement('div');it.className='hist-item';
+      const it=document.createElement('div');it.className='hist-item'+(rec.locked?' locked':'');
       const fragTag=rec.frag?`<span class="frag-tag">🧩 fusion ${(rec.frag.agents||[]).length} compteurs</span>`:'';
-      it.innerHTML=`<div class="info"><b>${rec.date||'—'}</b>${fragTag}
+      const lockTag=rec.locked?`<span class="lock-tag">🔒 validé</span>`:'';
+      it.innerHTML=`<div class="info"><b>${rec.date||'—'}</b>${lockTag}${fragTag}
         <span>${rec.agent||'—'} · ${rec.filled||0} art. · ${ph} photo(s) · ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div>`;
-      const rep=document.createElement('button');rep.textContent='Reprendre';rep.onclick=()=>{histDlg.close();reprendreArchive(rec);};
       const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{histDlg.close();openArchive(rec);};
+      it.append(open);
+      if(rec.locked){
+        const unlock=document.createElement('button');unlock.textContent='Déverrouiller';
+        unlock.onclick=async()=>{if(confirm('Déverrouiller cet inventaire validé pour le rendre de nouveau modifiable ?')){rec.locked=false;delete rec.validatedAt;await idbPut(rec);openHistory();toast('Inventaire déverrouillé');}};
+        it.append(unlock);
+      }else{
+        const rep=document.createElement('button');rep.textContent='Reprendre';rep.onclick=()=>{histDlg.close();reprendreArchive(rec);};
+        const val=document.createElement('button');val.className='valid';val.textContent='🔒 Valider';
+        val.onclick=async()=>{if(confirm('Valider et VERROUILLER cet inventaire ?\n\nIl ne pourra plus être modifié (mais reste déverrouillable) et sera protégé contre l’écrasement lors d’une restauration de sauvegarde.')){rec.locked=true;rec.validatedAt=Date.now();await idbPut(rec);openHistory();toast('Inventaire validé 🔒');}};
+        it.append(rep,val);
+      }
       const del=document.createElement('button');del.className='del';del.textContent='Suppr.';
-      del.onclick=async()=>{if(confirm('Supprimer cet inventaire ?')){await idbDel(rec.id);openHistory();}};
-      it.append(rep,open,del);list.append(it);
+      del.onclick=async()=>{
+        const msg=rec.locked?'⚠ Cet inventaire est VALIDÉ.\n\nLe supprimer définitivement ? Cette action est irréversible.':'Supprimer cet inventaire ?';
+        if(confirm(msg)){await idbDel(rec.id);openHistory();}
+      };
+      it.append(del);list.append(it);
     });
   }
   $('#histDlg').showModal();
 }
 function reprendreArchive(rec){
+  if(rec&&rec.locked){toast('Inventaire validé (verrouillé) — déverrouille-le d’abord pour le modifier.');return;}
   if(FRAG)fragExitState();
   archiveCurrent();
   RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
