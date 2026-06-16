@@ -178,6 +178,45 @@
   .tabbar .tab.active{background:var(--steel);border-color:var(--steel);color:#fff}
   .tabbar .tab.soon{opacity:.55}
   .placeholder{max-width:680px;margin:34px auto;padding:26px;text-align:center;color:var(--mute);border:1.5px dashed var(--line);border-radius:12px;background:#fff;line-height:1.6}
+  /* ---- Comptage fragmenté ---- */
+  .tools button#fragBtn{background:#1f5a3d;border-color:#2c7a55;color:#dff3e8}
+  #fragBanner{position:sticky;top:0;z-index:26;background:linear-gradient(180deg,#1f7a4d,#1a6b43);color:#fff;padding:10px 14px;font-size:13px;display:none;flex-direction:column;gap:8px;box-shadow:0 3px 10px rgba(0,0,0,.18)}
+  #fragBanner.on{display:flex}
+  .fb-top{display:flex;align-items:center;gap:8px}
+  .fb-top b{font-size:14px}
+  .fb-top .fb-meta{color:#cdeed9;font-size:12px}
+  .fb-quit{margin-left:auto;background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:7px;padding:6px 10px;font-weight:600;font-size:12px}
+  .fb-chips{display:flex;gap:7px;flex-wrap:wrap}
+  .fb-chip{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);border:1.5px solid rgba(255,255,255,.32);color:#fff;border-radius:20px;padding:6px 11px;font-size:13px;font-weight:600;cursor:pointer}
+  .fb-chip.active{background:#fff;color:#1a6b43;border-color:#fff}
+  .fb-chip.done{border-color:#bff0d4}
+  .fb-chip .fc-n{font:600 11px ui-monospace,monospace;opacity:.85}
+  .fb-chip .fc-ok{color:#7dffb6}
+  .fb-chip.active .fc-ok{color:#1a6b43}
+  .fb-add{background:transparent;border:1.5px dashed rgba(255,255,255,.5);color:#fff;border-radius:20px;padding:6px 11px;font-size:13px;font-weight:600}
+  .fb-acts{display:flex;gap:8px;flex-wrap:wrap}
+  .fb-acts button{flex:1;min-width:120px;border-radius:8px;padding:9px;font-weight:700;font-size:13px;border:none}
+  .fb-done{background:#fff;color:#1a6b43}
+  .fb-reopen{background:#23394a;color:#cfe0ee}
+  .fb-merge{background:#0e1a12;color:#5dffb0;border:1px solid #2c7a55}
+  .fb-merge.ready{background:#5dffb0;color:#0e1a12;animation:fbPulse 1.6s ease-in-out infinite}
+  @keyframes fbPulse{0%,100%{box-shadow:0 0 0 0 rgba(93,255,176,.5)}50%{box-shadow:0 0 0 6px rgba(93,255,176,0)}}
+  .frag-form label{display:block;font-size:12px;font-weight:600;color:var(--mute);margin:10px 0 4px}
+  .frag-form input,.frag-form textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px}
+  .frag-agents{display:flex;flex-direction:column;gap:7px;margin-top:6px}
+  .frag-agents .fa-row{display:flex;gap:7px}
+  .frag-agents .fa-row input{flex:1}
+  .frag-agents .fa-row button{border:1.5px solid #e3c7cd;color:var(--red);background:#fff;border-radius:8px;padding:0 12px;font-weight:700}
+  .frag-open{border:1px solid #c5e4d2;border-radius:10px;padding:10px;margin-bottom:12px;background:#f0f8f3}
+  .frag-open h4{margin:0 0 8px;font-size:13px}
+  .frag-sess{border:1px solid var(--line);border-radius:9px;padding:9px;margin-bottom:8px;background:#fff}
+  .frag-sess .fs-info b{font-size:13.5px}
+  .frag-sess .fs-info span{display:block;font-size:12px;color:var(--mute);margin-top:2px}
+  .frag-sess .fs-acts{display:flex;gap:6px;margin-top:8px}
+  .frag-sess .fs-acts button{flex:1;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);border-radius:8px;padding:7px;font-weight:600;font-size:12.5px}
+  .frag-sess .fs-acts .fs-merge{border-color:#2c7a55;color:var(--green)}
+  .frag-sess .fs-acts .del{border-color:#e3c7cd;color:var(--red)}
+  .frag-tag{display:inline-block;background:#e7f3ec;color:var(--green);border:1px solid #c5e4d2;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700;margin-left:6px;vertical-align:middle}
   .ref-wrap{max-width:680px;margin:0 auto}
   .ref-nav{display:flex;gap:6px;overflow-x:auto;margin:2px 0 12px;position:sticky;top:0;background:var(--paper);padding:8px 0;z-index:5}
   .ref-nav button{flex:none;background:#fff;border:1.5px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap}
@@ -522,11 +561,13 @@
     </div>
     <div class="tools">
       <button id="newInv">Nouvel inventaire</button>
+      <button id="fragBtn">👥 Fragmenté</button>
       <button id="histBtn">Historique</button>
       <button id="collapseAll">Tout replier</button>
     </div>
   </div>
 </header>
+<div id="fragBanner"></div>
 <div id="roBanner" style="display:none;position:sticky;top:0;z-index:25;background:#8a6d1b;color:#fff;padding:9px 14px;font-size:13px;font-weight:600;display:none;align-items:center;gap:10px">
   <span id="roText">Consultation</span>
   <button id="roClose" style="margin-left:auto;background:#fff;color:#8a6d1b;border:none;border-radius:7px;padding:6px 12px;font-weight:700;font-size:13px">Fermer la consultation</button>
@@ -566,6 +607,26 @@
 <dialog id="histDlg">
   <div class="dlg-h"><b>Historique des inventaires</b><button onclick="histDlg.close()">×</button></div>
   <div class="dlg-b"><div id="histList" style="font-size:14px"></div></div>
+</dialog>
+
+<dialog id="fragDlg">
+  <div class="dlg-h"><b>Comptage fragmenté</b><button onclick="fragDlg.close()">×</button></div>
+  <div class="dlg-b">
+    <div id="fragOpenWrap"></div>
+    <div class="frag-form">
+      <p style="margin:0 0 6px;font-size:13px;color:#6a7280;line-height:1.5">Plusieurs personnes comptent des zones/articles différents. Chacune saisit sa part, marque « j'ai fini », puis l'app fusionne tout (pour chaque article, la saisie la plus récente est retenue).</p>
+      <label>Date de l'inventaire</label>
+      <input id="fragDate" type="date">
+      <label>Zone / libellé (facultatif)</label>
+      <input id="fragTitle" placeholder="ex. Magasin + Quai + Production" autocomplete="off">
+      <label>Compteurs (un par ligne)</label>
+      <div class="frag-agents" id="fragAgents"></div>
+      <button id="fragAddAgent" style="margin-top:8px;width:100%;border:1.5px dashed var(--line);background:#fff;border-radius:8px;padding:9px;font-weight:600;font-size:13px;color:var(--steel-d)">+ Ajouter un compteur</button>
+      <div class="dlg-actions" style="margin-top:14px">
+        <button class="b-go" id="fragStart">Démarrer la session</button>
+      </div>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="lightbox">
@@ -1175,9 +1236,13 @@ function idbDel(id){return idb().then(db=>new Promise((res,rej)=>{
 
 let _saveTimer=null;
 function saveCounts(){if(RO)return;clearTimeout(_saveTimer);
-  _saveTimer=setTimeout(()=>{idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST}).catch(()=>{});},400);}
+  _saveTimer=setTimeout(()=>{
+    if(FRAG){fragPersist();idbPut(FRAG).catch(()=>{});}
+    else idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST}).catch(()=>{});
+  },400);}
 function snapshot(){const s=JSON.parse(JSON.stringify(ST));if(!s.cfg){s.cfg={};REFS.forEach(r=>{s.cfg[r.code]={...r.p};});}return s;}
 function archiveCurrent(){ // une fiche par inventaire (mise à jour, pas de doublon)
+  if(FRAG)return Promise.resolve(); // en mode fragmenté, ST est un fragment : jamais archivé seul
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;if(!filled)return Promise.resolve();
   if(!ST.id)ST.id='inv_'+Date.now();
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
@@ -1355,7 +1420,7 @@ async function clearDemoData(){
 }
 async function openHistory(){
   const list=$('#histList');list.innerHTML='Chargement…';
-  let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&!r.demo&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
+  let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&!r.demo&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
   list.innerHTML='';
   const bk=document.createElement('div');bk.style.cssText='border:1px solid #d4e3f3;border-radius:10px;padding:10px;margin-bottom:12px;background:#f6f9fd';
   bk.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:8px">💾 Sauvegarde complète <span style="font-weight:400;color:#6a7280">(réglages, machines, référentiels, inventaires, photos)</span></div>';
@@ -1388,7 +1453,8 @@ async function openHistory(){
       const ph=(rec.st&&rec.st.c)?Object.values(rec.st.c).reduce((s,e)=>s+((e.weighings||[]).filter(w=>w.photo).length),0):0;
       const d=new Date(rec.savedAt);
       const it=document.createElement('div');it.className='hist-item';
-      it.innerHTML=`<div class="info"><b>${rec.date||'—'}</b>
+      const fragTag=rec.frag?`<span class="frag-tag">🧩 fusion ${(rec.frag.agents||[]).length} compteurs</span>`:'';
+      it.innerHTML=`<div class="info"><b>${rec.date||'—'}</b>${fragTag}
         <span>${rec.agent||'—'} · ${rec.filled||0} art. · ${ph} photo(s) · ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div>`;
       const rep=document.createElement('button');rep.textContent='Reprendre';rep.onclick=()=>{histDlg.close();reprendreArchive(rec);};
       const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{histDlg.close();openArchive(rec);};
@@ -1400,6 +1466,7 @@ async function openHistory(){
   $('#histDlg').showModal();
 }
 function reprendreArchive(rec){
+  if(FRAG)fragExitState();
   archiveCurrent();
   RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
   ST=JSON.parse(JSON.stringify(rec.st));mergeAndMigrate();
@@ -1409,10 +1476,14 @@ function reprendreArchive(rec){
   toast('Inventaire ouvert — modifiable et renvoyable');
 }
 function openArchive(rec){
+  if(FRAG)fragExitState();
   RO=true;ST=JSON.parse(JSON.stringify(rec.st));mergeAndMigrate();
   $('#agent').value=ST.agent;$('#date').value=ST.date;
   document.body.classList.add('ro');
-  $('#roText').textContent='Consultation — inventaire du '+(ST.date||'?')+' (lecture seule)';
+  let txt='Consultation — inventaire du '+(ST.date||'?')+' (lecture seule)';
+  if(rec.frag){const fr=rec.frag;
+    txt+=' · 🧩 fusion de '+(fr.agents||[]).map(n=>{const f=(fr.fragments||[]).find(x=>x.agent===n)||{};return n+' ('+(f.count||0)+')';}).join(', ');}
+  $('#roText').textContent=txt;
   $('#roBanner').style.display='flex';
   render();window.scrollTo(0,0);
 }
@@ -1433,6 +1504,8 @@ function unfreezeCard(code){const en=ST.c[code];if(!en)return false;let ch=false
   if(RO||!e.target)return;
   const card=e.target.closest&&e.target.closest('.card[data-code]');
   if(!card)return;
+  // En mode fragmenté : horodate l'article édité (la fusion garde la saisie la plus récente)
+  if(FRAG&&ST.c[card.dataset.code])ST.c[card.dataset.code]._ts=Date.now();
   if(unfreezeCard(card.dataset.code))refresh();
 }));
 $('#collapseAll').onclick=()=>document.querySelectorAll('.sub.open,.card.open').forEach(c=>c.classList.remove('open'));
@@ -1450,6 +1523,9 @@ document.addEventListener('focusin',e=>{const t=e.target;if(!t)return;
   setTimeout(()=>{try{t.scrollIntoView({block:'center',behavior:'smooth'});}catch(_){}},250);}});
 $('#histBtn').onclick=openHistory;
 $('#roClose').onclick=closeArchive;
+$('#fragBtn').onclick=openFragDlg;
+$('#fragAddAgent').onclick=()=>$('#fragAgents').appendChild(fragAgentRow(''));
+$('#fragStart').onclick=fragStartFromDlg;
 $('#newInv').onclick=async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
@@ -1598,6 +1674,7 @@ function switchTab(id){
   else if(id==='entree'){renderEntrees();}
   else if(id==='analyse'){renderAnalyse();}
   else{$('#app').innerHTML='<div class="placeholder"><b>Module «\u00a0'+id+'\u00a0»</b><br>À construire à l\u2019étape suivante.</div>';}
+  if(typeof renderFragBanner==='function')renderFragBanner();
   window.scrollTo(0,0);
 }
 
@@ -2882,6 +2959,207 @@ function planResBHTML(r){
   if(r.exclus.length)h+='<div class="plr nf">Exclus du prorata (matière à 0) : '+r.exclus.map(esc).join(', ')+'</div>';
   if(r.negs.length)h+='<div class="plr ko">⚠ Matières en négatif (objectifs fermes trop ambitieux) : '+r.negs.map(esc).join(' · ')+'</div>';
   h+='</div>';return h;
+}
+
+/* ====== COMPTAGE FRAGMENTÉ (plusieurs compteurs → fusion automatique) ======
+   Modèle IndexedDB, type 'fragsess_<ts>' :
+     {id, kind:'fragsess', date, title, createdAt, savedAt, status:'open'|'merged',
+      agents:[nom,…], active:nom,
+      fragments:{ nom:{agent, status:'pending'|'done', startedAt, savedAt, doneAt,
+                        st:{c:{code:entry}, cfg:{code:params}}} },
+      mergedInvId}
+   La fusion produit un inventaire 'inv_<ts>' classique (visible partout) enrichi
+   d'une métadonnée `frag` (agents, fragments, sources par article). */
+let FRAG=null;                 // session fragmentée active (l'objet IndexedDB lui-même)
+let FRAGED=null;               // nom du compteur dont le fragment est actuellement chargé dans ST
+
+function fragCount(fr){return (fr&&fr.st&&fr.st.c)?Object.values(fr.st.c).filter(e=>e&&e.counted).length:0;}
+function fragAllDone(sess){return !!sess&&(sess.agents||[]).length>0&&sess.agents.every(n=>sess.fragments[n]&&sess.fragments[n].status==='done');}
+function fragDoneCount(sess){return (sess.agents||[]).filter(n=>sess.fragments[n]&&sess.fragments[n].status==='done').length;}
+
+/* Construit un ST complet et éditable à partir du fragment d'un compteur */
+function fragBuildST(fr){
+  const st=freshCounts();st.id='frag_'+FRAG.id+'_'+slug(fr.agent);st.agent=fr.agent;st.date=FRAG.date;
+  st.cfg=clone((fr.st&&fr.st.cfg)||{});
+  REFS.forEach(r=>st.c[r.code]=blankEntry(r));
+  if(fr.st&&fr.st.c)Object.keys(fr.st.c).forEach(code=>{if(st.c[code])st.c[code]=clone(fr.st.c[code]);});
+  return st;
+}
+/* Recopie l'état courant (ST) dans le fragment effectivement chargé (FRAGED) */
+function fragPersist(){
+  if(!FRAG||!FRAGED)return;
+  const fr=FRAG.fragments[FRAGED];if(!fr)return;
+  fr.st={c:clone(ST.c),cfg:clone(ST.cfg||{})};
+  fr.savedAt=Date.now();fr.startedAt=fr.startedAt||fr.savedAt;
+  FRAG.savedAt=Date.now();
+}
+/* Bascule sur le comptage d'un compteur donné */
+function fragEnterAgent(name){
+  if(!FRAG||!FRAG.fragments[name])return;
+  fragPersist();
+  FRAG.active=name;FRAGED=name;
+  RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
+  ST=fragBuildST(FRAG.fragments[name]);mergeAndMigrate();
+  $('#agent').value=ST.agent;$('#date').value=ST.date;
+  $('#agent').disabled=true;$('#date').disabled=true;
+  if(TAB!=='comptage')switchTab('comptage');else render();
+  renderFragBanner();
+  idbPut(FRAG).catch(()=>{});
+}
+function fragMarkDone(){
+  if(!FRAG||!FRAG.active)return;const fr=FRAG.fragments[FRAG.active];if(!fr)return;
+  fragPersist();fr.status='done';fr.doneAt=Date.now();idbPut(FRAG).catch(()=>{});
+  renderFragBanner();
+  if(fragAllDone(FRAG)){if(confirm('Tous les compteurs ont terminé.\n\nFusionner maintenant les saisies en un inventaire final ?'))fragFinalize();}
+  else toast('Part de '+fr.agent+' terminée');
+}
+function fragReopen(){
+  if(!FRAG||!FRAG.active)return;const fr=FRAG.fragments[FRAG.active];if(!fr)return;
+  fr.status='pending';fr.doneAt=null;idbPut(FRAG).catch(()=>{});renderFragBanner();
+}
+function fragAddAgentLive(){
+  if(!FRAG)return;const name=(prompt('Nom du nouveau compteur :')||'').trim();if(!name)return;
+  if(FRAG.fragments[name]){toast('Ce compteur existe déjà');return;}
+  FRAG.agents.push(name);FRAG.fragments[name]={agent:name,status:'pending',startedAt:0,savedAt:0,doneAt:null,st:{c:{},cfg:{}}};
+  idbPut(FRAG).catch(()=>{});fragEnterAgent(name);
+}
+
+/* Fusion : pour chaque article, la saisie la plus récente (par _ts, sinon doneAt/savedAt) gagne */
+function mergeFragments(sess){
+  const merged=freshCounts();merged.id='inv_'+Date.now();merged.date=sess.date;
+  merged.agent='Fusion · '+(sess.agents||[]).join(', ');merged.cfg={};
+  REFS.forEach(r=>merged.c[r.code]=blankEntry(r));
+  const tsBy={},srcBy={};
+  (sess.agents||[]).forEach(name=>{
+    const fr=sess.fragments[name];if(!fr||!fr.st||!fr.st.c)return;
+    const base=fr.doneAt||fr.savedAt||0;
+    Object.keys(fr.st.c).forEach(code=>{
+      const e=fr.st.c[code];if(!e||!e.counted)return;
+      const ts=e._ts||base;
+      if(tsBy[code]==null||ts>=tsBy[code]){
+        tsBy[code]=ts;srcBy[code]=name;merged.c[code]=clone(e);
+        if(fr.st.cfg&&fr.st.cfg[code])merged.cfg[code]=clone(fr.st.cfg[code]);
+      }
+    });
+  });
+  REFS.forEach(r=>{if(!merged.cfg[r.code])merged.cfg[r.code]={...r.p};});
+  return {st:merged,sources:srcBy,timestamps:tsBy};
+}
+/* Fusionne, archive l'inventaire final, marque la session comme fusionnée, ouvre le résultat */
+async function fragFinalize(){
+  if(!FRAG)return;const sess=FRAG;fragPersist();
+  if(!fragDoneCount(sess)&&!confirm('Aucun compteur n’a marqué « j’ai fini ». Fusionner quand même les saisies actuelles ?'))return;
+  clearTimeout(_saveTimer);
+  const {st,sources}=mergeFragments(sess);
+  // Calcul du bilan/détail en basculant temporairement ST (réutilise buildBilan/snapshot)
+  const prevST=ST,prevRO=RO;ST=st;RO=true;mergeAndMigrate();
+  let bilan=null,detail=null;
+  try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};
+    detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
+  const filled=REFS.filter(r=>st.c[r.code].counted).length;
+  const snap=snapshot();
+  const frag={sessionId:sess.id,date:sess.date,title:sess.title||'',agents:sess.agents.slice(),
+    fragments:sess.agents.map(n=>{const fr=sess.fragments[n]||{};return {agent:n,status:fr.status||'pending',doneAt:fr.doneAt||null,savedAt:fr.savedAt||null,count:fragCount(fr)};}),
+    sources:sources};
+  ST=prevST;RO=prevRO;
+  const rec={id:st.id,date:st.date,agent:st.agent,savedAt:Date.now(),filled,bilan,detail,st:snap,frag};
+  await idbPut(rec);
+  sess.status='merged';sess.mergedInvId=st.id;sess.savedAt=Date.now();await idbPut(sess);
+  fragExitState();
+  openArchive(rec);
+  toast('Inventaire fusionné · '+filled+' article(s) · '+sess.agents.length+' compteurs');
+}
+
+/* Sort du mode fragmenté (réactive les champs, masque le bandeau) sans recharger de brouillon */
+function fragExitState(){
+  FRAG=null;FRAGED=null;$('#agent').disabled=false;$('#date').disabled=false;renderFragBanner();
+}
+/* Quitte le mode fragmenté et recharge le brouillon « current » normal */
+async function fragLeave(){
+  fragExitState();
+  const cur=await idbGet('current');ST=(cur&&cur.st)||freshCounts();mergeAndMigrate();
+  $('#agent').value=ST.agent;$('#date').value=ST.date;
+  if(TAB==='comptage')render();
+}
+
+function renderFragBanner(){
+  const el=$('#fragBanner');if(!el)return;
+  const nm=$('#newInv'),fm=$('#footMain');
+  if(!FRAG){el.className='';el.innerHTML='';if(nm)nm.style.display='';if(fm&&TAB==='comptage')fm.style.display='';return;}
+  if(nm)nm.style.display='none';if(fm)fm.style.display='none';
+  const ready=fragAllDone(FRAG);
+  const chips=FRAG.agents.map(n=>{const fr=FRAG.fragments[n]||{};const c=fragCount(fr);
+    const cls='fb-chip'+(n===FRAG.active?' active':'')+(fr.status==='done'?' done':'');
+    return `<button class="${cls}" data-fa="${esc(n)}">${fr.status==='done'?'<span class="fc-ok">✓</span> ':''}${esc(n)} <span class="fc-n">${c}</span></button>`;}).join('');
+  const fr=FRAG.fragments[FRAG.active]||{};const isDone=fr.status==='done';
+  el.className='on';
+  el.innerHTML=
+    `<div class="fb-top">🧩 <b>Session fragmentée</b><span class="fb-meta">${esc(FRAG.date||'')}${FRAG.title?' · '+esc(FRAG.title):''} · ${fragDoneCount(FRAG)}/${FRAG.agents.length} finis</span><button class="fb-quit" data-fq>Quitter</button></div>`+
+    `<div class="fb-chips">${chips}<button class="fb-add" data-faadd>+ compteur</button></div>`+
+    `<div class="fb-acts">`+
+      (isDone?`<button class="fb-reopen" data-freopen>↺ Reprendre la saisie de ${esc(FRAG.active)}</button>`
+             :`<button class="fb-done" data-fdone>✓ ${esc(FRAG.active)} a fini</button>`)+
+      `<button class="fb-merge${ready?' ready':''}" data-fmerge>⚙ Fusionner & archiver</button>`+
+    `</div>`;
+  el.querySelectorAll('[data-fa]').forEach(b=>b.onclick=()=>fragEnterAgent(b.dataset.fa));
+  const q=el.querySelector('[data-fq]');if(q)q.onclick=()=>{if(confirm('Quitter le mode fragmenté ? La session reste enregistrée et reprenable via « 👥 Fragmenté ».'))fragLeave();};
+  const ad=el.querySelector('[data-faadd]');if(ad)ad.onclick=fragAddAgentLive;
+  const dn=el.querySelector('[data-fdone]');if(dn)dn.onclick=fragMarkDone;
+  const ro=el.querySelector('[data-freopen]');if(ro)ro.onclick=fragReopen;
+  const mg=el.querySelector('[data-fmerge]');if(mg)mg.onclick=fragFinalize;
+}
+
+/* Dialogue : créer une nouvelle session ou en reprendre une ouverte */
+function fragAgentRow(val){
+  const row=document.createElement('div');row.className='fa-row';
+  row.innerHTML='<input placeholder="Nom du compteur" autocomplete="off"><button type="button" title="Retirer">×</button>';
+  if(val)row.querySelector('input').value=val;
+  row.querySelector('button').onclick=()=>{const wrap=$('#fragAgents');row.remove();if(!wrap.children.length)wrap.appendChild(fragAgentRow(''));};
+  return row;
+}
+async function openFragDlg(){
+  const wrap=$('#fragAgents');wrap.innerHTML='';[ '','' ].forEach(()=>wrap.appendChild(fragAgentRow('')));
+  $('#fragDate').value=(ST&&ST.date)||new Date().toISOString().slice(0,10);
+  $('#fragTitle').value='';
+  // Sessions ouvertes à reprendre
+  const open=(await idbAll()).filter(r=>String(r.id).indexOf('fragsess_')===0&&r.status==='open').sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+  const ow=$('#fragOpenWrap');ow.innerHTML='';
+  if(open.length){
+    const box=document.createElement('div');box.className='frag-open';
+    box.innerHTML='<h4>Sessions en cours</h4>';
+    open.forEach(sess=>{
+      const el=document.createElement('div');el.className='frag-sess';
+      el.innerHTML=`<div class="fs-info"><b>${sess.date||'—'}${sess.title?' · '+esc(sess.title):''}</b>
+        <span>${(sess.agents||[]).length} compteurs · ${fragDoneCount(sess)} fini(s) · ${(sess.agents||[]).map(n=>esc(n)+' ('+fragCount(sess.fragments[n]||{})+')').join(', ')}</span></div>`;
+      const acts=document.createElement('div');acts.className='fs-acts';
+      const res=document.createElement('button');res.textContent='Reprendre';res.onclick=()=>{$('#fragDlg').close();fragResume(sess);};
+      const mrg=document.createElement('button');mrg.className='fs-merge';mrg.textContent='Fusionner';mrg.onclick=()=>{$('#fragDlg').close();fragResume(sess,true);};
+      const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer cette session fragmentée ?')){await idbDel(sess.id);openFragDlg();}};
+      acts.append(res,mrg,del);el.append(acts);box.append(el);
+    });
+    ow.append(box);
+  }
+  $('#fragDlg').showModal();
+}
+function fragStartFromDlg(){
+  const names=[...$('#fragAgents').querySelectorAll('input')].map(i=>i.value.trim()).filter(Boolean);
+  const uniq=[...new Set(names)];
+  if(uniq.length<1){alert('Indique au moins un compteur.');return;}
+  if(uniq.length!==names.length){alert('Deux compteurs portent le même nom — choisis des noms distincts.');return;}
+  const date=$('#fragDate').value||new Date().toISOString().slice(0,10);
+  const sess={id:'fragsess_'+Date.now(),kind:'fragsess',date:date,title:$('#fragTitle').value.trim(),
+    createdAt:Date.now(),savedAt:Date.now(),status:'open',agents:uniq.slice(),active:null,fragments:{}};
+  uniq.forEach(n=>sess.fragments[n]={agent:n,status:'pending',startedAt:0,savedAt:0,doneAt:null,st:{c:{},cfg:{}}});
+  idbPut(sess).catch(()=>{});
+  $('#fragDlg').close();
+  fragResume(sess);
+}
+function fragResume(sess,wantMerge){
+  if(FRAG&&FRAG.id!==sess.id){fragPersist();idbPut(FRAG).catch(()=>{});}
+  FRAG=sess;FRAGED=null;
+  if(wantMerge){fragFinalize();return;}
+  fragEnterAgent(sess.active&&sess.fragments[sess.active]?sess.active:sess.agents[0]);
+  toast('Session fragmentée ouverte');
 }
 
 /* ====== INITIALISATION (asynchrone à cause d'IndexedDB) ====== */
