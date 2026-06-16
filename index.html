@@ -1696,12 +1696,14 @@ function buildTabbar(){
     tb.appendChild(b);
   });
 }
-function switchTab(id){
+async function switchTab(id){
   TAB=id;
   document.querySelectorAll('#tabbar .tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===id));
   const isC=(id==='comptage');
   const ct=$('#comptageTools');if(ct)ct.style.display=isC?'':'none';
   const fm=$('#footMain');if(fm)fm.style.display=isC?'':'none';
+  // Capacité & Plan : stock « vivant » = dernier inventaire + flux depuis sa date (calcul async une fois à l'entrée)
+  if(id==='capacite'||id==='plan'){try{await refreshLiveStock();}catch(e){}}
   if(isC){render();}
   else if(id==='accueil'){renderAccueil();}
   else if(id==='ref'){renderRef();}
@@ -2752,11 +2754,62 @@ function prodDebit(prod){
 function arretsMin(m,nbProds){return (m.arrets||[]).reduce((s,a)=>s+num(a.min)*(a.freq==='parprod'?Math.max(0,nbProds):1),0);}
 function fmtH(h){const H=Math.floor(h);const mn=Math.round((h-H)*60);if(H<=0&&mn<=0)return '0 min';return (H>0?H+' h ':'')+(mn>0?mn+' min':'').trim();}
 
-/* Stock disponible d'une matière : physique compté, sinon état de stock, sinon 0 */
+/* ====== STOCK « VIVANT » (dernier inventaire + flux depuis sa date) ======
+   Base = physique du dernier inventaire archivé (daté) par article, sinon état
+   de stock manuel. Puis projection : + production + entrées − sorties − conso
+   (recettes) pour tous les mouvements postérieurs à la date de cet inventaire,
+   jusqu'à aujourd'hui. Même formule que la réconciliation d'Analyses.
+   Recalculé à l'entrée des onglets Capacité / Plan (voir switchTab). */
+let LIVESTOCK=null;                       // {code:qté} ou null si pas encore calculé
+let LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
+async function refreshLiveStock(){
+  LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
+  let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
+  const real=recs.filter(r=>!r.demo);
+  // Dernier inventaire archivé (avec détail par article), par date
+  const invs=real.filter(r=>r.detail&&Object.keys(r.detail).length&&r.id!=='current'
+    &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
+    &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
+    .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||((a.savedAt||0)-(b.savedAt||0)));
+  const base=invs[invs.length-1]||null;
+  const baseDate=base?String(base.date||''):'';
+  LIVEMETA.hasBase=!!base;LIVEMETA.baseDate=baseDate||null;
+  // Base par code : détail de l'inventaire si présent, sinon état de stock manuel
+  const baseMap={};
+  REFS.forEach(r=>{const v=ETAT[r.code];baseMap[r.code]=(v!=null&&v!=='')?num(v):0;});
+  if(base)Object.keys(base.detail).forEach(c=>{const d=base.detail[c];if(d&&d.p!=null)baseMap[c]=num(d.p);});
+  // Flux postérieurs à la date de base (ou tous si aucun inventaire), jusqu'à aujourd'hui
+  const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
+  const today=new Date().toISOString().slice(0,10);
+  // Sans inventaire daté, on ne projette aucun flux (impossible de savoir lesquels sont « postérieurs »)
+  const inWin=r=>{if(!baseDate)return false;const d=String(r.date||'');return d>baseDate&&d<=today;};
+  const prod=real.filter(r=>String(r.id).indexOf('prod_')===0&&inWin(r));
+  const entr=real.filter(r=>String(r.id).indexOf('entree_')===0&&inWin(r));
+  const sort=real.filter(r=>String(r.id).indexOf('sortie_')===0&&inWin(r));
+  LIVEMETA.nbMov=prod.length+entr.length+sort.length;
+  const add={},conso={},en={},so={};
+  prod.forEach(r=>(r.blocks||[]).forEach(bk=>{const n=num(bk.n);if(!bk.p||n<=0)return;
+    const code=desToCode[bk.p];if(code)add[code]=(add[code]||0)+n;
+    (RECF[bk.p]||[]).forEach(m=>{if(m&&m.code)conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});}));
+  const addMov=(arr,obj)=>arr.forEach(r=>[].concat(r.finis||[],r.mp||[]).forEach(x=>{if(!x||!x.a)return;
+    const c=desToCode[x.a];if(c&&num(x.q)>0)obj[c]=(obj[c]||0)+num(x.q);}));
+  addMov(entr,en);addMov(sort,so);
+  REFS.forEach(r=>{const c=r.code;
+    LIVESTOCK[c]=num(baseMap[c])+(add[c]||0)+(en[c]||0)-(so[c]||0)-(conso[c]||0);});
+}
+/* Note explicative affichée sur Capacité / Plan */
+function liveStockNote(){
+  if(LIVEMETA&&LIVEMETA.hasBase)
+    return 'Stock estimé = dernier inventaire du <b>'+esc(LIVEMETA.baseDate||'?')+'</b> + production + entrées − sorties − consommation depuis ('+LIVEMETA.nbMov+' mouvement(s) pris en compte). Un article recompté maintenant prime.';
+  return 'Stock estimé = <b>état de stock manuel</b> (aucun inventaire archivé daté : les sorties/entrées ne sont pas projetées). Archive un inventaire pour activer la projection.';
+}
+/* Stock disponible d'une matière : physique compté maintenant, sinon stock vivant
+   (dernier inventaire + flux), sinon état de stock manuel, sinon 0 */
 function stockDispo(code){
   if(!code)return 0;
   const r=REFS.find(x=>x.code===code);
   if(r&&ST.c[code]&&ST.c[code].counted)return total(r);
+  if(LIVESTOCK&&code in LIVESTOCK)return LIVESTOCK[code];
   const v=ETAT[code];return (v!=null&&v!=='')?num(v):0;
 }
 function catOf(code){const r=REFS.find(x=>x.code===code);return (r&&r.cat)||SEED_CAT[code]||'';}
@@ -2781,8 +2834,8 @@ function renderCapacite(){
   const app=$('#app');const res=computeCapacite();
   const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;
   let h='<div class="cap-wrap">';
-  h+='<p class="ref-hint">Production possible par produit avec le <b>stock disponible</b> (physique compté, sinon état de stock). Calcul autonome par produit : non cumulable (matières partagées).</p>';
-  h+='<div class="bil-src">Comptage <b>'+esc(ST.date||'—')+'</b> · '+counted+'/'+REFS.length+' compté(s)</div>';
+  h+='<p class="ref-hint">Production possible par produit avec le <b>stock disponible</b>. Calcul autonome par produit : non cumulable (matières partagées).</p>';
+  h+='<div class="bil-src">'+liveStockNote()+'</div>';
   h+='<button id="capPDF" class="bil-print" style="width:100%;margin:4px 0 12px">📄 Exporter PDF (capacité & stock)</button>';
   res.forEach(p=>{
     const capN=p.cap==null?0:Math.floor(p.cap);
@@ -2810,6 +2863,7 @@ async function capacitePDF(){
   try{await ensurePDF();}catch(e){toast('PDF indisponible (hors-ligne, jamais chargé)');return;}
   if(!window.PDFLib){toast('PDF indisponible ici (teste sur l\u2019app déployée)');return;}
   try{
+    if(!LIVESTOCK)await refreshLiveStock();
     const prods=computeCapacite();
     if(!prods.length){toast('Aucun produit/recette');return;}
     const matMap={};prods.forEach(p=>p.lignes.forEach(l=>{if(!matMap[l.code])matMap[l.code]={nom:l.nom,stock:l.stock};}));
@@ -2841,7 +2895,7 @@ async function capacitePDF(){
     };
     page=doc.addPage([W,H]);y=H-M;
     T('Capacité de production & stock réel',M,y,15,true);y-=18;
-    T('Comptage : '+(ST.date||'—')+'   ·   Stock = physique compté, sinon état importé.',M,y,9,false,GREY);y-=16;
+    T((LIVEMETA&&LIVEMETA.hasBase?('Stock = inventaire du '+(LIVEMETA.baseDate||'?')+' + production + entrees - sorties - conso depuis.'):'Stock = etat de stock manuel (aucun inventaire date).'),M,y,9,false,GREY);y-=16;
     drawHeader();
     matCodes.forEach(code=>{
       if(y<M+28){page=doc.addPage([W,H]);y=H-M;drawHeader();}
@@ -2942,9 +2996,8 @@ function normalizePriorities(modifiedProd){
 }
 function renderPlan(){
   const app=$('#app');
-  const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;
   let h='<div class="plan-wrap">';
-  h+='<div class="bil-src">Comptage <b>'+esc(ST.date||'—')+'</b> · '+counted+'/'+REFS.length+' compté(s)</div>';
+  h+='<div class="bil-src">'+liveStockNote()+'</div>';
   h+='<p class="ref-hint">Pour chaque produit : une <b>priorité</b> (obligatoire pour l\u2019activer), puis <b>soit</b> une <b>quantité</b> ferme <b>soit</b> une <b>part %</b> du reste. Les quantités fermes sont produites d\u2019abord (par priorité), puis le stock restant est partagé au prorata du tonnage selon les % (somme ≤ 100 %).</p>';
   h+='<div class="plan-rows">';
   planRows().forEach(r=>{
