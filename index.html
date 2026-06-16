@@ -2586,14 +2586,15 @@ function bilPairBanner(swapped,pair,posterior){
   if(!ETAT_DATE)
     return '<div class="bil-pair warn">ℹ Renseigne la <b>date de l’état de stock</b> (Référentiels → État de stock) pour l’apparier tout seul au bon inventaire. Pour l’instant : inventaire actuellement chargé.</div>';
   if(swapped)
-    return '<div class="bil-pair ok">📅 État de stock du <b>'+esc(ETAT_DATE)+'</b> comparé à l’inventaire du <b>'+esc(pair.date||'?')+'</b>'+(pair.agent?(' · '+esc(pair.agent)):'')+' — apparié automatiquement (≤ date de l’état).'+(posterior?(' '+posterior+' inventaire(s) postérieur(s) ignoré(s).'):'')+'</div>';
-  return '<div class="bil-pair warn">⚠ Aucun inventaire daté du <b>'+esc(ETAT_DATE)+'</b> ou avant à comparer'+(posterior?(' ('+posterior+' inventaire(s) postérieur(s) existent mais ne doivent pas servir de référence)'):'')+'. Affichage sur l’inventaire chargé.</div>';
+    return '<div class="bil-pair ok">📅 État de stock du <b>'+esc(ETAT_DATE)+'</b> comparé à l’inventaire <b>validé 🔒</b> du <b>'+esc(pair.date||'?')+'</b>'+(pair.agent?(' · '+esc(pair.agent)):'')+' — apparié automatiquement (≤ date de l’état).'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) ignoré(s).'):'')+'</div>';
+  return '<div class="bil-pair warn">⚠ Aucun inventaire <b>validé 🔒</b> daté du <b>'+esc(ETAT_DATE)+'</b> ou avant. Valide l’inventaire de référence (Historique → 🔒 Valider) pour activer la comparaison.'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) existent mais ne servent pas de référence.'):'')+' Affichage sur l’inventaire chargé.</div>';
 }
 /* Trouve l'inventaire à apparier à l'état de stock : date ≤ ETAT_DATE, le plus proche (jamais postérieur) */
 async function findBilanPair(){
   if(!ETAT_DATE)return {pair:null,posterior:0};
   let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
-  const invs=recs.filter(r=>r&&r.st&&r.st.c&&r.id!=='current'&&!r.demo
+  // Seuls les inventaires VALIDÉS (verrouillés) servent de référence
+  const invs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'&&!r.demo
     &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
     &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0);
   const le=invs.filter(r=>String(r.date||'')<=ETAT_DATE).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
@@ -2816,11 +2817,11 @@ function prodDebit(prod){
 function arretsMin(m,nbProds){return (m.arrets||[]).reduce((s,a)=>s+num(a.min)*(a.freq==='parprod'?Math.max(0,nbProds):1),0);}
 function fmtH(h){const H=Math.floor(h);const mn=Math.round((h-H)*60);if(H<=0&&mn<=0)return '0 min';return (H>0?H+' h ':'')+(mn>0?mn+' min':'').trim();}
 
-/* ====== STOCK « VIVANT » (dernier inventaire + flux depuis sa date) ======
-   Base = physique du dernier inventaire archivé (daté) par article, sinon état
-   de stock manuel. Puis projection : + production + entrées − sorties − conso
-   (recettes) pour tous les mouvements postérieurs à la date de cet inventaire,
-   jusqu'à aujourd'hui. Même formule que la réconciliation d'Analyses.
+/* ====== STOCK « VIVANT » (dernier inventaire VALIDÉ + flux depuis sa date) ======
+   Base = physique du dernier inventaire VALIDÉ (verrouillé, daté) par article,
+   sinon état de stock manuel. Puis projection : + production + entrées − sorties
+   − conso (recettes) pour tous les mouvements postérieurs à la date de cet
+   inventaire, jusqu'à aujourd'hui. Même formule que la réconciliation d'Analyses.
    Recalculé à l'entrée des onglets Capacité / Plan (voir switchTab). */
 let LIVESTOCK=null;                       // {code:qté} ou null si pas encore calculé
 let LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
@@ -2828,18 +2829,22 @@ async function refreshLiveStock(){
   LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
   let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
   const real=recs.filter(r=>!r.demo);
-  // Dernier inventaire archivé (avec détail par article), par date
-  const invs=real.filter(r=>r.detail&&Object.keys(r.detail).length&&r.id!=='current'
+  // Dernier inventaire VALIDÉ (verrouillé), par date
+  const invs=real.filter(r=>r.locked&&r.st&&r.st.c&&r.id!=='current'
     &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
     &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||((a.savedAt||0)-(b.savedAt||0)));
   const base=invs[invs.length-1]||null;
   const baseDate=base?String(base.date||''):'';
   LIVEMETA.hasBase=!!base;LIVEMETA.baseDate=baseDate||null;
-  // Base par code : détail de l'inventaire si présent, sinon état de stock manuel
+  // Base par code : physique du dernier inventaire validé (calculé depuis son état), sinon état de stock manuel
   const baseMap={};
   REFS.forEach(r=>{const v=ETAT[r.code];baseMap[r.code]=(v!=null&&v!=='')?num(v):0;});
-  if(base)Object.keys(base.detail).forEach(c=>{const d=base.detail[c];if(d&&d.p!=null)baseMap[c]=num(d.p);});
+  if(base&&base.st){
+    const prevST=ST,prevRO=RO;ST=JSON.parse(JSON.stringify(base.st));RO=true;mergeAndMigrate();
+    REFS.forEach(r=>{if(ST.c[r.code]&&ST.c[r.code].counted)baseMap[r.code]=round2(total(r));});
+    ST=prevST;RO=prevRO;
+  }
   // Flux postérieurs à la date de base (ou tous si aucun inventaire), jusqu'à aujourd'hui
   const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
   const today=new Date().toISOString().slice(0,10);
@@ -2862,8 +2867,8 @@ async function refreshLiveStock(){
 /* Note explicative affichée sur Capacité / Plan */
 function liveStockNote(){
   if(LIVEMETA&&LIVEMETA.hasBase)
-    return 'Stock estimé = dernier inventaire du <b>'+esc(LIVEMETA.baseDate||'?')+'</b> + production + entrées − sorties − consommation depuis ('+LIVEMETA.nbMov+' mouvement(s) pris en compte). Un article recompté maintenant prime.';
-  return 'Stock estimé = <b>état de stock manuel</b> (aucun inventaire archivé daté : les sorties/entrées ne sont pas projetées). Archive un inventaire pour activer la projection.';
+    return 'Stock estimé = dernier inventaire <b>validé 🔒</b> du <b>'+esc(LIVEMETA.baseDate||'?')+'</b> + production + entrées − sorties − consommation depuis ('+LIVEMETA.nbMov+' mouvement(s) pris en compte). Un article recompté maintenant prime.';
+  return 'Stock estimé = <b>état de stock manuel</b> (aucun inventaire <b>validé 🔒</b> : les sorties/entrées ne sont pas projetées). Valide un inventaire (Historique → 🔒 Valider) pour activer la projection.';
 }
 /* Stock disponible d'une matière : physique compté maintenant, sinon stock vivant
    (dernier inventaire + flux), sinon état de stock manuel, sinon 0 */
