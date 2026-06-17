@@ -24,8 +24,9 @@
   .idrow{display:flex;gap:8px;margin-top:10px}
   .idrow input{flex:1;min-width:0;background:#1d3140;border:1px solid #2c4555;color:#fff;border-radius:8px;padding:9px 10px;font-size:14px}
   .idrow input::placeholder{color:#7e96aa}
-  .tools{display:flex;gap:8px;margin-top:8px}
-  .tools button{flex:1;background:#23394a;border:1px solid #34506a;color:#cfe0ee;border-radius:8px;padding:8px;font-size:12px;font-weight:600}
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .tools button{background:#23394a;border:1px solid #34506a;color:#cfe0ee;border-radius:8px;padding:10px 8px;font-size:12.5px;font-weight:600;min-height:42px;line-height:1.2;white-space:normal}
+  .tools button#collapseAll{grid-column:1 / -1}
   main{max-width:680px;margin:0 auto;padding:14px 12px}
   .group-h{display:flex;align-items:baseline;gap:8px;margin:22px 4px 8px}
   .group-h .n{font:700 12px/1 ui-monospace,monospace;color:var(--steel);border:1.5px solid var(--steel);border-radius:5px;padding:4px 6px}
@@ -578,7 +579,7 @@
     </div>
     <div class="tools">
       <button id="newInv">Nouvel inventaire</button>
-      <button id="resumeValidated" title="Repartir des chiffres du dernier inventaire validé">♻️ Reprendre dernier validé</button>
+      <button id="resumeValidated" title="Repartir des chiffres du dernier inventaire validé">♻️ Dernier validé</button>
       <button id="fragBtn">👥 Fragmenté</button>
       <button id="histBtn">Historique</button>
       <button id="collapseAll">Tout replier</button>
