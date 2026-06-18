@@ -591,14 +591,13 @@
   .q-tbl input:focus{outline:none;border-color:var(--steel);background:#fff}
   .q-tbl .q-mp-des{font-weight:600;font-size:12px;color:var(--ink);min-width:100px}
   .q-tbl .q-mp-code{font:600 11px ui-monospace,monospace;color:var(--mute)}
-  .q-batch-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line)}
+  .q-batch-row{display:flex;gap:4px;align-items:center;flex-wrap:nowrap;padding:6px 0;border-bottom:1px solid var(--line)}
   .q-batch-row:last-child{border-bottom:none}
-  .q-batch-num{font:700 13px ui-monospace,monospace;color:var(--steel-d);flex:none;width:32px;text-align:center}
-  .q-batch-time{display:flex;flex-direction:column;gap:3px;flex:1;min-width:100px}
-  .q-batch-time label{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--mute)}
-  .q-batch-time input{width:100%;padding:8px 6px;border:1.5px solid var(--line);border-radius:7px;font:600 13px ui-monospace,monospace;background:#fbfcfb}
+  .q-batch-num{font:700 12px ui-monospace,monospace;color:var(--steel-d);flex:none;min-width:28px;text-align:center}
+  .q-batch-time{display:flex;flex-direction:row;align-items:center;gap:0;flex:1;min-width:0}
+  .q-batch-time input{flex:1;min-width:0;width:0;padding:7px 4px;border:1.5px solid var(--line);border-radius:7px;font:600 12px ui-monospace,monospace;background:#fbfcfb}
   .q-batch-time input:focus{outline:none;border-color:var(--steel);background:#fff}
-  .q-now{border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:8px;padding:6px 8px;font-size:16px;line-height:1;flex:none;min-width:36px;text-align:center}
+  .q-now{border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:8px;padding:5px 6px;font-size:14px;line-height:1;flex:none;min-width:32px;text-align:center}
   .q-add{width:100%;padding:10px;border:1.5px dashed var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:9px;font-weight:600;font-size:13px;margin-top:8px}
   .q-rm{width:100%;padding:9px;border:1.5px solid #e3c7cd;background:#fbeef0;color:var(--red);border-radius:9px;font-weight:600;font-size:13px;margin-top:6px}
   .q-avg{font-size:12px;color:var(--mute);margin-top:8px;text-align:right}
@@ -1466,6 +1465,18 @@ async function exportAll(){
     shareOrDownload(fn,JSON.stringify(data),'Sauvegarde complète LEP');
     localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
   }catch(e){toast('Échec de la sauvegarde');}
+}
+async function exportAllDownload(){
+  try{toast('Preparation...');var recs=await idbAll();
+    var data={type:'lep-backup',v:1,ts:Date.now(),ls:collectLS(),idb:recs};
+    var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_LEP_'+suffix+'.txt';
+    var blob=new Blob([JSON.stringify(data)],{type:'text/plain'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download=fn;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(url);},1500);
+    localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
+    toast('Fichier telecharge : '+fn);
+  }catch(e){toast('Echec');}
 }
 function stripPhotos(o){
   if(Array.isArray(o))return o.map(stripPhotos);
@@ -2496,7 +2507,7 @@ async function renderAccueil(){
   let urg=0;REFS.forEach(r=>{if(r.cat!=='mp')return;((ST.c[r.code]&&ST.c[r.code].blocks)||[]).forEach(b=>{const st=perimStatus(b.date);if(st&&st.rank>=2)urg++;});});
   let h='<div class="prod-wrap"><h2 class="prod-title">Tableau de bord</h2>';
   var _chg=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;var _lts=parseInt(localStorage.getItem('lep_last_backup_ts'))||0;
-  if(_chg>0){var _lastStr=_lts?frDate(new Date(_lts).toISOString().slice(0,10)):'jamais';h+='<div id="backupBanner" style="background:#fef6e7;border:1.5px solid #e6cf95;border-left:5px solid #c8791b;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';h+='<div style="flex:1;min-width:180px;font-size:13px;color:#8a6d1b;line-height:1.4"><b>'+_chg+'</b> modification(s) non sauvegardee(s)<br><span style="font-size:11px;color:#a08530">Derniere sauvegarde : '+_lastStr+'</span></div>';h+='<button id="backupNow" style="padding:10px 16px;border:none;border-radius:9px;background:#c8791b;color:#fff;font-weight:700;font-size:13px;white-space:nowrap;cursor:pointer">Sauvegarder</button>';h+='</div>';}
+  if(_chg>0){var _lastStr=_lts?frDate(new Date(_lts).toISOString().slice(0,10)):'jamais';h+='<div id="backupBanner" style="background:#fef6e7;border:1.5px solid #e6cf95;border-left:5px solid #c8791b;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';h+='<div style="flex:1;min-width:180px;font-size:13px;color:#8a6d1b;line-height:1.4"><b>'+_chg+'</b> modification(s) non sauvegardee(s)<br><span style="font-size:11px;color:#a08530">Derniere sauvegarde : '+_lastStr+'</span></div>';h+='<div style="display:flex;gap:6px;flex:none"><button id="backupShare" style="padding:8px 12px;border:none;border-radius:9px;background:#c8791b;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Partager</button><button id="backupDL" style="padding:8px 12px;border:none;border-radius:9px;background:#15487f;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Telecharger</button></div>';h+='</div>';}
   h+='<div class="dash-card"><div class="dash-t">Inventaire en cours'+(ST.date?(' — '+esc(ST.date)):'')+'</div>'
     +'<div class="dash-prog"><div class="dash-pb"><div class="dash-pf" style="width:'+pct+'%"></div></div><div class="dash-pv">'+counted+'/'+tot+'</div></div>'
     +'<div class="dash-sub">'+pct+' % des articles comptés</div></div>';
@@ -2513,14 +2524,16 @@ async function renderAccueil(){
   h+='<div class="dash-card"><div class="dash-t">Sauvegardes & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
   h+='</div>';
   app.innerHTML=h;
-  var bb=$('#backupNow');if(bb)bb.onclick=function(){exportAll();};
+  var bbS=$('#backupShare');if(bbS)bbS.onclick=function(){exportAll();};
+  var bbD=$('#backupDL');if(bbD)bbD.onclick=function(){exportAllDownload();};
   app.querySelectorAll('.dash-b').forEach(b=>{b.onclick=()=>switchTab(b.dataset.go);});
   const saveBtnBox=$('#saveBtnBox');
-  const expAllBtn=document.createElement('button');expAllBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expAllBtn.textContent='Exporter toutes mes donnees';expAllBtn.onclick=()=>exportAll();
+  const expShareBtn=document.createElement('button');expShareBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expShareBtn.textContent='Partager donnees';expShareBtn.onclick=()=>exportAll();
+  const expDLBtn=document.createElement('button');expDLBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#eef4fb;color:var(--steel-d);font-weight:700;font-size:13px';expDLBtn.textContent='Telecharger donnees';expDLBtn.onclick=()=>exportAllDownload();
   const expLghtBtn=document.createElement('button');expLghtBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLghtBtn.textContent='Exporter sans photos';expLghtBtn.onclick=()=>exportLight();
   const fileInput=document.createElement('input');fileInput.type='file';fileInput.accept='.txt,.json,text/plain';fileInput.style.display='none';fileInput.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
   const impBtn=document.createElement('button');impBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impBtn.textContent='Importer une sauvegarde';impBtn.onclick=function(){fileInput.click();};
-  saveBtnBox.append(expAllBtn,expLghtBtn,fileInput,impBtn);
+  saveBtnBox.append(expShareBtn,expDLBtn,expLghtBtn,fileInput,impBtn);
   let recs=[];try{recs=await idbAll();}catch(e){}
   const pick=(pfx,n)=>recs.filter(r=>String(r.id).indexOf(pfx)===0).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0)).slice(0,n);
   const prods=pick('prod_',3),sorts=pick('sortie_',2),entrs=pick('entree_',2);
@@ -3741,7 +3754,8 @@ async function renderQualite(){
       h+='<td><input type="date" data-qi="'+i+'" data-qf="dateExp" value="'+esc(mp.dateExp)+'" onchange="qMPInput(this)"></td>';
       h+='<td>';
       if(mp.photo){h+='<span class="q-photo-ok" title="Photo prise">&#x2713;</span> ';}
-      h+='<button class="q-photo-btn" onclick="qMPPhoto('+i+')" title="Photo">&#x1f4f7;</button>';
+      h+='<button class="q-photo-btn" onclick="qMPPhoto('+i+')" title="Camera">&#x1f4f7;</button>';
+      h+='<button class="q-photo-btn" onclick="qMPPhoto('+i+',\'gallery\')" title="Galerie" style="margin-left:3px">&#x1f5bc;</button>';
       h+='</td>';
       h+='</tr>';
     });
@@ -3759,9 +3773,9 @@ async function renderQualite(){
   QS.melanges.forEach(function(b,i){
     h+='<div class="q-batch-row">';
     h+='<div class="q-batch-num">#'+(i+1)+'</div>';
-    h+='<div class="q-batch-time"><label>Debut</label><input type="time" data-bi="'+i+'" data-bf="heureDebut" value="'+esc(b.heureDebut)+'" onchange="qBatchInput(this)"></div>';
+    h+='<div class="q-batch-time"><input type="time" placeholder="Debut" data-bi="'+i+'" data-bf="heureDebut" value="'+esc(b.heureDebut)+'" onchange="qBatchInput(this)"></div>';
     h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureDebut\')">🕒</button>';
-    h+='<div class="q-batch-time"><label>Fin</label><input type="time" data-bi="'+i+'" data-bf="heureFin" value="'+esc(b.heureFin)+'" onchange="qBatchInput(this)"></div>';
+    h+='<div class="q-batch-time"><input type="time" placeholder="Fin" data-bi="'+i+'" data-bf="heureFin" value="'+esc(b.heureFin)+'" onchange="qBatchInput(this)"></div>';
     h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureFin\')">🕒</button>';
     h+='</div>';
   });
@@ -3857,9 +3871,10 @@ function qMPInput(el){
   }
 }
 
-function qMPPhoto(idx){
+function qMPPhoto(idx,mode){
   var inp=document.createElement('input');
-  inp.type='file';inp.accept='image/*';inp.capture='environment';
+  inp.type='file';inp.accept='image/*';
+  if(mode!=='gallery')inp.capture='environment';
   inp.onchange=function(){
     if(!inp.files[0])return;
     compress(inp.files[0]).then(function(data){
