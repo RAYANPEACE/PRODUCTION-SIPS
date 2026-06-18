@@ -579,10 +579,10 @@
   .q-field{display:flex;align-items:center;gap:10px;margin-bottom:10px}
   .q-field label{flex:1;font-size:13px;font-weight:600;min-width:0}
   .q-field label small{display:block;color:var(--mute);font-size:11px;font-weight:400}
-  .q-field input,.q-field select{width:160px;max-width:100%;text-align:right;font:600 14px/1 ui-monospace,monospace;padding:10px;border:1.5px solid var(--line);border-radius:9px;background:#fbfcfb;box-sizing:border-box}
+  .q-field input,.q-field select{flex:1.2;width:0;min-width:0;max-width:100%;text-align:right;font:600 14px/1 ui-monospace,monospace;padding:10px;border:1.5px solid var(--line);border-radius:9px;background:#fbfcfb;box-sizing:border-box}
   .q-field input:focus,.q-field select:focus{outline:none;border-color:var(--steel);background:#fff}
   .q-field input[readonly]{background:#eef2f6;color:var(--mute)}
-  .q-field select{text-align:left;font-family:system-ui,sans-serif;font-weight:500;width:100%;max-width:100%;box-sizing:border-box}
+  .q-field select{text-align:left;font-family:system-ui,sans-serif;font-weight:500}
   .q-field select:disabled{background:#eef2f6;color:var(--mute);opacity:0.8}
   .q-tbl{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
   .q-tbl th{background:#eef2f6;padding:7px 6px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--steel-d);border-bottom:1.5px solid var(--line);white-space:nowrap}
@@ -598,7 +598,7 @@
   .q-batch-time label{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--mute)}
   .q-batch-time input{width:100%;padding:8px 6px;border:1.5px solid var(--line);border-radius:7px;font:600 13px ui-monospace,monospace;background:#fbfcfb}
   .q-batch-time input:focus{outline:none;border-color:var(--steel);background:#fff}
-  .q-now{flex:none;padding:6px 10px;border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:8px;font-size:11px;font-weight:700;white-space:nowrap}
+  .q-now{border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:8px;padding:6px 8px;font-size:16px;line-height:1;flex:none;min-width:36px;text-align:center}
   .q-add{width:100%;padding:10px;border:1.5px dashed var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:9px;font-weight:600;font-size:13px;margin-top:8px}
   .q-rm{width:100%;padding:9px;border:1.5px solid #e3c7cd;background:#fbeef0;color:var(--red);border-radius:9px;font-weight:600;font-size:13px;margin-top:6px}
   .q-avg{font-size:12px;color:var(--mute);margin-top:8px;text-align:right}
@@ -2174,12 +2174,14 @@ function renderProduction(focusBi){
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production</h2>'
     +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui. Un bouton <b>Partager</b> pour le groupe WhatsApp.</p>'
+    +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
     +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
     +'<div class="pf-actions"><button id="pfShare" class="b-go">📤 Partager sur WhatsApp</button><button id="pfSave" class="b-sec">Enregistrer dans l\u2019historique</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
+    +'<div style="margin-top:12px;text-align:center"><button id="pfImportBtn" style="padding:10px 16px;border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:9px;font-weight:600;font-size:13px;cursor:pointer">📥 Importer une sauvegarde</button></div>'
     +'</div>';
   const re=()=>renderProduction();
   $('#pfDate').onchange=e=>{PF.date=e.target.value;};
@@ -2204,6 +2206,7 @@ function renderProduction(focusBi){
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
   loadProdHist();
+  $('#pfImportBtn').onclick=function(){var fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json';fi.style.display='none';fi.onchange=function(e){var f=e.target.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};document.body.appendChild(fi);fi.click();fi.remove();};
   if(focusBi!=null){const c=app.querySelector('.pb-card[data-bi="'+focusBi+'"]');if(c)setTimeout(()=>scrollCardIntoView(c),60);}
 }
 function migrateProdRec(rec){
@@ -2281,6 +2284,7 @@ function renderMov(kind,focusSel){
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">'+c.title+'</h2>'
     +'<p class="ref-hint">'+c.hint+'</p>'
+    +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label></div>'
     +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
@@ -2289,6 +2293,7 @@ function renderMov(kind,focusSel){
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
     +'<div class="pf-actions"><button id="mvSave" class="b-go">Enregistrer dans l\u2019historique</button><button id="mvShare" class="b-sec">📤 Partager sur WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
+    +'<div style="margin-top:12px;text-align:center"><button id="mvImportBtn" style="padding:10px 16px;border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:9px;font-weight:600;font-size:13px;cursor:pointer">📥 Importer une sauvegarde</button></div>'
     +'</div>';
   const re=()=>renderMov(kind);
   $('#mvDate').onchange=e=>{mf.date=e.target.value;};
@@ -2304,6 +2309,7 @@ function renderMov(kind,focusSel){
   $('#mvShare').onclick=()=>movShare(kind,mf);
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
+  $('#mvImportBtn').onclick=function(){var fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json';fi.style.display='none';fi.onchange=function(e){var f=e.target.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};document.body.appendChild(fi);fi.click();fi.remove();};
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
 }
 async function loadMovHist(kind){
@@ -3751,9 +3757,9 @@ async function renderQualite(){
     h+='<div class="q-batch-row">';
     h+='<div class="q-batch-num">#'+(i+1)+'</div>';
     h+='<div class="q-batch-time"><label>Debut</label><input type="time" data-bi="'+i+'" data-bf="heureDebut" value="'+esc(b.heureDebut)+'" onchange="qBatchInput(this)"></div>';
-    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureDebut\')">🕒 Maint.</button>';
+    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureDebut\')">🕒</button>';
     h+='<div class="q-batch-time"><label>Fin</label><input type="time" data-bi="'+i+'" data-bf="heureFin" value="'+esc(b.heureFin)+'" onchange="qBatchInput(this)"></div>';
-    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureFin\')">🕒 Maint.</button>';
+    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureFin\')">🕒</button>';
     h+='</div>';
   });
   h+='<button class="q-add" onclick="qAddBatch()">+ Ajouter un batch</button>';
@@ -4017,19 +4023,24 @@ async function qNew(){
 
 /* --- JSON Export/Import --- */
 function qExportJSON(){
-  qComputeTimes();
-  var data=JSON.stringify({
-    id:QS.id||'batch_'+Date.now(),
-    kind:'batch',
-    date:QS.informations.dateProduction||todayStr(),
-    informations:QS.informations,
-    matieresPremieres:QS.matieresPremieres,
-    melanges:QS.melanges,
-    visas:QS.visas,
-    savedAt:Date.now()
-  },null,2);
-  var fn='fiche-lot-'+(QS.informations.numeroLot||'draft')+'.json';
-  shareOrDownload(fn,data,'Fiche de lot');
+  try{
+    qComputeTimes();
+    var lot=QS.informations.numeroLot||'draft';
+    var dt=QS.informations.dateProduction||todayStr();
+    var data=JSON.stringify({
+      id:QS.id||'batch_'+Date.now(),
+      kind:'batch',
+      date:dt,
+      informations:QS.informations,
+      matieresPremieres:QS.matieresPremieres,
+      melanges:QS.melanges,
+      visas:QS.visas,
+      savedAt:Date.now()
+    },null,2);
+    var fn='qualite_LOT-'+lot+'_'+dt+'.json';
+    shareOrDownload(fn,data,'Fiche qualite lot '+lot);
+    toast('JSON exporte');
+  }catch(e){toast('Erreur export JSON');}
 }
 
 function qImportJSON(text){
