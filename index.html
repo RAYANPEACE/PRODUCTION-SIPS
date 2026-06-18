@@ -27,20 +27,21 @@
   .tools{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
   .tools button{background:#23394a;border:1px solid #34506a;color:#cfe0ee;border-radius:8px;padding:7px 4px;font-size:11px;font-weight:600;min-height:34px;line-height:1.15;white-space:normal;grid-column:span 2}
   .tools button:nth-child(4),.tools button:nth-child(5){grid-column:span 3}
+  .tools-toggle{width:100%;margin-top:8px;background:#1d3140;border:1px solid #34506a;color:#9fb6c8;border-radius:8px;padding:6px;font-size:11px;font-weight:600}
+  #comptageTools.tools-collapsed .tools{display:none}
   main{max-width:680px;margin:0 auto;padding:14px 12px}
   .group-h{display:flex;align-items:baseline;gap:8px;margin:22px 4px 8px}
   .group-h .n{font:700 12px/1 ui-monospace,monospace;color:var(--steel);border:1.5px solid var(--steel);border-radius:5px;padding:4px 6px}
   .group-h h2{margin:0;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
   .group-h span{font-size:12px;color:var(--mute);margin-left:auto}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:6px 0;overflow:hidden}
   .card.nc{background:#fbfaf7;border-style:dashed}
-  .card>.top{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;user-select:none}
-  .card .stripe{width:5px;align-self:stretch;border-radius:3px;min-height:34px}
+  .card>.top{display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;user-select:none}
+  .card .stripe{width:5px;align-self:stretch;border-radius:3px;min-height:20px}
   .s-cart{background:var(--steel)}.s-sac{background:#7a5cc8}.s-cv{background:#3a7bbf}
   .s-bob{background:var(--amber)}.s-vrac{background:var(--green)}.s-tare{background:var(--red)}.s-pl{background:#8a6d3b}.s-simple{background:#9aa3ab}
   .card .ttl{flex:1;min-width:0}
   .card .ttl b{font-weight:600;font-size:14.5px;display:block;line-height:1.2}
-  .card .cfg{font-size:11px;color:var(--mute);display:block;margin-top:2px}
   .readout{font-weight:700;font-size:clamp(12px,3.6vw,16px);line-height:1;font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums;background:var(--readout);color:var(--readout-fg);padding:6px 9px;border-radius:7px;white-space:nowrap}
   .readout small{color:#3aa97a;font-size:9px;font-weight:600}
   .badge{font-size:10px;font-weight:700;padding:3px 7px;border-radius:20px;white-space:nowrap}
@@ -577,6 +578,7 @@
       <input id="agent" placeholder="Nom du compteur" autocomplete="off">
       <input id="date" type="date">
     </div>
+    <button id="toolsToggle" class="tools-toggle" aria-expanded="true">▴ Masquer les boutons</button>
     <div class="tools">
       <button id="newInv">Nouvel inventaire</button>
       <button id="resumeValidated" title="Repartir des chiffres du dernier inventaire validé">♻️ Dernier validé</button>
@@ -874,7 +876,7 @@ function buildCard(r){
   const card=document.createElement('div');card.className='card'+(e.counted?'':' nc');card.dataset.code=r.code;
   card.innerHTML=`<div class="top">
       <div class="stripe ${STRIPE[r.m]}"></div>
-      <div class="ttl"><b>${r.des}</b><small class="cfg">${cfgLabel(r)}</small></div>
+      <div class="ttl"><b>${r.des}</b></div>
       <div class="readout" data-ro></div>
       <span class="hasphoto" data-photo style="display:none" title="Photo jointe">📷</span>
       <div class="chev">▶</div></div><div class="body"></div>`;
@@ -886,16 +888,6 @@ function buildCard(r){
   buildBody(r,card.querySelector('.body'));
   return card;
 }
-function cfgLabel(r){const p=pOf(r);switch(r.m){
-  case 'carton':return `${p.etPal} étages/pal · ${p.cartEt} cartons/étage`;
-  case 'sac':return `${p.etPal} étages/pal · ${p.sacEt} sacs/étage`;
-  case 'cartvide':return `${p.pqEt} paquets/étage · ${p.etPal} étages/pal · ${p.cartPaquet} cartons/paquet`;
-  case 'bobine':return `Réf : ${p.poidsRef} kg pour épaisseur ${p.epRef}`;
-  case 'vrac':return `${p.kgSac} kg/sac`+(p.sacPal?` · ${p.sacPal} sacs/palette`:'');
-  case 'tare':return `Poids net = brut − emballage`;
-  case 'plastique':return `Paquet ${p.parPaquet} · rouleau ${p.parRouleau}`;
-  case 'simple':return r.note||'Saisie directe — vide = théorique';
-}return '';}
 function setCounted(r){ST.c[r.code].counted=hasInput(r);
   const card=$(`.card[data-code="${r.code}"]`);card&&card.classList.toggle('nc',!ST.c[r.code].counted);}
 
@@ -1576,6 +1568,9 @@ function unfreezeCard(code){const en=ST.c[code];if(!en)return false;let ch=false
   if(unfreezeCard(card.dataset.code))refresh();
 }));
 $('#collapseAll').onclick=()=>document.querySelectorAll('.sub.open,.card.open').forEach(c=>c.classList.remove('open'));
+$('#toolsToggle').onclick=()=>{const ct=$('#comptageTools');const collapsed=ct.classList.toggle('tools-collapsed');
+  const t=$('#toolsToggle');t.setAttribute('aria-expanded',String(!collapsed));
+  t.textContent=collapsed?'▾ Afficher les boutons':'▴ Masquer les boutons';};
 // Touche du clavier (coche) = valider et fermer le champ
 document.addEventListener('keydown',e=>{if(e.key!=='Enter'||!e.target||e.target.tagName!=='INPUT')return;
   e.preventDefault();
