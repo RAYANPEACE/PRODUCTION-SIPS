@@ -1503,37 +1503,9 @@ async function importAll(text){
     alert("Import : "+imported+" ajoutee(s).\nRechargement en cours...");location.reload();
   }catch(e){alert("Echec de l’import.");}
 }
-async function genDemoData(){
-  if(!confirm('Générer des données de DÉMONSTRATION (productions, sorties, entrées, inventaires fictifs sur ~8 mois) ?\n\nTes données réelles ne sont PAS touchées. Tu pourras tout supprimer avec « Supprimer les données démo ».'))return;
-  const prods=Object.keys(RECF);if(!prods.length){toast('Ajoute des recettes d\u2019abord');return;}
-  const finis=REFS.filter(r=>r.cat==='fini'),mps=REFS.filter(r=>r.cat==='mp');
-  const rnd=(a,b)=>Math.round(a+Math.random()*(b-a));const pad=n=>(n<10?'0':'')+n;const rid=()=>Math.random().toString(36).slice(2,7);
-  const out=[];const now=new Date();
-  for(let mo=7;mo>=0;mo--){
-    const d=new Date(now.getFullYear(),now.getMonth()-mo,1);const ym=d.getFullYear()+'-'+pad(d.getMonth()+1);const base=d.getTime();
-    for(let i=0;i<rnd(2,4);i++){const blocks=[];
-      for(let b=0;b<rnd(1,2);b++){const p=prods[rnd(0,prods.length-1)];const emb=embType(p);
-        blocks.push({p:p,n:String(emb==='sac'?rnd(80,260):rnd(200,1600)),w_emb:String(rnd(0,8)),w_film:String(emb==='carton'?rnd(0,5):0),w_mel:String(rnd(0,12)),perso:[],photos:[]});}
-      out.push({id:'prod_demo_'+ym+'_'+i+'_'+rid(),kind:'prod',demo:true,date:ym+'-'+pad(rnd(2,26)),agent:'Démo',blocks:blocks,note:'',savedAt:base+i*1000});}
-    for(let i=0;i<rnd(1,2);i++){
-      const fl=finis.slice(0,rnd(1,Math.min(3,finis.length||1))).map(r=>({a:r.des,q:String(rnd(20,200))}));
-      const ml=mps.length?[{a:mps[rnd(0,mps.length-1)].des,q:String(rnd(1,10))}]:[];
-      out.push({id:'sortie_demo_'+ym+'_'+i+'_'+rid(),kind:'sortie',demo:true,date:ym+'-'+pad(rnd(2,27)),ref:'Camion démo',finis:fl,mp:ml,photos:[],note:'',savedAt:base+100+i*1100});}
-    {const ml=mps.slice(0,rnd(1,Math.min(4,mps.length||1))).map(r=>({a:r.des,q:String(rnd(200,3000))}));
-      out.push({id:'entree_demo_'+ym+'_'+rid(),kind:'entree',demo:true,date:ym+'-'+pad(rnd(2,27)),ref:'Fournisseur démo',finis:[],mp:ml,photos:[],note:'',savedAt:base+1500});}
-    if(mo%2===0){const detail={};let alert=0,tot=0;
-      REFS.slice(0,Math.min(20,REFS.length)).forEach(r=>{const theo=rnd(50,800);const e=rnd(-30,30);const phys=Math.max(0,theo-e);detail[r.code]={n:r.des,t:theo,p:phys,e:e};tot+=e;if(Math.abs(e)>15)alert++;});
-      out.push({id:'inv_demo_'+ym,kind:'inv',demo:true,date:ym+'-28',agent:'Démo',filled:Object.keys(detail).length,bilan:{total:Math.round(tot*100)/100,nbAlertes:alert,nbCounted:Object.keys(detail).length},detail:detail,st:{demo:true,c:{}},savedAt:base+2000});}
-  }
-  try{for(const r of out)await idbPut(r);toast(out.length+' fiches démo créées — ouvre Analyses');}catch(e){toast('Échec génération');}
-}
-async function clearDemoData(){
-  if(!confirm('Supprimer toutes les données de démonstration ?'))return;
-  try{const recs=await idbAll();let k=0;for(const r of recs){if(r.demo){await idbDel(r.id);k++;}}toast(k+' fiches démo supprimées');}catch(e){toast('Échec');}
-}
 async function openHistory(){
   const list=$('#histList');list.innerHTML='Chargement…';
-  let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&!r.demo&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('batch_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
+  let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('batch_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
   list.innerHTML='';
   const bk=document.createElement('div');bk.style.cssText='border:1px solid #d4e3f3;border-radius:10px;padding:10px;margin-bottom:12px;background:#f6f9fd';
   bk.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:8px">💾 Sauvegarde complète <span style="font-weight:400;color:#6a7280">(réglages, machines, référentiels, inventaires, photos)</span></div>';
@@ -1542,11 +1514,6 @@ async function openHistory(){
   const fiB=document.createElement('input');fiB.type='file';fiB.accept='.txt,.json,text/plain';fiB.style.display='none';fiB.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
   const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde';impB.onclick=function(){fiB.click();};
   bk.append(expB,expLB,fiB,impB);list.append(bk);
-  const dz=document.createElement('div');dz.style.cssText='border:1px dashed #c9a23a;border-radius:10px;padding:10px;margin-bottom:12px;background:#fdfaef';
-  dz.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:8px">🧪 Données de démonstration <span style="font-weight:400;color:#6a7280">(test des analyses / PDF)</span></div>';
-  const genB=document.createElement('button');genB.style.cssText='width:100%;margin-bottom:8px;padding:10px;border-radius:8px;border:1.5px solid #c9a23a;background:#fff;font-weight:700;font-size:13px;color:#8a6d1b';genB.textContent='Générer des données démo';genB.onclick=()=>genDemoData();
-  const clrB=document.createElement('button');clrB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';clrB.textContent='Supprimer les données démo';clrB.onclick=()=>clearDemoData();
-  dz.append(genB,clrB);list.append(dz);
   const fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
   fi.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importInventory(rd.result);};rd.readAsText(f);};
   const imp=document.createElement('button');imp.style.cssText='width:100%;margin-bottom:10px;padding:10px;border-radius:8px;border:1.5px solid #c5e4d2;color:var(--green);background:#e7f3ec;font-weight:700;font-size:14px';
@@ -2533,9 +2500,16 @@ async function renderAccueil(){
     +'<button class="dash-b" data-go="analyse">📈 Analyses</button>';
   h+='</div></div>';
   h+='<div id="dashRecent" class="dash-card"><div class="dash-t">Dernières saisies</div><div class="dash-rec">Chargement…</div></div>';
+  h+='<div class="dash-card"><div class="dash-t">Sauvegardes & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
   h+='</div>';
   app.innerHTML=h;
   app.querySelectorAll('.dash-b').forEach(b=>{b.onclick=()=>switchTab(b.dataset.go);});
+  const saveBtnBox=$('#saveBtnBox');
+  const expAllBtn=document.createElement('button');expAllBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expAllBtn.textContent='Exporter toutes mes donnees';expAllBtn.onclick=()=>exportAll();
+  const expLghtBtn=document.createElement('button');expLghtBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLghtBtn.textContent='Exporter sans photos';expLghtBtn.onclick=()=>exportLight();
+  const fileInput=document.createElement('input');fileInput.type='file';fileInput.accept='.txt,.json,text/plain';fileInput.style.display='none';fileInput.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
+  const impBtn=document.createElement('button');impBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impBtn.textContent='Importer une sauvegarde';impBtn.onclick=function(){fileInput.click();};
+  saveBtnBox.append(expAllBtn,expLghtBtn,fileInput,impBtn);
   let recs=[];try{recs=await idbAll();}catch(e){}
   const pick=(pfx,n)=>recs.filter(r=>String(r.id).indexOf(pfx)===0).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0)).slice(0,n);
   const prods=pick('prod_',3),sorts=pick('sortie_',2),entrs=pick('entree_',2);
@@ -2698,7 +2672,7 @@ function bilPairBanner(swapped,pair,posterior){
 async function findBilanPair(){
   let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
   // Seuls les inventaires VALIDÉS (verrouillés) servent de référence
-  const invs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'&&!r.demo
+  const invs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'
     &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
     &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
@@ -2937,9 +2911,8 @@ let LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
 async function refreshLiveStock(){
   LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
   let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
-  const real=recs.filter(r=>!r.demo);
   // Dernier inventaire VALIDÉ (verrouillé), par date
-  const invs=real.filter(r=>r.locked&&r.st&&r.st.c&&r.id!=='current'
+  const invs=recs.filter(r=>r.locked&&r.st&&r.st.c&&r.id!=='current'
     &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
     &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
     .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||((a.savedAt||0)-(b.savedAt||0)));
