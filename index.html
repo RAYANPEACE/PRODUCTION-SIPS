@@ -2181,7 +2181,6 @@ function renderProduction(focusBi){
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
     +'<div class="pf-actions"><button id="pfShare" class="b-go">📤 Partager sur WhatsApp</button><button id="pfSave" class="b-sec">Enregistrer dans l\u2019historique</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
-    +'<div style="margin-top:12px;text-align:center"><button id="pfImportBtn" style="padding:10px 16px;border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:9px;font-weight:600;font-size:13px;cursor:pointer">📥 Importer une sauvegarde</button></div>'
     +'</div>';
   const re=()=>renderProduction();
   $('#pfDate').onchange=e=>{PF.date=e.target.value;};
@@ -2206,7 +2205,6 @@ function renderProduction(focusBi){
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
   loadProdHist();
-  $('#pfImportBtn').onclick=function(){var fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json';fi.style.display='none';fi.onchange=function(e){var f=e.target.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};document.body.appendChild(fi);fi.click();fi.remove();};
   if(focusBi!=null){const c=app.querySelector('.pb-card[data-bi="'+focusBi+'"]');if(c)setTimeout(()=>scrollCardIntoView(c),60);}
 }
 function migrateProdRec(rec){
@@ -2293,7 +2291,6 @@ function renderMov(kind,focusSel){
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
     +'<div class="pf-actions"><button id="mvSave" class="b-go">Enregistrer dans l\u2019historique</button><button id="mvShare" class="b-sec">📤 Partager sur WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
-    +'<div style="margin-top:12px;text-align:center"><button id="mvImportBtn" style="padding:10px 16px;border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:9px;font-weight:600;font-size:13px;cursor:pointer">📥 Importer une sauvegarde</button></div>'
     +'</div>';
   const re=()=>renderMov(kind);
   $('#mvDate').onchange=e=>{mf.date=e.target.value;};
@@ -2309,7 +2306,6 @@ function renderMov(kind,focusSel){
   $('#mvShare').onclick=()=>movShare(kind,mf);
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
-  $('#mvImportBtn').onclick=function(){var fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json';fi.style.display='none';fi.onchange=function(e){var f=e.target.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};document.body.appendChild(fi);fi.click();fi.remove();};
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
 }
 async function loadMovHist(kind){
@@ -4027,7 +4023,7 @@ function qExportJSON(){
     qComputeTimes();
     var lot=QS.informations.numeroLot||'draft';
     var dt=QS.informations.dateProduction||todayStr();
-    var data=JSON.stringify({
+    var obj={
       id:QS.id||'batch_'+Date.now(),
       kind:'batch',
       date:dt,
@@ -4036,10 +4032,20 @@ function qExportJSON(){
       melanges:QS.melanges,
       visas:QS.visas,
       savedAt:Date.now()
-    },null,2);
-    var fn='qualite_LOT-'+lot+'_'+dt+'.json';
-    shareOrDownload(fn,data,'Fiche qualite lot '+lot);
-    toast('JSON exporte');
+    };
+    var jsonStr=JSON.stringify(obj,null,2);
+    var fn='qualite_'+lot+'_'+dt+'.json';
+    var blob=new Blob([jsonStr],{type:'application/json'});
+    var file=new File([blob],fn,{type:'application/json'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      navigator.share({files:[file],title:'Fiche qualite '+lot,text:'Fiche qualite lot '+lot+' du '+frDate(dt)+' - a signer et renvoyer'}).catch(function(){});
+      toast('Partage en cours...');
+    }else{
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download=fn;document.body.appendChild(a);a.click();a.remove();
+      setTimeout(function(){URL.revokeObjectURL(url);},1500);
+      toast('Fichier JSON telecharge : '+fn);
+    }
   }catch(e){toast('Erreur export JSON');}
 }
 
