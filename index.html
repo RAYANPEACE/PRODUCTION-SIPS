@@ -1477,20 +1477,31 @@ async function exportLight(){
 async function importAll(text){
   let data;try{data=JSON.parse(text);}catch(e){alert('Fichier illisible.');return;}
   if(!data||data.type!=='lep-backup'){alert('Ce fichier n\u2019est pas une sauvegarde complète (utilise « Importer un inventaire reçu » pour un inventaire seul).');return;}
-  // Protection anti-contamination : une sauvegarde recue n'ecrase JAMAIS un inventaire valide localement
+  // Fusion intelligente : charger ids locaux, verifier verrous, compter ajouts/sauts
+  const localRecs=await idbAll();
+  const localIds=new Set(localRecs.map(r=>r.id).filter(id=>id));
   const lockedIds=new Set();
-  try{(await idbAll()).forEach(r=>{if(r&&r.locked)lockedIds.add(r.id);});}catch(e){}
+  localRecs.forEach(r=>{if(r&&r.locked)lockedIds.add(r.id);});
   const nLocked=lockedIds.size;
-  if(!confirm('Restaurer cette sauvegarde ? Elle remplacera les réglages et les inventaires NON validés.'+(nLocked?('\n\n🔒 '+nLocked+' inventaire(s) VALIDÉ(S) chez toi seront PROTÉGÉS (jamais écrasés).'):'')))return;
+  let toAdd=0, skippedExisting=0, skippedLocked=0;
+  if(Array.isArray(data.idb))for(const rec of data.idb){
+    if(!rec||!rec.id)continue;
+    if(lockedIds.has(rec.id)){skippedLocked++;continue;}
+    if(localIds.has(rec.id)){skippedExisting++;continue;}
+    toAdd++;
+  }
+  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"");
+  if(!confirm(msg))return;
   try{
     if(data.ls)Object.keys(data.ls).forEach(k=>{try{localStorage.setItem(k,data.ls[k]);}catch(e){}});
-    let skipped=0;
+    let imported=0;
     if(Array.isArray(data.idb))for(const rec of data.idb){
-      if(rec&&lockedIds.has(rec.id)){skipped++;continue;}
-      try{await idbPut(rec);}catch(e){}
+      if(!rec||!rec.id)continue;
+      if(lockedIds.has(rec.id)||localIds.has(rec.id))continue;
+      try{await idbPut(rec);imported++;}catch(e){}
     }
-    alert('Sauvegarde restaurée.'+(skipped?(' '+skipped+' inventaire(s) validé(s) protégé(s).'):'')+' L’application va se recharger.');location.reload();
-  }catch(e){alert('Échec de la restauration.');}
+    alert("Import : "+imported+" ajoutee(s).\nRechargement en cours...");location.reload();
+  }catch(e){alert("Echec de l’import.");}
 }
 async function genDemoData(){
   if(!confirm('Générer des données de DÉMONSTRATION (productions, sorties, entrées, inventaires fictifs sur ~8 mois) ?\n\nTes données réelles ne sont PAS touchées. Tu pourras tout supprimer avec « Supprimer les données démo ».'))return;
