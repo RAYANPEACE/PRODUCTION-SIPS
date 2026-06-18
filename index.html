@@ -24,9 +24,9 @@
   .idrow{display:flex;gap:8px;margin-top:10px}
   .idrow input{flex:1;min-width:0;background:#1d3140;border:1px solid #2c4555;color:#fff;border-radius:8px;padding:9px 10px;font-size:14px}
   .idrow input::placeholder{color:#7e96aa}
-  .tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-  .tools button{background:#23394a;border:1px solid #34506a;color:#cfe0ee;border-radius:8px;padding:10px 8px;font-size:12.5px;font-weight:600;min-height:42px;line-height:1.2;white-space:normal}
-  .tools button#collapseAll{grid-column:1 / -1}
+  .tools{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
+  .tools button{background:#23394a;border:1px solid #34506a;color:#cfe0ee;border-radius:8px;padding:7px 4px;font-size:11px;font-weight:600;min-height:34px;line-height:1.15;white-space:normal;grid-column:span 2}
+  .tools button:nth-child(4),.tools button:nth-child(5){grid-column:span 3}
   main{max-width:680px;margin:0 auto;padding:14px 12px}
   .group-h{display:flex;align-items:baseline;gap:8px;margin:22px 4px 8px}
   .group-h .n{font:700 12px/1 ui-monospace,monospace;color:var(--steel);border:1.5px solid var(--steel);border-radius:5px;padding:4px 6px}
@@ -1721,31 +1721,16 @@ async function ensurePDF(){
 
 /* ---------- RÔLES (PIN 4 chiffres) ---------- */
 let ADMIN=false;
-function getPin(){return lsGet('lep_pin',null);}
+const ADMIN_PIN='1951';   // Code admin commun à tous — pour le changer, modifier cette valeur ici (GitHub)
 function askPin(){
-  const cur=getPin();
-  if(!cur){
-    const a=prompt('Premier accès admin — créer un code à 4 chiffres :');
-    if(a==null)return false;
-    if(!/^\d{4}$/.test(a)){alert('Le code doit faire exactement 4 chiffres.');return false;}
-    const b=prompt('Confirmer le code :');
-    if(b!==a){alert('Les deux codes ne correspondent pas.');return false;}
-    lsSet('lep_pin',a);return true;
-  }
-  const t=prompt('Code admin (4 chiffres) :');
+  const t=prompt('Code admin :');
   if(t==null)return false;
-  if(t!==cur){alert('Code incorrect.');return false;}
+  if(t!==ADMIN_PIN){alert('Code incorrect.');return false;}
   return true;
 }
 function toggleAdmin(){
   if(ADMIN){ADMIN=false;updateAdminUI();switchTab('accueil');toast('Mode employé');return;}
   if(askPin()){ADMIN=true;updateAdminUI();toast('Mode admin déverrouillé');}
-}
-function changePin(){
-  if(!ADMIN)return;
-  const a=prompt('Nouveau code admin (4 chiffres) :');if(a==null)return;
-  if(!/^\d{4}$/.test(a)){alert('Le code doit faire 4 chiffres.');return;}
-  lsSet('lep_pin',a);toast('Code admin modifié');
 }
 function updateAdminUI(){
   document.body.classList.toggle('admin',ADMIN);
@@ -1755,7 +1740,7 @@ function updateAdminUI(){
 }
 
 /* ---------- ONGLETS ---------- */
-const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,true],['entree','Entrées',true,true],['analyse','Analyses',true,true]];
+const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true]];
 let TAB='accueil';
 function buildTabbar(){
   const tb=$('#tabbar');if(!tb)return;tb.innerHTML='';
@@ -1804,13 +1789,12 @@ function renderRef(){
     +'<button data-rt="recf">Recettes</button>'
     +'<button data-rt="mach">Machines</button>'
     +'</div><div id="refBody"></div>'
-    +'<div class="ref-foot"><button id="pinChange">Changer le code admin</button> · <button id="adminOut">Quitter le mode admin</button></div>'
+    +'<div class="ref-foot"><button id="adminOut">Quitter le mode admin</button></div>'
     +'</div>';
   app.querySelectorAll('.ref-nav button').forEach(b=>{
     b.classList.toggle('active',b.dataset.rt===REFTAB);
     b.onclick=()=>{REFTAB=b.dataset.rt;renderRef();};
   });
-  $('#pinChange').onclick=changePin;
   $('#adminOut').onclick=toggleAdmin;
   const body=$('#refBody');
   if(REFTAB==='articles')renderArticles(body);
@@ -2257,7 +2241,7 @@ function renderMov(kind,focusSel){
   if(!mf.mp||!mf.mp.length)mf.mp=[{a:'',q:''}];
   const app=$('#app');
   app.innerHTML='<div class="prod-wrap">'
-    +'<h2 class="prod-title">'+c.title+' <span style="font-size:12px;color:#6a7280;font-weight:400">(admin)</span></h2>'
+    +'<h2 class="prod-title">'+c.title+'</h2>'
     +'<p class="ref-hint">'+c.hint+'</p>'
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label></div>'
     +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
