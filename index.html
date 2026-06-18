@@ -560,6 +560,10 @@
   .blk-sub b{font:800 18px ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--steel-d);margin-left:auto}
   .blk-sub small{color:var(--mute);font-size:11px}
   .blk-add{margin-top:2px}
+  .usr-bar{display:flex;gap:6px;align-items:center;margin-top:8px;background:#1a3040;border:1px solid #2c4555;border-radius:8px;padding:6px 10px}
+  .usr-bar .usr-name{font-size:12px;color:#cfe0ee;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .usr-bar .usr-role{font-size:10px;background:#23394a;border:1px solid #34506a;color:#9fb6c8;border-radius:5px;padding:2px 6px;font-weight:600;white-space:nowrap}
+  .usr-bar .usr-edit{background:none;border:1px solid #34506a;color:#9fb6c8;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;flex:none}
 </style>
 </head>
 <body>
@@ -573,9 +577,10 @@
     <button id="lockBtn" class="lockbtn" title="Mode administrateur">🔒</button>
   </div>
   <nav class="tabbar" id="tabbar" style="display:none"></nav>
+  <div class="usr-bar" id="usrBar" style="display:none"><span class="usr-name" id="usrLabel"></span><span class="usr-role" id="usrRole"></span><button class="usr-edit" id="usrEdit">Modifier</button></div>
   <div id="comptageTools">
     <div class="idrow">
-      <input id="agent" placeholder="Nom du compteur" autocomplete="off">
+      <input id="agent" type="hidden">
       <input id="date" type="date">
     </div>
     <button id="toolsToggle" class="tools-toggle" aria-expanded="true">▴ Masquer les boutons</button>
@@ -1234,7 +1239,7 @@ function refresh(){
       const si=ratioInfo(refs);const se=document.querySelector(`[data-subr="${gid}"]`);
       if(se){se.textContent=si.done+'/'+si.tot;se.className='ratio sm '+si.cls;}});
   });
-  ST.agent=$('#agent').value;ST.date=$('#date').value;saveCounts();
+  ST.date=$('#date').value;saveCounts();
 }
 
 /* ====== SAUVEGARDE : config (localStorage) + inventaires (IndexedDB) ====== */
@@ -1552,7 +1557,6 @@ async function closeArchive(){
   $('#agent').value=ST.agent;$('#date').value=ST.date;render();
 }
 
-$('#agent').addEventListener('input',refresh);
 $('#date').addEventListener('input',refresh);
 // Modifier une saisie d'un article importé/archivé : on lève le "gel" pour recalculer cet article
 function unfreezeCard(code){const en=ST.c[code];if(!en)return false;let ch=false;
@@ -2056,7 +2060,7 @@ function dataUrlToFile(durl,name){return fetch(durl).then(r=>r.blob()).then(b=>n
 let PF=null;
 function embType(p){const a=REFS.find(x=>x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
 function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',perso:[],photos:[]};}
-function freshPF(){return {date:'',agent:'',blocks:[freshBlock()],note:''};}
+function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
 function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||(b.perso||[]).some(x=>x.lbl&&num(x.qte)>0);}
 function blockDechets(b){
   const emb=embType(b.p);const parts=[];
@@ -2109,6 +2113,7 @@ function photoArrayUI(host,arr,redraw){
 }
 function renderProduction(focusBi){
   if(!PF)PF=freshPF();
+  if(!PF.agent&&typeof USR!=='undefined'&&USR.nom)PF.agent=USR.nom;
   if(!PF.blocks||!PF.blocks.length)PF.blocks=[freshBlock()];
   const app=$('#app');
   const finiOpts=sel=>Object.keys(RECF).map(p=>`<option value="${esc(p)}"${p===sel?' selected':''}>${esc(p)}</option>`).join('');
@@ -2130,7 +2135,7 @@ function renderProduction(focusBi){
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production</h2>'
     +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui. Un bouton <b>Partager</b> pour le groupe WhatsApp.</p>'
-    +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" placeholder="nom (option)" value="'+esc(PF.agent)+'"></label></div>'
+    +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
@@ -2139,7 +2144,6 @@ function renderProduction(focusBi){
     +'</div>';
   const re=()=>renderProduction();
   $('#pfDate').onchange=e=>{PF.date=e.target.value;};
-  $('#pfAgent').oninput=e=>{PF.agent=e.target.value;};
   $('#pfNote').oninput=e=>{PF.note=e.target.value;};
   app.querySelectorAll('.pb-card').forEach(card=>{
     const bi=+card.dataset.bi;const b=PF.blocks[bi];
@@ -3385,7 +3389,7 @@ function buildFragmentFile(){
   return JSON.stringify(o,null,2);
 }
 async function shareFragment(){
-  ST.agent=$('#agent').value;ST.date=$('#date').value;
+  ST.date=$('#date').value;
   const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;
   if(!counted){toast('Compte au moins un article avant d’exporter ta part');return;}
   const fresh=freshCodes().length;
@@ -3467,14 +3471,46 @@ async function fragMergeFiles(){
   toast('Fusion réussie · '+filled+' article(s) · '+agents.length+' compteurs');
 }
 
-/* ====== INITIALISATION (asynchrone à cause d'IndexedDB) ====== */
+/* ====== PROFIL UTILISATEUR ====== */
+var USR_ROLES=[['operateur','Opérateur'],['responsableProd','Responsable production'],['responsableQualite','Responsable qualité']];
+var USR=lsGet('lep_usr',{nom:'',poste:''});
+function usrVisaKey(){return USR.poste||'';}
+function usrUpdateBar(){
+  var bar=$('#usrBar');if(!bar)return;
+  if(!USR.nom){bar.style.display='none';return;}
+  bar.style.display='flex';
+  var lbl=$('#usrLabel');if(lbl)lbl.textContent=USR.nom;
+  var rl=$('#usrRole');if(rl){var r=USR_ROLES.find(function(x){return x[0]===USR.poste;});rl.textContent=r?r[1]:'—';}
+}
+function usrAskProfile(){
+  var dlg=document.createElement('dialog');
+  dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+  var h='<div class="dlg-h"><b>Votre profil</b><button onclick="this.closest(\'dialog\').close()">×</button></div><div class="dlg-b">';
+  h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Votre nom</label><input id="usrDlgNom" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" value="'+esc(USR.nom)+'" placeholder="Prénom Nom"></div>';
+  h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Votre poste</label><select id="usrDlgPoste" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box">';
+  USR_ROLES.forEach(function(x){h+='<option value="'+x[0]+'"'+(USR.poste===x[0]?' selected':'')+'>'+x[1]+'</option>';});
+  h+='</select></div><div class="dlg-actions"><button class="b-go" id="usrDlgOk" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Valider</button></div></div>';
+  dlg.innerHTML=h;document.body.appendChild(dlg);dlg.showModal();
+  dlg.querySelector('#usrDlgOk').onclick=function(){
+    var n=(dlg.querySelector('#usrDlgNom').value||'').trim();
+    var p=dlg.querySelector('#usrDlgPoste').value;
+    if(!n){toast('Veuillez renseigner votre nom');return;}
+    USR.nom=n;USR.poste=p;lsSet('lep_usr',USR);
+    ST.agent=n;$('#agent').value=n;saveCounts();
+    dlg.close();dlg.remove();usrUpdateBar();toast('Profil enregistré : '+n);
+  };
+}
+
+/* ====== INITIALISATION ====== */
 (async function init(){
-  try{const cur=await idbGet('current');if(cur&&cur.st)ST=cur.st;}catch(e){}
-  applyReferentials();
-  mergeAndMigrate();
+  try{var cur=await idbGet('current');if(cur&&cur.st)ST=cur.st;}catch(e){}
+  applyReferentials();mergeAndMigrate();
   $('#agent').value=ST.agent;$('#date').value=ST.date;
-  const lb=$('#lockBtn');if(lb)lb.onclick=toggleAdmin;
-  buildTabbar();updateAdminUI();
+  var lb=$('#lockBtn');if(lb)lb.onclick=toggleAdmin;
+  buildTabbar();updateAdminUI();usrUpdateBar();
+  var ub=$('#usrEdit');if(ub)ub.onclick=usrAskProfile;
+  if(!USR.nom)setTimeout(usrAskProfile,300);
+  if(USR.nom){ST.agent=USR.nom;$('#agent').value=USR.nom;}
   switchTab('accueil');
 })();
 </script>
