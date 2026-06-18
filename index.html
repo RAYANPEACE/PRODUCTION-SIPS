@@ -573,15 +573,17 @@
   .q-sec-h h3{margin:0;font-size:14px;font-weight:700;flex:1}
   .q-sec-h .chev{color:#9fb6cc;transition:transform .2s}
   .q-sec.open>.q-sec-h .chev{transform:rotate(90deg)}
-  .q-sec-body{display:none;padding:12px 14px}
+  .q-sec-body{display:none;padding:12px 14px;overflow:hidden}
   .q-sec.open>.q-sec-body{display:block}
+  .q-sig-locked{opacity:0.7;background:#f4f5f2}
   .q-field{display:flex;align-items:center;gap:10px;margin-bottom:10px}
   .q-field label{flex:1;font-size:13px;font-weight:600;min-width:0}
   .q-field label small{display:block;color:var(--mute);font-size:11px;font-weight:400}
-  .q-field input,.q-field select{width:160px;text-align:right;font:600 14px/1 ui-monospace,monospace;padding:10px;border:1.5px solid var(--line);border-radius:9px;background:#fbfcfb}
+  .q-field input,.q-field select{width:160px;max-width:100%;text-align:right;font:600 14px/1 ui-monospace,monospace;padding:10px;border:1.5px solid var(--line);border-radius:9px;background:#fbfcfb;box-sizing:border-box}
   .q-field input:focus,.q-field select:focus{outline:none;border-color:var(--steel);background:#fff}
   .q-field input[readonly]{background:#eef2f6;color:var(--mute)}
-  .q-field select{text-align:left;font-family:system-ui,sans-serif;font-weight:500;width:100%}
+  .q-field select{text-align:left;font-family:system-ui,sans-serif;font-weight:500;width:100%;max-width:100%;box-sizing:border-box}
+  .q-field select:disabled{background:#eef2f6;color:var(--mute);opacity:0.8}
   .q-tbl{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
   .q-tbl th{background:#eef2f6;padding:7px 6px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--steel-d);border-bottom:1.5px solid var(--line);white-space:nowrap}
   .q-tbl td{padding:6px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -3621,37 +3623,43 @@ function qValidateBatches(){
 }
 
 /* --- Signature pad --- */
-function qInitSigPad(canvasId,role){
+function qInitSigPad(canvasId,role,editable){
   var cv=document.getElementById(canvasId);
   if(!cv)return;
+  /* Fix 4: scale canvas internal resolution to match CSS display size */
+  var dispW=cv.offsetWidth||400;
+  var dispH=cv.offsetHeight||100;
+  cv.width=dispW;
+  cv.height=dispH;
   var ctx=cv.getContext('2d');
   var drawing=false;
-  var rect;
   function pos(e){
-    rect=cv.getBoundingClientRect();
+    var rect=cv.getBoundingClientRect();
     var t=e.touches?e.touches[0]:e;
-    return {x:t.clientX-rect.left,y:t.clientY-rect.top};
+    return {x:(t.clientX-rect.left)*(cv.width/rect.width),y:(t.clientY-rect.top)*(cv.height/rect.height)};
   }
-  function start(e){
-    e.preventDefault();drawing=true;rect=cv.getBoundingClientRect();
-    var p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);
+  if(editable){
+    function start(e){
+      e.preventDefault();drawing=true;
+      var p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);
+    }
+    function move(e){
+      if(!drawing)return;e.preventDefault();
+      var p=pos(e);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#13202b';
+      ctx.lineTo(p.x,p.y);ctx.stroke();
+    }
+    function end(){
+      if(!drawing)return;drawing=false;
+      QS.visas[role].signature=cv.toDataURL();
+      if(!QS.visas[role].date)QS.visas[role].date=todayStr()+' '+qNowTime();
+      var tsEl=document.getElementById('qSigTs_'+role);
+      if(tsEl)tsEl.textContent=QS.visas[role].date;
+    }
+    cv.addEventListener('pointerdown',start);
+    cv.addEventListener('pointermove',move);
+    cv.addEventListener('pointerup',end);
+    cv.addEventListener('pointerleave',end);
   }
-  function move(e){
-    if(!drawing)return;e.preventDefault();
-    var p=pos(e);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#13202b';
-    ctx.lineTo(p.x,p.y);ctx.stroke();
-  }
-  function end(){
-    if(!drawing)return;drawing=false;
-    QS.visas[role].signature=cv.toDataURL();
-    if(!QS.visas[role].date)QS.visas[role].date=todayStr()+' '+qNowTime();
-    var tsEl=document.getElementById('qSigTs_'+role);
-    if(tsEl)tsEl.textContent=QS.visas[role].date;
-  }
-  cv.addEventListener('pointerdown',start);
-  cv.addEventListener('pointermove',move);
-  cv.addEventListener('pointerup',end);
-  cv.addEventListener('pointerleave',end);
   _qSigPads[role]={canvas:cv,ctx:ctx,clear:function(){
     ctx.clearRect(0,0,cv.width,cv.height);
     QS.visas[role].signature='';QS.visas[role].date='';
@@ -3698,10 +3706,15 @@ async function renderQualite(){
   h+='<div class="q-field"><label>Heure fin<small>Auto (dernier batch)</small></label><input type="text" id="qHFin" value="'+esc(QS.informations.heureFin)+'" readonly></div>';
   h+='<div class="q-field"><label>Numero de lot<small>Auto-incremente</small></label><input type="text" id="qLot" value="'+esc(QS.informations.numeroLot)+'" readonly></div>';
   h+='<div class="q-field"><label>Quantite produite (kg)<small>Batches x taille</small></label><input type="text" id="qQte" value="'+QS.informations.quantiteProduite+'" readonly></div>';
-  h+='<div class="q-field"><label>Taille batch (kg)</label>';
-  h+='<select id="qBatchSize" onchange="qOnBatchSize(this.value)">';
-  [200,250,400,500].forEach(function(v){h+='<option value="'+v+'"'+(QS.informations.tailleBatch===v?' selected':'')+'>'+v+' kg</option>';});
+  var isCafe=QS.informations.refProduit&&QS.informations.refProduit.toUpperCase().indexOf('CAFE AU LAIT')!==-1;
+  h+='<div class="q-field"><label>Taille batch (kg)'+(isCafe?'<small>Auto 225 kg (Cafe au lait)</small>':'')+'</label>';
+  h+='<select id="qBatchSize" onchange="qOnBatchSize(this.value)"'+(isCafe?' disabled':'')+'>';
+  [200,225,250,400,500].forEach(function(v){h+='<option value="'+v+'"'+(QS.informations.tailleBatch===v?' selected':'')+'>'+v+' kg</option>';});
   h+='</select></div>';
+  var nbCompleted=0;QS.melanges.forEach(function(b){if(b.heureDebut&&b.heureFin)nbCompleted++;});
+  h+='<div class="q-field"><label>Nombre de batches<small>Batches debut+fin remplis</small></label><input type="text" id="qNbBatch" value="'+nbCompleted+'" readonly></div>';
+  var avgTime=qAvgBatchTime();
+  h+='<div class="q-field"><label>Temps moyen par batch<small>Duree moyenne</small></label><input type="text" id="qAvgTime" value="'+(avgTime||'—')+'" readonly></div>';
   h+='</div></div>';
 
   /* Section B: Matieres Premieres */
@@ -3738,31 +3751,33 @@ async function renderQualite(){
     h+='<div class="q-batch-row">';
     h+='<div class="q-batch-num">#'+(i+1)+'</div>';
     h+='<div class="q-batch-time"><label>Debut</label><input type="time" data-bi="'+i+'" data-bf="heureDebut" value="'+esc(b.heureDebut)+'" onchange="qBatchInput(this)"></div>';
-    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureDebut\')">Maint.</button>';
+    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureDebut\')">🕒 Maint.</button>';
     h+='<div class="q-batch-time"><label>Fin</label><input type="time" data-bi="'+i+'" data-bf="heureFin" value="'+esc(b.heureFin)+'" onchange="qBatchInput(this)"></div>';
-    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureFin\')">Maint.</button>';
+    h+='<button class="q-now" onclick="qBatchNow('+i+',\'heureFin\')">🕒 Maint.</button>';
     h+='</div>';
   });
   h+='<button class="q-add" onclick="qAddBatch()">+ Ajouter un batch</button>';
   if(QS.melanges.length>1){
     h+='<button class="q-rm" onclick="qRmBatch()">Supprimer le dernier batch</button>';
   }
-  var avg=qAvgBatchTime();
-  if(avg)h+='<div class="q-avg">Temps moyen par batch : '+avg+'</div>';
   h+='</div></div>';
 
   /* Section D: Visas */
   h+='<div class="q-sec open" id="qSecD"><div class="q-sec-h" onclick="this.parentElement.classList.toggle(\'open\')"><h3>D — Visas / Signatures</h3><span class="chev">▸</span></div>';
   h+='<div class="q-sec-body">';
   var roles=[['operateur','Operateur'],['responsableProd','Responsable production'],['responsableQualite','Responsable qualite']];
+  var myRole=usrVisaKey();
   roles.forEach(function(rr){
     var key=rr[0],label=rr[1];
     var v=QS.visas[key];
-    h+='<div class="q-sig-block">';
-    h+='<div class="q-sig-title">'+esc(label)+(key==='operateur'?' <span style="color:var(--red);font-size:11px">(obligatoire)</span>':'')+'</div>';
-    h+='<input class="q-sig-nom" type="text" id="qSigNom_'+key+'" value="'+esc(v.nom)+'" placeholder="Nom" oninput="QS.visas.'+key+'.nom=this.value">';
-    h+='<canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"></canvas>';
-    h+='<button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';
+    var isMine=myRole===key;
+    h+='<div class="q-sig-block'+(isMine?'':' q-sig-locked')+'">';
+    h+='<div class="q-sig-title">'+esc(label)+(key==='operateur'?' <span style="color:var(--red);font-size:11px">(obligatoire)</span>':'');
+    if(!isMine)h+=' <span style="color:var(--mute);font-size:10px;font-style:italic">(lecture seule)</span>';
+    h+='</div>';
+    h+='<input class="q-sig-nom" type="text" id="qSigNom_'+key+'" value="'+esc(v.nom)+'" placeholder="Nom"'+(isMine?' oninput="QS.visas.'+key+'.nom=this.value"':' readonly style="background:#eef2f6;color:var(--mute)"')+'>';
+    h+='<canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"'+(isMine?'':' style="pointer-events:none;opacity:0.6"')+'></canvas>';
+    if(isMine){h+='<button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';}
     h+='<div class="q-sig-ts" id="qSigTs_'+key+'">'+esc(v.date)+'</div>';
     h+='</div>';
   });
@@ -3784,7 +3799,7 @@ async function renderQualite(){
   app.innerHTML=h;
 
   /* Init sig pads */
-  roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0]);});
+  roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],myRole===rr[0]);});
   /* Load history */
   qLoadHist();
 }
@@ -3794,9 +3809,13 @@ function qOnProdChange(val){
   QS.informations.refProduit=val;
   if(val){
     QS.matieresPremieres=qMPsFromRecipe(val);
+    if(val.toUpperCase().indexOf('CAFE AU LAIT')!==-1){
+      QS.informations.tailleBatch=225;
+    }
   }else{
     QS.matieresPremieres=[];
   }
+  qComputeTimes();
   renderQualite();
 }
 
@@ -3809,7 +3828,24 @@ function qOnBatchSize(val){
 function qMPInput(el){
   var i=parseInt(el.dataset.qi,10);
   var f=el.dataset.qf;
-  if(QS.matieresPremieres[i])QS.matieresPremieres[i][f]=el.value;
+  if(!QS.matieresPremieres[i])return;
+  QS.matieresPremieres[i][f]=el.value;
+  if(f==='dateExp'&&el.value){
+    var dp=QS.matieresPremieres[i].dateProd;
+    if(dp&&el.value<=dp){
+      toast('Date expiration doit etre apres date production (MP '+(i+1)+')');
+      el.value='';QS.matieresPremieres[i].dateExp='';
+    }
+  }
+  if(f==='dateProd'&&el.value){
+    var de=QS.matieresPremieres[i].dateExp;
+    if(de&&de<=el.value){
+      toast('Date expiration doit etre apres date production (MP '+(i+1)+')');
+      QS.matieresPremieres[i].dateExp='';
+      var deEl=document.querySelector('input[data-qi="'+i+'"][data-qf="dateExp"]');
+      if(deEl)deEl.value='';
+    }
+  }
 }
 
 function qMPPhoto(idx){
@@ -3838,9 +3874,12 @@ function qBatchInput(el){
   var hd=$('#qHDeb');if(hd)hd.value=QS.informations.heureDebut;
   var hf=$('#qHFin');if(hf)hf.value=QS.informations.heureFin;
   var qq=$('#qQte');if(qq)qq.value=QS.informations.quantiteProduite;
-  var avgEl=document.querySelector('.q-avg');
-  var avg=qAvgBatchTime();
-  if(avgEl&&avg)avgEl.textContent='Temps moyen par batch : '+avg;
+  qUpdateBatchStats();
+}
+function qUpdateBatchStats(){
+  var nb=0;QS.melanges.forEach(function(b){if(b.heureDebut&&b.heureFin)nb++;});
+  var nbEl=$('#qNbBatch');if(nbEl)nbEl.value=nb;
+  var avgEl=$('#qAvgTime');if(avgEl)avgEl.value=qAvgBatchTime()||'—';
 }
 
 function qBatchNow(idx,field){
@@ -3852,6 +3891,7 @@ function qBatchNow(idx,field){
   var hd=$('#qHDeb');if(hd)hd.value=QS.informations.heureDebut;
   var hf=$('#qHFin');if(hf)hf.value=QS.informations.heureFin;
   var qq=$('#qQte');if(qq)qq.value=QS.informations.quantiteProduite;
+  qUpdateBatchStats();
 }
 
 function qAddBatch(){
@@ -3877,6 +3917,7 @@ async function qSave(){
   for(var i=0;i<QS.matieresPremieres.length;i++){
     var mp=QS.matieresPremieres[i];
     if(!mp.dateProd||!mp.dateExp){toast('Dates manquantes pour MP '+(i+1)+' ('+mp.designation+')');return;}
+    if(mp.dateExp<=mp.dateProd){toast('Date expiration doit etre strictement apres date production pour MP '+(i+1)+' ('+mp.designation+')');return;}
   }
   var bErr=qValidateBatches();
   if(bErr){toast(bErr);return;}
