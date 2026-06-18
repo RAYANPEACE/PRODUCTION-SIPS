@@ -1312,7 +1312,7 @@ function idb(){return new Promise((res,rej)=>{if(_db)return res(_db);
   rq.onupgradeneeded=()=>{const db=rq.result;if(!db.objectStoreNames.contains('inv'))db.createObjectStore('inv',{keyPath:'id'});};
   rq.onsuccess=()=>{_db=rq.result;res(_db);};rq.onerror=()=>rej(rq.error);});}
 function idbPut(rec){return idb().then(db=>new Promise((res,rej)=>{
-  const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=res;t.onerror=()=>rej(t.error);}));}
+  const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=function(){try{var c=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;localStorage.setItem('lep_changes_since_backup',String(c+1));}catch(e){}res();};t.onerror=()=>rej(t.error);}));}
 function idbGet(id){return idb().then(db=>new Promise((res,rej)=>{
   const rq=db.transaction('inv','readonly').objectStore('inv').get(id);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);}));}
 function idbAll(){return idb().then(db=>new Promise((res,rej)=>{
@@ -1462,7 +1462,9 @@ function shareOrDownload(filename,text,title){
 async function exportAll(){
   try{toast('Préparation de la sauvegarde…');const recs=await idbAll();
     const data={type:'lep-backup',v:1,ts:Date.now(),ls:collectLS(),idb:recs};
-    shareOrDownload('sauvegarde_lep_'+new Date().toISOString().slice(0,10)+'.txt',JSON.stringify(data),'Sauvegarde complète LEP');
+    var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_LEP_'+suffix+'.txt';
+    shareOrDownload(fn,JSON.stringify(data),'Sauvegarde complète LEP');
+    localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
   }catch(e){toast('Échec de la sauvegarde');}
 }
 function stripPhotos(o){
@@ -1473,7 +1475,9 @@ function stripPhotos(o){
 async function exportLight(){
   try{toast('Préparation de la sauvegarde légère…');const recs=(await idbAll()).map(stripPhotos);
     const data={type:'lep-backup',v:1,light:true,ts:Date.now(),ls:collectLS(),idb:recs};
-    shareOrDownload('sauvegarde_legere_lep_'+new Date().toISOString().slice(0,10)+'.txt',JSON.stringify(data),'Sauvegarde légère LEP');
+    var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_legere_LEP_'+suffix+'.txt';
+    shareOrDownload(fn,JSON.stringify(data),'Sauvegarde légère LEP');
+    localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
   }catch(e){toast('Échec de la sauvegarde');}
 }
 async function importAll(text){
@@ -2491,6 +2495,8 @@ async function renderAccueil(){
   const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;const tot=REFS.length;const pct=tot?Math.round(counted/tot*100):0;
   let urg=0;REFS.forEach(r=>{if(r.cat!=='mp')return;((ST.c[r.code]&&ST.c[r.code].blocks)||[]).forEach(b=>{const st=perimStatus(b.date);if(st&&st.rank>=2)urg++;});});
   let h='<div class="prod-wrap"><h2 class="prod-title">Tableau de bord</h2>';
+  var _chg=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;var _lts=parseInt(localStorage.getItem('lep_last_backup_ts'))||0;
+  if(_chg>0){var _lastStr=_lts?frDate(new Date(_lts).toISOString().slice(0,10)):'jamais';h+='<div id="backupBanner" style="background:#fef6e7;border:1.5px solid #e6cf95;border-left:5px solid #c8791b;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';h+='<div style="flex:1;min-width:180px;font-size:13px;color:#8a6d1b;line-height:1.4"><b>'+_chg+'</b> modification(s) non sauvegardee(s)<br><span style="font-size:11px;color:#a08530">Derniere sauvegarde : '+_lastStr+'</span></div>';h+='<button id="backupNow" style="padding:10px 16px;border:none;border-radius:9px;background:#c8791b;color:#fff;font-weight:700;font-size:13px;white-space:nowrap;cursor:pointer">Sauvegarder</button>';h+='</div>';}
   h+='<div class="dash-card"><div class="dash-t">Inventaire en cours'+(ST.date?(' — '+esc(ST.date)):'')+'</div>'
     +'<div class="dash-prog"><div class="dash-pb"><div class="dash-pf" style="width:'+pct+'%"></div></div><div class="dash-pv">'+counted+'/'+tot+'</div></div>'
     +'<div class="dash-sub">'+pct+' % des articles comptés</div></div>';
@@ -2507,6 +2513,7 @@ async function renderAccueil(){
   h+='<div class="dash-card"><div class="dash-t">Sauvegardes & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
   h+='</div>';
   app.innerHTML=h;
+  var bb=$('#backupNow');if(bb)bb.onclick=function(){exportAll();};
   app.querySelectorAll('.dash-b').forEach(b=>{b.onclick=()=>switchTab(b.dataset.go);});
   const saveBtnBox=$('#saveBtnBox');
   const expAllBtn=document.createElement('button');expAllBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expAllBtn.textContent='Exporter toutes mes donnees';expAllBtn.onclick=()=>exportAll();
