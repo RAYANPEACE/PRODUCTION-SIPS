@@ -613,6 +613,7 @@
   .q-actions .q-save{background:var(--green);color:#fff}
   .q-actions .q-pdf{background:var(--steel);color:#fff}
   .q-actions .q-json{background:#23394a;color:#cfe0ee}
+  .q-actions .q-import-json{background:#f3f7fc;color:var(--steel-d);border:1.5px solid var(--steel)}
   .q-actions .q-new{background:#eef0ee;color:var(--ink);border:1.5px solid var(--line)}
   .q-hist-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 0;border-bottom:1px solid var(--line)}
   .q-hist-item .info{flex:1;min-width:140px}
@@ -3810,7 +3811,8 @@ async function renderQualite(){
   h+='<div class="q-actions">';
   h+='<button class="q-save" onclick="qSave()">Enregistrer</button>';
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
-  h+='<button class="q-json" onclick="qExportJSON()">JSON</button>';
+  h+='<button class="q-json" onclick="qExportJSON()">Envoyer pour signature</button>';
+  h+='<button class="q-import-json" onclick="qTriggerImportJSON()">Importer une fiche reçue</button>';
   h+='<button class="q-new" onclick="qNew()">Nouvelle fiche</button>';
   h+='</div>';
 
@@ -4048,6 +4050,7 @@ function qExportJSON(){
     var obj={
       id:QS.id||'batch_'+Date.now(),
       kind:'batch',
+      type:'qualite',
       date:dt,
       informations:QS.informations,
       matieresPremieres:QS.matieresPremieres,
@@ -4056,19 +4059,14 @@ function qExportJSON(){
       savedAt:Date.now()
     };
     var jsonStr=JSON.stringify(obj,null,2);
-    var fn='qualite_'+lot+'_'+dt+'.json';
-    var blob=new Blob([jsonStr],{type:'application/json'});
-    var file=new File([blob],fn,{type:'application/json'});
-    if(navigator.canShare&&navigator.canShare({files:[file]})){
-      navigator.share({files:[file],title:'Fiche qualite '+lot,text:'Fiche qualite lot '+lot+' du '+frDate(dt)+' - a signer et renvoyer'}).catch(function(){});
-      toast('Partage en cours...');
-    }else{
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement('a');a.href=url;a.download=fn;document.body.appendChild(a);a.click();a.remove();
-      setTimeout(function(){URL.revokeObjectURL(url);},1500);
-      toast('Fichier JSON telecharge : '+fn);
-    }
-  }catch(e){toast('Erreur export JSON');}
+    var fn='qualite_'+lot+'_'+dt+'.txt';
+    shareOrDownload(fn,jsonStr,'Fiche qualite lot '+lot+' - a signer et renvoyer');
+  }catch(e){toast('Erreur export');}
+}
+function qTriggerImportJSON(){
+  var fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
+  fi.onchange=function(e){var f=e.target.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.readAsText(f);};
+  document.body.appendChild(fi);fi.click();fi.remove();
 }
 
 function qImportJSON(text){
