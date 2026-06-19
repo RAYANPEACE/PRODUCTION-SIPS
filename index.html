@@ -621,8 +621,6 @@
   .q-hist-item .info span{display:block;font-size:12px;color:var(--mute)}
   .q-hist-item button{padding:7px 11px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:600;font-size:13px}
   .q-hist-item .del{border-color:#e3c7cd;color:var(--red)}
-  .q-photo-btn{flex:none;width:36px;height:36px;border:1.5px solid var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:8px;font-size:15px;display:flex;align-items:center;justify-content:center;padding:0}
-  .q-photo-ok{color:var(--green);font-size:15px;flex:none}
   .q-computed{font:700 14px ui-monospace,monospace;color:var(--green);text-align:right}
 </style>
 </head>
@@ -3570,7 +3568,7 @@ function qMPsFromRecipe(produit){
   var recipe=RECF[produit];
   if(!recipe)return [];
   return recipe.filter(function(ing){return qIsMP(ing.code);}).map(function(ing){
-    return {designation:ing.des,code:ing.code||'',refFournisseur:'',dateProd:'',dateExp:'',photo:''};
+    return {designation:ing.des,code:ing.code||'',refFournisseur:'',dateProd:'',dateExp:''};
   });
 }
 
@@ -3745,7 +3743,7 @@ async function renderQualite(){
   h+='<div class="q-sec-body">';
   if(QS.matieresPremieres.length){
     h+='<div style="overflow-x:auto">';
-    h+='<table class="q-tbl"><thead><tr><th>#</th><th>Designation</th><th>Ref lot fourn.</th><th>Date prod.</th><th>Date exp.</th><th></th></tr></thead><tbody>';
+    h+='<table class="q-tbl"><thead><tr><th>#</th><th>Designation</th><th>Ref lot fourn.</th><th>Date prod.</th><th>Date exp.</th></tr></thead><tbody>';
     QS.matieresPremieres.forEach(function(mp,i){
       h+='<tr>';
       h+='<td style="font:700 12px ui-monospace,monospace;color:var(--steel-d)">'+(i+1)+'</td>';
@@ -3753,11 +3751,6 @@ async function renderQualite(){
       h+='<td><input type="text" data-qi="'+i+'" data-qf="refFournisseur" value="'+esc(mp.refFournisseur)+'" oninput="qMPInput(this)" placeholder="N. lot"></td>';
       h+='<td><input type="date" data-qi="'+i+'" data-qf="dateProd" value="'+esc(mp.dateProd)+'" onchange="qMPInput(this)"></td>';
       h+='<td><input type="date" data-qi="'+i+'" data-qf="dateExp" value="'+esc(mp.dateExp)+'" onchange="qMPInput(this)"></td>';
-      h+='<td>';
-      if(mp.photo){h+='<span class="q-photo-ok" title="Photo prise">&#x2713;</span> ';}
-      h+='<button class="q-photo-btn" onclick="qMPPhoto('+i+')" title="Camera">&#x1f4f7;</button>';
-      h+='<button class="q-photo-btn" onclick="qMPPhoto('+i+',\'gallery\')" title="Galerie" style="margin-left:3px">&#x1f5bc;</button>';
-      h+='</td>';
       h+='</tr>';
     });
     h+='</tbody></table></div>';
@@ -3812,8 +3805,6 @@ async function renderQualite(){
   h+='<button class="q-save" onclick="qSave()">Enregistrer</button>';
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
   h+='<button class="q-json" onclick="qExportJSON()">Envoyer pour signature</button>';
-  h+='<input type="file" id="qImportFileIn" accept=".txt,.json,text/plain" style="display:none">';
-  h+='<button class="q-import-json" id="qImportBtn">Importer (fichier)</button>';
   h+='<button class="q-import-json" id="qPasteBtn">Coller une fiche reçue</button>';
   h+='<button class="q-new" onclick="qNew()">Nouvelle fiche</button>';
   h+='</div>';
@@ -3827,9 +3818,6 @@ async function renderQualite(){
 
   /* Init sig pads */
   roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],myRole===rr[0]);});
-  /* Import button — input stays in DOM (like inventory import) */
-  var qfi=$('#qImportFileIn');var qib=$('#qImportBtn');
-  if(qfi&&qib){qib.onclick=function(){qfi.click();};qfi.onchange=function(){var f=qfi.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.onerror=function(){toast('Erreur lecture fichier');};rd.readAsText(f);qfi.value='';};}
   /* Paste button — for WhatsApp received files */
   var qpb=$('#qPasteBtn');
   if(qpb)qpb.onclick=function(){
@@ -3890,22 +3878,8 @@ function qMPInput(el){
   }
 }
 
-function qMPPhoto(idx,mode){
-  var inp=document.createElement('input');
-  inp.type='file';inp.accept='image/*';
-  if(mode!=='gallery')inp.capture='environment';
-  inp.onchange=function(){
-    if(!inp.files[0])return;
-    compress(inp.files[0]).then(function(data){
-      QS.matieresPremieres[idx].photo=data;
-      renderQualite();
-    });
-  };
-  inp.click();
-}
-
 function qAddMP(){
-  QS.matieresPremieres.push({designation:'',code:'',refFournisseur:'',dateProd:'',dateExp:'',photo:''});
+  QS.matieresPremieres.push({designation:'',code:'',refFournisseur:'',dateProd:'',dateExp:''});
   renderQualite();
 }
 
@@ -3965,9 +3939,8 @@ async function qSave(){
   var bErr=qValidateBatches();
   if(bErr){toast(bErr);return;}
   qComputeTimes();
-  if(!QS.id)QS.id='batch_'+Date.now();
   var rec={
-    id:QS.id,
+    id:'batch_'+Date.now(),
     kind:'batch',
     date:QS.informations.dateProduction||todayStr(),
     informations:clone(QS.informations),
@@ -3978,6 +3951,7 @@ async function qSave(){
   };
   await idbPut(rec);
   toast('Fiche enregistree');
+  QS.id='';
   qLoadHist();
 }
 
@@ -4064,13 +4038,14 @@ async function qExportJSON(){
     qComputeTimes();
     var lot=QS.informations.numeroLot||'draft';
     var dt=QS.informations.dateProduction||todayStr();
+    var mps=clone(QS.matieresPremieres);mps.forEach(function(mp){delete mp.photo;});
     var obj={
       id:QS.id||'batch_'+Date.now(),
       kind:'batch',
       type:'qualite',
       date:dt,
       informations:QS.informations,
-      matieresPremieres:QS.matieresPremieres,
+      matieresPremieres:mps,
       melanges:QS.melanges,
       visas:QS.visas,
       savedAt:Date.now()
@@ -4099,6 +4074,7 @@ function qImportJSON(text){
   QS.id=obj.id||'';
   QS.informations=obj.informations||freshQS().informations;
   QS.matieresPremieres=obj.matieresPremieres||[];
+  QS.matieresPremieres.forEach(function(mp){delete mp.photo;});
   QS.melanges=obj.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
   QS.visas=obj.visas||freshQS().visas;
   renderQualite();

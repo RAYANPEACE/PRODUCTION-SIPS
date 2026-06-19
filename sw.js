@@ -1,4 +1,4 @@
-const C='inv-lep-v68';
+const C='inv-lep-v69';
 const LIBC='inv-lib-v1';
 const APP=['./','./index.html','./domain/inventory.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const LIBS=['./xlsx.full.min.js','./pdf-lib.min.js','./pdf.min.js','./pdf.worker.min.js'];
