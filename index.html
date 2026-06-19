@@ -3812,7 +3812,8 @@ async function renderQualite(){
   h+='<button class="q-save" onclick="qSave()">Enregistrer</button>';
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
   h+='<button class="q-json" onclick="qExportJSON()">Envoyer pour signature</button>';
-  h+='<button class="q-import-json" onclick="qTriggerImportJSON()">Importer une fiche reçue</button>';
+  h+='<input type="file" id="qImportFileIn" accept=".txt,.json,text/plain" style="display:none">';
+  h+='<button class="q-import-json" id="qImportBtn">Importer une fiche reçue</button>';
   h+='<button class="q-new" onclick="qNew()">Nouvelle fiche</button>';
   h+='</div>';
 
@@ -3825,6 +3826,9 @@ async function renderQualite(){
 
   /* Init sig pads */
   roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],myRole===rr[0]);});
+  /* Import button — input stays in DOM (like inventory import) */
+  var qfi=$('#qImportFileIn');var qib=$('#qImportBtn');
+  if(qfi&&qib){qib.onclick=function(){qfi.click();};qfi.onchange=function(){var f=qfi.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.onerror=function(){toast('Erreur lecture fichier');};rd.readAsText(f);qfi.value='';};}
   /* Load history */
   qLoadHist();
 }
@@ -4042,7 +4046,7 @@ async function qNew(){
 }
 
 /* --- JSON Export/Import --- */
-function qExportJSON(){
+async function qExportJSON(){
   try{
     qComputeTimes();
     var lot=QS.informations.numeroLot||'draft';
@@ -4060,15 +4064,19 @@ function qExportJSON(){
     };
     var jsonStr=JSON.stringify(obj,null,2);
     var fn='qualite_'+lot+'_'+dt+'.txt';
-    shareOrDownload(fn,jsonStr,'Fiche qualite lot '+lot+' - a signer et renvoyer');
+    var file=null;try{file=new File([jsonStr],fn,{type:'text/plain'});}catch(e2){}
+    try{
+      if(file&&navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
+        await navigator.share({files:[file],title:'Fiche qualite '+lot,text:'Fiche qualite lot '+lot+' du '+frDate(dt)+' - a signer et renvoyer'});
+        toast('Partage ouvert');return;
+      }
+    }catch(err){if(err&&err.name==='AbortError')return;}
+    var blob=new Blob([jsonStr],{type:'text/plain'});var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download=fn;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(url);},1500);
+    toast('Fichier enregistre : '+fn);
   }catch(e){toast('Erreur export');}
 }
-function qTriggerImportJSON(){
-  var fi=document.createElement('input');fi.type='file';fi.accept='*/*';fi.style.display='none';
-  fi.onchange=function(){var f=fi.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.onerror=function(){toast('Erreur lecture fichier');};rd.readAsText(f);fi.remove();};
-  document.body.appendChild(fi);fi.click();
-}
-
 function qImportJSON(text){
   if(!text||!text.trim()){toast('Fichier vide');return;}
   var obj;
