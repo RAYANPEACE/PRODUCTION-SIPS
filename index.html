@@ -3813,7 +3813,8 @@ async function renderQualite(){
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
   h+='<button class="q-json" onclick="qExportJSON()">Envoyer pour signature</button>';
   h+='<input type="file" id="qImportFileIn" accept=".txt,.json,text/plain" style="display:none">';
-  h+='<button class="q-import-json" id="qImportBtn">Importer une fiche reçue</button>';
+  h+='<button class="q-import-json" id="qImportBtn">Importer (fichier)</button>';
+  h+='<button class="q-import-json" id="qPasteBtn">Coller une fiche reçue</button>';
   h+='<button class="q-new" onclick="qNew()">Nouvelle fiche</button>';
   h+='</div>';
 
@@ -3829,6 +3830,18 @@ async function renderQualite(){
   /* Import button — input stays in DOM (like inventory import) */
   var qfi=$('#qImportFileIn');var qib=$('#qImportBtn');
   if(qfi&&qib){qib.onclick=function(){qfi.click();};qfi.onchange=function(){var f=qfi.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.onerror=function(){toast('Erreur lecture fichier');};rd.readAsText(f);qfi.value='';};}
+  /* Paste button — for WhatsApp received files */
+  var qpb=$('#qPasteBtn');
+  if(qpb)qpb.onclick=function(){
+    var dlg=document.createElement('dialog');
+    dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:500px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+    dlg.innerHTML='<div class="dlg-h"><b>Coller la fiche reçue</b><button onclick="this.closest(\'dialog\').close()">x</button></div>'
+      +'<div class="dlg-b"><p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Ouvrez le fichier .txt recu sur WhatsApp, selectionnez tout le texte, copiez-le, puis collez-le ici :</p>'
+      +'<textarea id="qPasteTxt" style="width:100%;height:180px;font:12px/1.4 ui-monospace,monospace;border:1px solid var(--line);border-radius:8px;padding:10px;box-sizing:border-box" placeholder="Collez le contenu du fichier ici..."></textarea>'
+      +'<div class="dlg-actions" style="margin-top:10px"><button class="b-sec" onclick="this.closest(\'dialog\').close()">Annuler</button><button class="b-go" id="qPasteOk">Valider</button></div></div>';
+    document.body.appendChild(dlg);dlg.showModal();
+    dlg.querySelector('#qPasteOk').onclick=function(){var txt=dlg.querySelector('#qPasteTxt').value;dlg.close();dlg.remove();if(txt&&txt.trim())qImportJSON(txt);else toast('Rien a coller');};
+  };
   /* Load history */
   qLoadHist();
 }
