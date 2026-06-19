@@ -4064,23 +4064,24 @@ function qExportJSON(){
   }catch(e){toast('Erreur export');}
 }
 function qTriggerImportJSON(){
-  var fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
-  fi.onchange=function(e){var f=e.target.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.readAsText(f);};
-  document.body.appendChild(fi);fi.click();fi.remove();
+  var fi=document.createElement('input');fi.type='file';fi.accept='*/*';fi.style.display='none';
+  fi.onchange=function(){var f=fi.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){qImportJSON(rd.result);};rd.onerror=function(){toast('Erreur lecture fichier');};rd.readAsText(f);fi.remove();};
+  document.body.appendChild(fi);fi.click();
 }
 
 function qImportJSON(text){
-  try{
-    var obj=JSON.parse(text);
-    if(!obj.informations){toast('Format JSON invalide');return;}
-    QS.id=obj.id||'';
-    QS.informations=obj.informations||freshQS().informations;
-    QS.matieresPremieres=obj.matieresPremieres||[];
-    QS.melanges=obj.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
-    QS.visas=obj.visas||freshQS().visas;
-    renderQualite();
-    toast('Fiche importee depuis JSON');
-  }catch(e){toast('JSON invalide');}
+  if(!text||!text.trim()){toast('Fichier vide');return;}
+  var obj;
+  try{obj=JSON.parse(text);}catch(e){toast('Fichier non reconnu (pas un JSON valide)');return;}
+  if(!obj.informations&&!obj.type){toast('Ce fichier ne contient pas une fiche qualite');return;}
+  if(obj.type==='lep-backup'){toast('Ceci est une sauvegarde complete, pas une fiche qualite. Utilisez Importer dans Accueil.');return;}
+  QS.id=obj.id||'';
+  QS.informations=obj.informations||freshQS().informations;
+  QS.matieresPremieres=obj.matieresPremieres||[];
+  QS.melanges=obj.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
+  QS.visas=obj.visas||freshQS().visas;
+  renderQualite();
+  toast('Fiche qualite importee');
 }
 
 /* --- PDF Export --- */
