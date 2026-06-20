@@ -154,6 +154,10 @@ function fullSubmission(s) {
   };
 }
 
+function recordStatus(r) {
+  return r.status || 'validated';
+}
+
 async function handleApi(req, res, url) {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 204, { ok: true });
@@ -197,9 +201,9 @@ async function handleApi(req, res, url) {
     const db = await readDb();
     const type = String(body.type);
     const hash = submissionHash(type, body.payload);
-    const existing = db.submissions.find(s =>
-      s.hash === hash && (s.status === 'submitted' || s.status === 'validated')
-    );
+    const activeRecord = db.records.find(r => r.hash === hash && recordStatus(r) !== 'cancelled');
+    const existing = db.submissions.find(s => s.hash === hash && s.status === 'submitted')
+      || (activeRecord && db.submissions.find(s => s.id === activeRecord.sourceSubmissionId));
     if (existing) {
       audit(db, 'submission.duplicate', body.author, { id: existing.id, type });
       await writeDb(db);
@@ -242,6 +246,7 @@ async function handleApi(req, res, url) {
         sourceSubmissionId: sub.id,
         hash: sub.hash || submissionHash(sub.type, sub.payload),
         type: sub.type,
+        status: 'validated',
         payload: sub.payload,
         author: sub.author || null,
         validatedBy: sub.decidedBy,
@@ -256,7 +261,36 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/records') {
     if (!requireAdmin(req, res)) return;
     const db = await readDb();
-    return sendJson(res, 200, { ok: true, records: db.records });
+    const type = url.searchParams.get('type');
+    const status = url.searchParams.get('status');
+    let rows = db.records;
+    if (type) rows = rows.filter(r => r.type === type);
+    if (status) rows = rows.filter(r => recordStatus(r) === status);
+    return sendJson(res, 200, { ok: true, records: rows });
+  }
+
+  const cancelRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/cancel$/);
+  if (req.method === 'POST' && cancelRecord) {
+    if (!requireAdmin(req, res)) return;
+    const body = await readBody(req);
+    const db = await readDb();
+    const rec = db.records.find(r => r.id === cancelRecord[1]);
+    if (!rec) return sendJson(res, 404, { ok: false, error: 'Enregistrement introuvable' });
+    if (recordStatus(rec) === 'cancelled') {
+      return sendJson(res, 409, { ok: false, error: 'Enregistrement deja annule' });
+    }
+    rec.status = 'cancelled';
+    rec.cancelledAt = new Date().toISOString();
+    rec.cancelledBy = body.actor || 'admin';
+    rec.cancelReason = body.reason || '';
+    audit(db, 'record.cancelled', rec.cancelledBy, {
+      id: rec.id,
+      sourceSubmissionId: rec.sourceSubmissionId || null,
+      type: rec.type,
+      reason: rec.cancelReason
+    });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, record: rec });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/audit') {

@@ -1778,9 +1778,10 @@ async function sipsFlushPending(){
 function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
 async function sipsRecords(type){
   try{
-    const data=await sipsFetch('/api/records',{headers:sipsAdminHeaders()});
+    const q=[];if(type)q.push('type='+encodeURIComponent(type));q.push('status=validated');
+    const data=await sipsFetch('/api/records'+(q.length?'?'+q.join('&'):''),{headers:sipsAdminHeaders()});
     const rows=data.records||[];
-    return type?rows.filter(r=>r.type===type):rows;
+    return rows;
   }catch(e){return [];}
 }
 
@@ -2432,6 +2433,16 @@ function sipsSubmissionHTML(s){
   const summary=sipsPayloadSummary(s.type,s.payload);
   return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+(s.status==='submitted'?'<button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>':'')+'</div>';
 }
+function sipsRecordHTML(r){
+  const rec=r.payload||{};
+  const actor=r.validatedBy?(' - validé par '+esc(r.validatedBy)):'';
+  const status=(r.status||'validated')==='cancelled'?'Annulé':'Validé';
+  const cancelled=(r.status||'validated')==='cancelled';
+  const summary=sipsPayloadSummary(r.type,rec);
+  const date=r.validatedAt?new Date(r.validatedAt).toLocaleString('fr-FR'):'date inconnue';
+  const extra=cancelled&&r.cancelledAt?(' - annulé le '+new Date(r.cancelledAt).toLocaleString('fr-FR')):'';
+  return '<div class="hist-item'+(cancelled?'':' locked')+'" data-rec="'+esc(r.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(r.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+date+extra+'</span></div>'+(cancelled?'':'<button class="del" data-act="cancel">Annuler</button>')+'</div>';
+}
 async function renderServeur(){
   const app=$('#app');const pending=sipsPending();
   app.innerHTML='<div class="prod-wrap"><h2 class="prod-title">Serveur local SIPS</h2>'
@@ -2448,12 +2459,19 @@ async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
   try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>sipsDecide(id,b.dataset.act));});}
   catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+'</p>';}
-  try{const data=await sipsFetch('/api/records',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">'+rows.length+' enregistrement(s) valide(s) dans la base centrale.</p>';}
+  try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
 }
 async function sipsDecide(id,act){
   const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
   try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');renderServeur();}
+  catch(e){toast('Erreur serveur : '+e.message);}
+}
+async function sipsCancelRecord(id){
+  const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');
+  if(reason===null)return;
+  if(!confirm('Annuler cet enregistrement validé ?\n\nIl restera dans le journal serveur mais sera retiré des historiques officiels.'))return;
+  try{await sipsFetch('/api/records/'+encodeURIComponent(id)+'/cancel',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',reason:reason})});toast('Enregistrement annulé');renderServeur();}
   catch(e){toast('Erreur serveur : '+e.message);}
 }
 

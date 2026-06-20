@@ -146,6 +146,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : validations serveur fiabilisees.
 - 2026-06-20 : soumissions et historiques serveur valides par test utilisateur.
 - 2026-06-20 : 5 bugs de revue high effort corriges (import profil, compteur partage, ST.agent, compteur import, qNew confirmation). Cache SW v71.
+- 2026-06-20 : annulation admin des records valides ajoutee. Backend `POST /api/records/:id/cancel`, filtres `GET /api/records?type=...&status=...`, audit `record.cancelled`, bouton `Annuler` dans l'onglet `Serveur`, historiques `Sorties` / `Entrees` limites aux records `validated`. Cache SW v72. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK hors sandbox.
 
 ## Comportement actuel important
 
@@ -156,19 +157,20 @@ Dans `Sorties` et `Entrees`, l'historique est maintenant separe :
 - `Validees serveur` : donnees officielles, non supprimables depuis l'ecran mouvement.
 - `Historique local` : donnees IndexedDB locales, supprimables localement.
 
-Le fait qu'une sortie validee serveur ne puisse pas etre supprimee depuis `Sorties` est volontaire pour l'instant. Les donnees validees doivent etre traitees comme officielles.
+Une sortie/entree validee serveur ne peut pas etre supprimee depuis `Sorties` / `Entrees`. L'annulation se fait en admin depuis l'onglet `Serveur`, avec audit serveur.
 
-### Suppression / annulation serveur non encore implementee
+### Suppression / annulation serveur implementee
 
 Besoin utilisateur signale :
 
 > Une sortie validee serveur est visible, mais on ne peut que l'ouvrir. Il n'y a pas encore d'action de suppression/annulation.
 
-Decision recommandee :
+Decision appliquee :
 
 - Ne pas supprimer physiquement les records valides.
-- Ajouter plutot une action admin `Annuler` ou `Invalider`, avec audit.
-- Les bilans/analyses devront ignorer les records `voided` / `cancelled`.
+- Ajouter une action admin `Annuler`, avec audit.
+- Les historiques operationnels ignorent les records `cancelled`.
+- Les bilans/analyses devront aussi ignorer les records `cancelled` quand ils consommeront la base serveur.
 
 Modele cible :
 
@@ -199,6 +201,8 @@ Routes principales :
 - `POST /api/submissions/:id/validate`
 - `POST /api/submissions/:id/reject`
 - `GET /api/records`
+- `GET /api/records?type=sortie&status=validated`
+- `POST /api/records/:id/cancel`
 - `GET /api/audit`
 
 Routes admin : ajouter header :
@@ -211,36 +215,12 @@ Anti-doublon :
 
 - `server/app.mjs` calcule un hash stable de `{ type, payload }`.
 - Les champs volatils `id` et `submittedAt` sont ignores.
-- Si une soumission identique est deja `submitted` ou `validated`, le serveur renvoie `duplicate: true`.
+- Si une soumission identique est deja `submitted` ou correspond a un record actif non annule, le serveur renvoie `duplicate: true`.
+- Si le record valide a ete annule, la meme charge utile peut etre resoumise puis revalidee.
 
 ## Prochaines taches recommandees
 
-### Priorite 1 - Annulation propre des records valides
-
-Objectif : permettre a l'admin d'annuler une sortie/entree validee par erreur, sans effacer l'audit.
-
-Backend :
-
-- Ajouter `POST /api/records/:id/cancel`.
-- Exiger `x-sips-admin-pin`.
-- Marquer le record :
-  - `status: "cancelled"`
-  - `cancelledAt`
-  - `cancelledBy`
-  - `cancelReason`
-- Ajouter entree audit `record.cancelled`.
-- Modifier `GET /api/records` pour accepter filtres :
-  - `type`
-  - `status`
-  - par defaut, retourner tout ou au moins exposer le status.
-
-Frontend :
-
-- Dans onglet `Serveur`, afficher records valides avec details.
-- Ajouter bouton `Annuler` sur record valide.
-- Dans `Sorties` / `Entrees`, ne pas afficher les records `cancelled`.
-
-### Priorite 2 - Vue detail des soumissions avant validation
+### Priorite 1 - Vue detail des soumissions avant validation
 
 Actuellement l'admin voit un resume. Il faut une vraie vue detail :
 
@@ -254,7 +234,7 @@ Puis seulement :
 - `Valider`
 - `Rejeter`
 
-### Priorite 3 - Qualite serveur
+### Priorite 2 - Qualite serveur
 
 Workflow cible :
 
@@ -274,7 +254,7 @@ Aujourd'hui `Qualite` peut soumettre au serveur, mais il manque :
 - statuts multi-signatures ;
 - validation finale plus stricte.
 
-### Priorite 4 - Sauvegardes automatiques
+### Priorite 3 - Sauvegardes automatiques
 
 Ajouter :
 
@@ -284,7 +264,7 @@ Ajouter :
 - route admin `POST /api/backup`;
 - eventuellement export telechargeable.
 
-### Priorite 5 - SQLite
+### Priorite 4 - SQLite
 
 Le JSON central est volontairement temporaire.
 
