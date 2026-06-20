@@ -2252,7 +2252,7 @@ const MOVCFG={
  entree:{title:'Entrées',word:'ENTRÉE',icon:'📦',refLabel:'Fournisseur / référence / BL',refPlace:'ex. fournisseur, n° BL, container',pfx:'entree_',saved:'Entrée enregistrée',hint:'Enregistre une entrée : réceptions de matières premières et/ou retours de produits finis. Date vide = aujourd\u2019hui. Photo si nécessaire.'}
 };
 let MOVF={sortie:null,entree:null};
-function freshMov(){return {date:'',ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:''}],photos:[],note:''};}
+function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:''}],photos:[],note:''};}
 function movArts(catKind){return REFS.filter(r=>catKind==='finis'?r.cat==='fini':r.cat==='mp');}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
 function movShareText(kind,mf){
@@ -2277,7 +2277,8 @@ async function movShare(kind,mf){
 async function movSave(kind,mf){
   if(!movHasInput(mf)){toast('Rien à enregistrer');return false;}
   const c=MOVCFG[kind];
-  const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
+  if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
+  const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
   try{await idbPut(rec);toast(c.saved);return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
 function movSectionHTML(mf,sec,title){
@@ -2290,6 +2291,7 @@ function renderMov(kind,focusSel){
   const c=MOVCFG[kind];
   if(!MOVF[kind])MOVF[kind]=freshMov();
   const mf=MOVF[kind];
+  if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
   if(!mf.finis||!mf.finis.length)mf.finis=[{a:'',q:''}];
   if(!mf.mp||!mf.mp.length)mf.mp=[{a:'',q:''}];
   const app=$('#app');
@@ -2297,7 +2299,7 @@ function renderMov(kind,focusSel){
     +'<h2 class="prod-title">'+c.title+'</h2>'
     +'<p class="ref-hint">'+c.hint+'</p>'
     +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
-    +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label></div>'
+    +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
     +movSectionHTML(mf,'mp','Matières premières / Échantillons')
@@ -2331,7 +2333,7 @@ async function loadMovHist(kind){
     const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
     const it=document.createElement('div');it.className='hist-item';
     it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.ref||'—')+' · '+nf+' fini(s) · '+nm+' MP · '+ph+' photo(s)</span></div>';
-    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
+    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer ?')){await idbDel(rec.id);loadMovHist(kind);}};
     it.append(open,del);host.append(it);
   });
@@ -3598,7 +3600,13 @@ function qComputeTimes(){
   }
   QS.informations.heureDebut=first;
   QS.informations.heureFin=last;
-  QS.informations.quantiteProduite=mel.length*QS.informations.tailleBatch;
+  QS.informations.quantiteProduite=qCompletedBatchCount()*QS.informations.tailleBatch;
+}
+
+function qCompletedBatchCount(){
+  var n=0;
+  QS.melanges.forEach(function(b){if(b.heureDebut&&b.heureFin)n++;});
+  return n;
 }
 
 function qAvgBatchTime(){
@@ -3628,6 +3636,9 @@ function qNowTime(){
 function qValidateBatches(){
   for(var i=0;i<QS.melanges.length;i++){
     var b=QS.melanges[i];
+    if((b.heureDebut&&!b.heureFin)||(!b.heureDebut&&b.heureFin)){
+      return 'Batch '+(i+1)+' : renseigner debut et fin, ou laisser les deux vides';
+    }
     if(b.heureDebut&&b.heureFin){
       if(qTimeDiffMin(b.heureDebut,b.heureFin)<=0)
         return 'Batch '+(i+1)+' : heure fin doit etre apres heure debut';
@@ -3894,7 +3905,7 @@ function qBatchInput(el){
   qUpdateBatchStats();
 }
 function qUpdateBatchStats(){
-  var nb=0;QS.melanges.forEach(function(b){if(b.heureDebut&&b.heureFin)nb++;});
+  var nb=qCompletedBatchCount();
   var nbEl=$('#qNbBatch');if(nbEl)nbEl.value=nb;
   var avgEl=$('#qAvgTime');if(avgEl)avgEl.value=qAvgBatchTime()||'—';
 }
@@ -3939,8 +3950,25 @@ async function qSave(){
   var bErr=qValidateBatches();
   if(bErr){toast(bErr);return;}
   qComputeTimes();
+  var wasUpdate=!!QS.id;
+  var recId=QS.id||'batch_'+Date.now();
+  var duplicate=null;
+  try{
+    var all=await idbAll();
+    duplicate=all.find(function(r){
+      if(!r||String(r.id).indexOf('batch_')!==0||r.id===recId||!r.informations)return false;
+      var sameLot=QS.informations.numeroLot&&r.informations.numeroLot===QS.informations.numeroLot;
+      var sameProductDate=r.informations.refProduit===QS.informations.refProduit&&r.informations.dateProduction===QS.informations.dateProduction;
+      return sameLot||sameProductDate;
+    })||null;
+  }catch(e){}
+  if(duplicate){
+    var di=duplicate.informations||{};
+    var msg='Une fiche qualite existe deja pour '+(di.refProduit||'ce produit')+' le '+frDate(di.dateProduction||duplicate.date||'')+(di.numeroLot?(' ('+di.numeroLot+')'):'')+'.\n\nOK = enregistrer quand meme une nouvelle fiche.\nAnnuler = revenir sans enregistrer.';
+    if(!confirm(msg))return;
+  }
   var rec={
-    id:'batch_'+Date.now(),
+    id:recId,
     kind:'batch',
     date:QS.informations.dateProduction||todayStr(),
     informations:clone(QS.informations),
@@ -3950,8 +3978,8 @@ async function qSave(){
     savedAt:Date.now()
   };
   await idbPut(rec);
-  toast('Fiche enregistree');
-  QS.id='';
+  QS.id=rec.id;
+  toast(wasUpdate?'Fiche mise a jour':'Fiche enregistree');
   qLoadHist();
 }
 
@@ -3965,9 +3993,11 @@ async function qLoadHist(){
     var htm='';
     batches.forEach(function(b){
       var info=b.informations||{};
+      var visas=b.visas||{};
+      var sigs=['operateur','responsableProd','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
       htm+='<div class="q-hist-item">';
       htm+='<div class="info"><b>'+esc(info.refProduit||'—')+'</b>';
-      htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+'</span></div>';
+      htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+' — '+sigs+'/3 signature(s)</span></div>';
       htm+='<button onclick="qLoadBatch(\''+esc(b.id)+'\')">Voir</button>';
       htm+='<button class="del" onclick="qDelBatch(\''+esc(b.id)+'\')">Suppr</button>';
       htm+='</div>';
