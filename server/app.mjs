@@ -339,6 +339,10 @@ function submissionHash(type, payload) {
     .digest('hex');
 }
 
+function qualityLot(payload) {
+  return String(payload && payload.informations && payload.informations.numeroLot || '').trim().toUpperCase();
+}
+
 function publicSubmission(s) {
   return {
     id: s.id,
@@ -362,6 +366,23 @@ function fullSubmission(s) {
 
 function recordStatus(r) {
   return r.status || 'validated';
+}
+
+function activeQualityLotConflict(db, lot) {
+  if (!lot) return null;
+  const submitted = db.submissions.find(s => (
+    s.type === 'quality'
+    && s.status === 'submitted'
+    && qualityLot(s.payload) === lot
+  ));
+  if (submitted) return { kind: 'submission', row: submitted };
+  const record = db.records.find(r => (
+    r.type === 'quality'
+    && recordStatus(r) !== 'cancelled'
+    && qualityLot(r.payload) === lot
+  ));
+  if (record) return { kind: 'record', row: record };
+  return null;
 }
 
 function missingQualitySignatures(payload) {
@@ -611,6 +632,19 @@ async function handleApi(req, res, url) {
       audit(db, 'submission.duplicate', body.author, { id: existing.id, type });
       await writeDb(db);
       return sendJson(res, 200, { ok: true, duplicate: true, submission: publicSubmission(existing) });
+    }
+    if (type === 'quality') {
+      const lot = qualityLot(body.payload);
+      const lotConflict = activeQualityLotConflict(db, lot);
+      if (lotConflict) {
+        audit(db, 'submission.duplicate_lot', body.author, { id: lotConflict.row.id, type, lot });
+        await writeDb(db);
+        return sendJson(res, 409, {
+          ok: false,
+          duplicateLot: true,
+          error: 'Une fiche qualite active existe deja pour le lot ' + lot + '. Rejetez ou annulez l ancienne version avant de resoumettre une correction.'
+        });
+      }
     }
     const rec = {
       id: 'sub_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),

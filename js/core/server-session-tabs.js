@@ -50,17 +50,26 @@ async function sipsFetch(path,opt){
   const headers=Object.assign({'content-type':'application/json'},authHeader(),opt.headers||{});
   const res=await fetch(sipsServerUrl()+path,Object.assign({cache:'no-store'},opt,{headers}));
   let data=null;try{data=await res.json();}catch(e){}
-  if(!res.ok||!data||data.ok===false)throw new Error((data&&data.error)||('HTTP '+res.status));
+  if(!res.ok||!data||data.ok===false){
+    const err=new Error((data&&data.error)||('HTTP '+res.status));
+    err.status=res.status;err.data=data;
+    throw err;
+  }
   return data;
 }
 async function sipsPing(){try{return {ok:true,data:await sipsFetch('/api/health')};}catch(e){return {ok:false,error:e.message};}}
 function sipsPending(){return lsGet('lep_server_pending',[]);}
 function sipsSetPending(rows){lsSet('lep_server_pending',rows||[]);}
+function sipsQualityLot(payload){return String(payload&&payload.informations&&payload.informations.numeroLot||'').trim().toUpperCase();}
 function sipsQueue(type,payload,note){
   const rows=sipsPending();
   const hash=localSig('server:'+type,payload);
   if(rows.some(r=>(r&&r.hash)===hash||localSig('server:'+((r&&r.type)||''),(r&&r.payload)||{})===hash)){
     return false;
+  }
+  if(type==='quality'){
+    const lot=sipsQualityLot(payload);
+    if(lot&&rows.some(r=>r&&r.type==='quality'&&sipsQualityLot(r.payload)===lot))return false;
   }
   rows.push({id:'pend_'+Date.now(),type,payload,hash,author:sipsActor(),note:note||'',createdAt:new Date().toISOString()});
   sipsSetPending(rows);
@@ -69,15 +78,23 @@ function sipsQueue(type,payload,note){
 async function sipsSubmit(type,payload,note){
   const body={type,payload,author:sipsActor(),note:note||''};
   try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast(r.duplicate?'Deja soumis au serveur':'Soumis au serveur');return {ok:true,duplicate:!!r.duplicate,submission:r.submission};}
-  catch(e){const queued=sipsQueue(type,payload,note);toast(queued?'Serveur indisponible : ajoute en attente':'Soumission deja en attente serveur');return {ok:false,queued:queued,error:e.message};}
+  catch(e){
+    if(e.status){toast('Erreur serveur : '+e.message);return {ok:false,queued:false,error:e.message,status:e.status};}
+    const queued=sipsQueue(type,payload,note);toast(queued?'Serveur indisponible : ajoute en attente':'Soumission deja en attente serveur');return {ok:false,queued:queued,error:e.message};
+  }
 }
 async function sipsFlushPending(){
   const rows=sipsPending();if(!rows.length){toast('Aucune soumission en attente');return {sent:0,failed:0};}
-  const keep=[];let sent=0;const seen={};
+  const keep=[];let sent=0;const seen={},seenQualityLot={};
   for(const row of rows){
     const hash=(row&&row.hash)||localSig('server:'+((row&&row.type)||''),(row&&row.payload)||{});
     if(seen[hash])continue;
     seen[hash]=1;
+    if(row&&row.type==='quality'){
+      const lot=sipsQualityLot(row.payload);
+      if(lot&&seenQualityLot[lot])continue;
+      if(lot)seenQualityLot[lot]=1;
+    }
     try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}
     catch(e){keep.push(Object.assign({},row,{hash:hash}));}
   }

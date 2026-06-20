@@ -169,6 +169,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : **durcissement auth - mots de passe personnels et actions critiques.** Les comptes crees ou reset par l'admin recoivent un mot de passe temporaire (`mustChangePassword`) que l'utilisateur doit changer a la premiere connexion. Le login devient obligatoire quand le serveur est configure ; sans session deja connectee, le mode local n'est plus propose. `Valider`, `Rejeter` et `Annuler` demandent une reconfirmation par mot de passe personnel. Cache SW v91. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : **Phase 6 partielle - visas qualite lies au compte.** Dans `Qualite`, les visas signables viennent maintenant de `SESSION.canSign`. Le nom du visa est force depuis le compte connecte et passe en lecture seule ; l'utilisateur ne peut plus changer le nom affiche sur sa signature. Legacy local conserve le comportement ancien seulement hors session. Cache SW v92. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : **Phase 6 workflow qualite serveur.** Les fiches qualite soumises avec signature operateur apparaissent maintenant dans `Qualite` comme `A signer / en validation serveur` pour les comptes autorises. Un responsable qualite peut ouvrir la fiche serveur en attente, les donnees sont verrouillees, seule sa signature est ajoutable, puis `POST /api/submissions/:id/quality-sign` enregistre le visa avec nom force cote serveur. L'admin valide ensuite quand les 2 signatures obligatoires sont presentes. Les comptes qualite peuvent lire les records `quality` valides sans acces aux autres donnees serveur. Cache SW v93. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : **verrou qualite par numero de lot.** Le serveur refuse maintenant une nouvelle fiche `quality` si une soumission `submitted` ou un record actif non annule existe deja avec le meme `informations.numeroLot`. Une correction reste possible apres rejet de l'ancienne soumission ou annulation du record valide. Cote client, les erreurs API ne sont plus mises en attente comme si le serveur etait hors ligne, et la file offline dedoublonne aussi les fiches qualite par lot. Cache SW v94. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 
 ## Comportement actuel important
 
@@ -255,6 +256,7 @@ Anti-doublon :
 - Les champs volatils `id` et `submittedAt` sont ignores.
 - Si une soumission identique est deja `submitted` ou correspond a un record actif non annule, le serveur renvoie `duplicate: true`.
 - Si le record valide a ete annule, la meme charge utile peut etre resoumise puis revalidee.
+- Pour `quality`, un deuxieme contenu avec le meme `informations.numeroLot` est refuse tant que l'ancienne fiche est `submitted` ou qu'un record valide non annule existe. Rejeter l'ancienne soumission ou annuler le record libere le lot pour une correction.
 
 ## Chantier authentification + roles (plan valide avec l'utilisateur)
 
