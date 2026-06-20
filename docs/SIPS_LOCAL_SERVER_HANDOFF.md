@@ -149,6 +149,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : annulation admin des records valides ajoutee. Backend `POST /api/records/:id/cancel`, filtres `GET /api/records?type=...&status=...`, audit `record.cancelled`, bouton `Annuler` dans l'onglet `Serveur`, historiques `Sorties` / `Entrees` limites aux records `validated`. Cache SW v72. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK hors sandbox.
 - 2026-06-20 : vue detail des soumissions avant validation ajoutee dans l'onglet `Serveur` (sorties/entrees : date, operateur, reference, lignes produits finis, lignes MP, photos, note ; qualite : produit, lot, dates/heures, quantite, taille batch, MP, batches, visas/signatures). Cache SW v73. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : lecture des fiches qualite validees serveur ajoutee dans l'historique `Qualite`. Les fiches officielles s'ouvrent en consultation lecture seule, avec PDF disponible mais sans sauvegarde/resoumission/import accidentels. Cache SW v74. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : validation finale qualite durcie cote serveur. `POST /api/submissions/:id/validate` refuse une soumission `quality` tant que les signatures operateur, responsable production et responsable qualite ne sont pas toutes presentes. Le resume admin affiche maintenant `x/3 signatures`. Cache SW v75. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API temporaire OK sans toucher `server/data/sips-data.json`.
 
 ## Comportement actuel important
 
@@ -244,10 +245,10 @@ operateur renseigne + signe
 -> archive officielle
 ```
 
-Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees serveur en consultation. Il manque encore :
+Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees serveur en consultation. La validation finale serveur exige les 3 signatures. Il manque encore :
 
 - statuts multi-signatures ;
-- validation finale plus stricte.
+- workflow serveur multi-etapes entre les responsables avant validation finale.
 
 ### Priorite 2 - Sauvegardes automatiques
 

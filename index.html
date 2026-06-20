@@ -2423,7 +2423,7 @@ function renderEntrees(f){renderMov('entree',f);}
 function sipsTypeLabel(t){return ({quality:'Qualite',sortie:'Sortie',entree:'Entree',test:'Test'})[t]||t||'Soumission';}
 function sipsPayloadSummary(type,payload){
   payload=payload||{};
-  if(type==='quality'){const i=payload.informations||{};return (i.numeroLot||'lot ?')+' - '+(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?');}
+  if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=['operateur','responsableProd','responsableQualite'].filter(k=>v[k]&&v[k].signature).length;return (i.numeroLot||'lot ?')+' - '+(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/3 signatures';}
   if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
   return payload.title||payload.message||'';
 }

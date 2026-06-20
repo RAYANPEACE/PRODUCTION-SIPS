@@ -158,6 +158,18 @@ function recordStatus(r) {
   return r.status || 'validated';
 }
 
+function missingQualitySignatures(payload) {
+  const labels = {
+    operateur: 'operateur',
+    responsableProd: 'responsable production',
+    responsableQualite: 'responsable qualite'
+  };
+  const visas = (payload && payload.visas) || {};
+  return Object.keys(labels)
+    .filter(key => !visas[key] || !visas[key].signature)
+    .map(key => labels[key]);
+}
+
 async function handleApi(req, res, url) {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 204, { ok: true });
@@ -235,6 +247,12 @@ async function handleApi(req, res, url) {
     if (!sub) return sendJson(res, 404, { ok: false, error: 'Soumission introuvable' });
     if (sub.status !== 'submitted') {
       return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
+    }
+    if (action === 'validate' && sub.type === 'quality') {
+      const missing = missingQualitySignatures(sub.payload);
+      if (missing.length) {
+        return sendJson(res, 400, { ok: false, error: 'Validation qualite impossible : signature(s) manquante(s) ' + missing.join(', ') });
+      }
     }
     sub.status = action === 'validate' ? 'validated' : 'rejected';
     sub.decidedAt = new Date().toISOString();
