@@ -267,12 +267,16 @@ async function requireAuth(req, res) {
   return user;
 }
 
-// Accepte l'ancien PIN (compatibilite transitoire) OU un JWT de role admin.
-async function requireAdmin(req, res) {
+async function isAdminRequest(req) {
   const pin = req.headers['x-sips-admin-pin'];
   if (pin && pin === adminPin) return true;
   const user = await authUser(req);
-  if (user && user.role === 'admin') return true;
+  return !!(user && user.role === 'admin');
+}
+
+// Accepte l'ancien PIN (compatibilite transitoire) OU un JWT de role admin.
+async function requireAdmin(req, res) {
+  if (await isAdminRequest(req)) return true;
   sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
   return false;
 }
@@ -369,6 +373,10 @@ function missingQualitySignatures(payload) {
   return Object.keys(labels)
     .filter(key => !visas[key] || !visas[key].signature)
     .map(key => labels[key]);
+}
+
+function canSignQuality(user) {
+  return user && roleCanSign(user.role).some(role => role === 'operateur' || role === 'responsableQualite');
 }
 
 async function handleApi(req, res, url) {
@@ -565,7 +573,13 @@ async function handleApi(req, res, url) {
     const status = url.searchParams.get('status');
     const type = url.searchParams.get('type');
     const includePayload = url.searchParams.get('include') === 'payload';
-    if (includePayload && !(await requireAdmin(req, res))) return;
+    if (includePayload) {
+      const user = await authUser(req);
+      const qualitySignerRead = type === 'quality' && status === 'submitted' && canSignQuality(user);
+      if (!qualitySignerRead && !(await isAdminRequest(req))) {
+        return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
+      }
+    }
     let rows = db.submissions;
     if (status) rows = rows.filter(s => s.status === status);
     if (type) rows = rows.filter(s => s.type === type);
@@ -614,6 +628,44 @@ async function handleApi(req, res, url) {
     return sendJson(res, 201, { ok: true, submission: publicSubmission(rec) });
   }
 
+  const qualitySign = url.pathname.match(/^\/api\/submissions\/([^/]+)\/quality-sign$/);
+  if (req.method === 'POST' && qualitySign) {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    const role = String(body.role || '');
+    if (roleCanSign(user.role).indexOf(role) < 0 || ['operateur', 'responsableQualite'].indexOf(role) < 0) {
+      return sendJson(res, 403, { ok: false, error: 'Ce compte ne peut pas signer ce visa qualite' });
+    }
+    const signature = String((body.visa && body.visa.signature) || '');
+    if (!signature || signature.indexOf('data:image/') !== 0) {
+      return sendJson(res, 400, { ok: false, error: 'Signature manquante' });
+    }
+    const db = await readDb();
+    const sub = db.submissions.find(s => s.id === qualitySign[1]);
+    if (!sub) return sendJson(res, 404, { ok: false, error: 'Soumission introuvable' });
+    if (sub.type !== 'quality') return sendJson(res, 400, { ok: false, error: 'Soumission non qualite' });
+    if (sub.status !== 'submitted') return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
+    sub.payload = sub.payload || {};
+    sub.payload.visas = sub.payload.visas || {};
+    sub.payload.visas[role] = {
+      nom: user.nom,
+      signature,
+      date: String((body.visa && body.visa.date) || new Date().toISOString()),
+      userId: user.id,
+      username: user.username
+    };
+    sub.qualitySignedAt = new Date().toISOString();
+    sub.qualitySignedBy = user.nom;
+    audit(db, 'quality.signature', user.nom, { id: sub.id, role });
+    await writeDb(db);
+    return sendJson(res, 200, {
+      ok: true,
+      submission: fullSubmission(sub),
+      missing: missingQualitySignatures(sub.payload)
+    });
+  }
+
   const decision = url.pathname.match(/^\/api\/submissions\/([^/]+)\/(validate|reject)$/);
   if (req.method === 'POST' && decision) {
     if (!(await requireAdmin(req, res))) return;
@@ -654,10 +706,15 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/records') {
-    if (!(await requireAdmin(req, res))) return;
-    const db = await readDb();
     const type = url.searchParams.get('type');
     const status = url.searchParams.get('status');
+    if (!(await isAdminRequest(req))) {
+      const user = await authUser(req);
+      if (!(type === 'quality' && canSignQuality(user))) {
+        return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
+      }
+    }
+    const db = await readDb();
     let rows = db.records;
     if (type) rows = rows.filter(r => r.type === type);
     if (status) rows = rows.filter(r => recordStatus(r) === status);

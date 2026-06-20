@@ -16,7 +16,9 @@ function freshQS(){
 }
 var QS=freshQS();
 var QS_SERVER_VIEW=false;
+var QS_SERVER_PENDING_ID='';
 var QSERVER_RECORDS=[];
+var QSERVER_PENDING=[];
 var _qSigPads={};
 
 function qIsMP(code){
@@ -119,12 +121,31 @@ function qCanSignRole(role){
   if(SESSION&&Array.isArray(SESSION.canSign))return SESSION.canSign.indexOf(role)>=0;
   return usrVisaKey()===role;
 }
+function qCanEditVisa(role){
+  if(QS_SERVER_VIEW)return false;
+  if(!qCanSignRole(role))return false;
+  if(QS_SERVER_PENDING_ID&&QS.visas&&QS.visas[role]&&QS.visas[role].signature)return false;
+  return true;
+}
+function qRequiredQualityRoles(){
+  return ['operateur','responsableQualite'];
+}
+function qQualitySignedCount(visas){
+  visas=visas||QS.visas||{};
+  return qRequiredQualityRoles().filter(function(k){return visas[k]&&visas[k].signature;}).length;
+}
+function qMyPendingSignRole(){
+  if(!QS_SERVER_PENDING_ID)return '';
+  return qRequiredQualityRoles().find(function(role){
+    return qCanSignRole(role)&&(!QS.visas[role]||!QS.visas[role].signature);
+  })||'';
+}
 function qSignerName(){
   return SESSION?(SESSION.nom||''):(USR&&USR.nom)||'';
 }
 function qApplyAccountVisaNames(){
   ['operateur','responsableProd','responsableQualite'].forEach(function(role){
-    if(qCanSignRole(role)){
+    if(qCanEditVisa(role)){
       var name=qSignerName();
       if(name)QS.visas[role].nom=name;
     }
@@ -194,6 +215,8 @@ async function renderQualite(){
   var h='<div class="q-wrap">';
   h+='<h2 class="q-title">Suivi Qualité — Fiche de Lot</h2>';
   if(QS_SERVER_VIEW)h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Consultation officielle serveur : lecture seule. Utilisez PDF pour exporter, ou Nouvelle fiche pour reprendre la saisie locale.</p>';
+
+  if(QS_SERVER_PENDING_ID)h+='<p class="ref-hint" style="background:#fff8e8;border:1px solid #f1d79a;border-radius:8px;padding:8px 10px">Fiche serveur en attente : les donnees sont verrouillees. Seule la signature autorisee par votre compte peut etre ajoutee.</p>';
 
   /* Section A: Informations */
   h+='<div class="q-sec open" id="qSecA"><div class="q-sec-h" onclick="this.parentElement.classList.toggle(\'open\')"><h3>A — Informations produit</h3><span class="chev">▸</span></div>';
@@ -268,16 +291,17 @@ async function renderQualite(){
   roles.forEach(function(rr){
     var key=rr[0],label=rr[1];
     var v=QS.visas[key];
-    var isMine=qCanSignRole(key);
-    var lockName=!!SESSION||!isMine;
-    h+='<div class="q-sig-block'+(isMine?'':' q-sig-locked')+'">';
+    var canEdit=qCanEditVisa(key);
+    var canSign=qCanSignRole(key);
+    var lockName=!!SESSION||!canEdit;
+    h+='<div class="q-sig-block'+(canEdit?'':' q-sig-locked')+'">';
     h+='<div class="q-sig-title">'+esc(label)+(key==='operateur'?' <span style="color:var(--red);font-size:11px">(obligatoire)</span>':'');
-    if(!isMine)h+=' <span style="color:var(--mute);font-size:10px;font-style:italic">(lecture seule)</span>';
+    if(!canEdit)h+=' <span style="color:var(--mute);font-size:10px;font-style:italic">'+(canSign&&v.signature?'(deja signe)':'(lecture seule)')+'</span>';
     else if(SESSION)h+=' <span style="color:var(--green);font-size:10px;font-style:italic">(compte connecte)</span>';
     h+='</div>';
     h+='<input class="q-sig-nom" type="text" id="qSigNom_'+key+'" value="'+esc(v.nom)+'" placeholder="Nom"'+(lockName?' readonly style="background:#eef2f6;color:var(--mute)"':' oninput="QS.visas.'+key+'.nom=this.value"')+'>';
-    h+='<canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"'+(isMine?'':' style="pointer-events:none;opacity:0.6"')+'></canvas>';
-    if(isMine){h+='<button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';}
+    h+='<canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"'+(canEdit?'':' style="pointer-events:none;opacity:0.6"')+'></canvas>';
+    if(canEdit){h+='<button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';}
     h+='<div class="q-sig-ts" id="qSigTs_'+key+'">'+esc(v.date)+'</div>';
     h+='</div>';
   });
@@ -285,12 +309,16 @@ async function renderQualite(){
 
   /* Actions */
   h+='<div class="q-actions">';
-  if(!QS_SERVER_VIEW){
+  if(QS_SERVER_PENDING_ID){
+    var pendingRole=qMyPendingSignRole();
+    if(pendingRole)h+='<button class="q-save" onclick="qSignServerPending()">Enregistrer ma signature serveur</button>';
+    else h+='<span style="color:var(--mute);font-size:13px;align-self:center">Votre signature obligatoire est deja presente.</span>';
+  }else if(!QS_SERVER_VIEW){
     h+='<button class="q-save" onclick="qSubmitServer()">Soumettre au serveur</button>';
     h+='<button class="q-save" onclick="qSave()">Enregistrer localement</button>';
   }
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
-  if(!QS_SERVER_VIEW){
+  if(!QS_SERVER_VIEW&&!QS_SERVER_PENDING_ID){
     h+='<button class="q-json" onclick="qExportJSON()">Secours fichier signature</button>';
     h+='<button class="q-import-json" id="qPasteBtn">Coller fiche de secours</button>';
   }
@@ -306,9 +334,12 @@ async function renderQualite(){
   if(QS_SERVER_VIEW){
     app.querySelectorAll('input,select,textarea,button.q-add,button.q-rm,button.q-now,button.q-sig-clear').forEach(function(el){el.disabled=true;});
   }
+  if(QS_SERVER_PENDING_ID){
+    app.querySelectorAll('input:not(.q-sig-nom),select,textarea,button.q-add,button.q-rm,button.q-now').forEach(function(el){el.disabled=true;});
+  }
 
   /* Init sig pads */
-  roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],!QS_SERVER_VIEW&&qCanSignRole(rr[0]));});
+  roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],qCanEditVisa(rr[0]));});
   /* Paste button — for WhatsApp received files */
   var qpb=$('#qPasteBtn');
   if(qpb)qpb.onclick=function(){
@@ -486,10 +517,30 @@ async function qSubmitServer(){
 async function qLoadHist(){
   var list=$('#qHistList');if(!list)return;
   try{
+    QSERVER_PENDING=[];
+    try{
+      if(SESSION&&qRequiredQualityRoles().some(function(role){return qCanSignRole(role);})){
+        var pdata=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload');
+        QSERVER_PENDING=pdata.submissions||[];
+      }
+    }catch(pErr){}
     QSERVER_RECORDS=(await sipsRecords('quality')).sort(function(a,b){return String(b.validatedAt||'').localeCompare(String(a.validatedAt||''));});
     var all=await idbAll();
     var batches=all.filter(function(r){return String(r.id).indexOf('batch_')===0;}).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
     var htm='';
+    if(QSERVER_PENDING.length){
+      htm+='<div style="font-size:12px;font-weight:800;color:#9a6500;margin:0 0 6px;text-transform:uppercase">A signer / en validation serveur</div>';
+      QSERVER_PENDING.forEach(function(s,idx){
+        var b=s.payload||{},info=b.informations||{},visas=b.visas||{};
+        var sigs=qQualitySignedCount(visas);
+        var mine=qRequiredQualityRoles().some(function(role){return qCanSignRole(role)&&(!visas[role]||!visas[role].signature);});
+        htm+='<div class="q-hist-item">';
+        htm+='<div class="info"><b>'+esc(info.refProduit||'---')+'</b>';
+        htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+sigs+'/2 signature(s) obligatoires - '+(mine?'votre signature est attendue':'en attente admin/autre signature')+'</span></div>';
+        htm+='<button onclick="qLoadPendingBatch('+idx+')">'+(mine?'Signer':'Voir')+'</button>';
+        htm+='</div>';
+      });
+    }
     if(QSERVER_RECORDS.length){
       htm+='<div style="font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase">Validees serveur</div>';
       QSERVER_RECORDS.forEach(function(r,idx){
@@ -525,6 +576,7 @@ async function qLoadBatch(id){
     var rec=await idbGet(id);
     if(!rec){toast('Fiche introuvable');return;}
     QS_SERVER_VIEW=false;
+    QS_SERVER_PENDING_ID='';
     QS.id=rec.id;
     QS.informations=rec.informations||freshQS().informations;
     QS.matieresPremieres=rec.matieresPremieres||[];
@@ -536,11 +588,47 @@ async function qLoadBatch(id){
   }catch(e){toast('Erreur chargement');}
 }
 
+async function qLoadPendingBatch(idx){
+  var row=QSERVER_PENDING[idx];
+  if(!row||!row.payload){toast('Fiche serveur introuvable');return;}
+  var rec=row.payload;
+  QS_SERVER_VIEW=false;
+  QS_SERVER_PENDING_ID=row.id;
+  QS.id=rec.id||'';
+  QS.informations=rec.informations||freshQS().informations;
+  QS.matieresPremieres=rec.matieresPremieres||[];
+  QS.melanges=rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
+  QS.visas=rec.visas||freshQS().visas;
+  renderQualite();
+  toast('Fiche serveur en attente chargee');
+  window.scrollTo(0,0);
+}
+
+async function qSignServerPending(){
+  if(!QS_SERVER_PENDING_ID){toast('Aucune fiche serveur en attente');return;}
+  var role=qMyPendingSignRole();
+  if(!role){toast('Votre signature est deja presente');return;}
+  var visa=QS.visas[role]||{};
+  if(!visa.signature){toast('Tracez votre signature avant d enregistrer');return;}
+  try{
+    var data=await sipsFetch('/api/submissions/'+encodeURIComponent(QS_SERVER_PENDING_ID)+'/quality-sign',{
+      method:'POST',
+      body:JSON.stringify({role:role,visa:{signature:visa.signature,date:visa.date||todayStr()+' '+qNowTime()}})
+    });
+    QS.visas=(data.submission&&data.submission.payload&&data.submission.payload.visas)||QS.visas;
+    toast(data.missing&&data.missing.length?'Signature enregistree - reste : '+data.missing.join(', '):'Signature enregistree - fiche prete pour validation admin');
+    QS_SERVER_PENDING_ID='';
+    QS=freshQS();
+    renderQualite();
+  }catch(e){toast('Erreur signature serveur : '+e.message);}
+}
+
 async function qLoadServerBatch(idx){
   var row=QSERVER_RECORDS[idx];
   if(!row||!row.payload){toast('Fiche serveur introuvable');return;}
   var rec=row.payload;
   QS_SERVER_VIEW=true;
+  QS_SERVER_PENDING_ID='';
   QS.id='';
   QS.informations=rec.informations||freshQS().informations;
   QS.matieresPremieres=rec.matieresPremieres||[];
@@ -588,6 +676,7 @@ async function qNew(){
   var qHasData=QS.id||QS.informations.refProduit||QS.informations.quantiteProduite||QS.matieresPremieres.length>0||QS.informations.heureDebut;
   if(qHasData&&!confirm('Creer une nouvelle fiche ? Les modifications non enregistrees seront perdues.'))return;
   QS_SERVER_VIEW=false;
+  QS_SERVER_PENDING_ID='';
   QS=freshQS();
   QS.informations.numeroLot=await qNextLotNum();
   renderQualite();
@@ -634,6 +723,7 @@ function qImportJSON(text){
   if(!obj.informations&&!obj.type){toast('Ce fichier ne contient pas une fiche qualite');return;}
   if(obj.type==='lep-backup'){toast('Ceci est une sauvegarde complete, pas une fiche qualite. Utilisez Importer dans Accueil.');return;}
   QS_SERVER_VIEW=false;
+  QS_SERVER_PENDING_ID='';
   QS.id=obj.id||'';
   QS.informations=obj.informations||freshQS().informations;
   QS.matieresPremieres=obj.matieresPremieres||[];
