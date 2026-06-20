@@ -13,6 +13,77 @@ const backupDir = resolve(dataDir, 'backups');
 const port = Number(process.env.SIPS_PORT || 3000);
 const adminPin = process.env.SIPS_ADMIN_PIN || '1234';
 
+// ====== AUTH / ROLES ======
+// Source de verite des droits. Le client recoit `tabs` et `canSign` a la connexion.
+const TAB_IDS = ['accueil', 'comptage', 'prod', 'qualite', 'ref', 'bilan', 'feuillet', 'capacite', 'plan', 'sorties', 'entree', 'analyse', 'serveur'];
+const ROLES = {
+  admin: { label: 'Chef d\'usine', tabs: TAB_IDS.slice(), canSign: ['responsableProd'] },
+  magasinier: { label: 'Magasinier', tabs: ['accueil', 'comptage', 'sorties', 'entree'], canSign: [] },
+  operateur: { label: 'Operateur', tabs: ['accueil', 'comptage', 'prod', 'sorties', 'entree'], canSign: ['operateur'] },
+  preparateur: { label: 'Preparateur melanges', tabs: ['accueil', 'comptage', 'qualite', 'prod'], canSign: ['operateur'] },
+  responsableQualite: { label: 'Responsable qualite', tabs: ['accueil', 'qualite'], canSign: ['responsableQualite'] }
+};
+function roleTabs(role) { return (ROLES[role] && ROLES[role].tabs) || []; }
+function roleCanSign(role) { return (ROLES[role] && ROLES[role].canSign) || []; }
+
+const TOKEN_TTL_SEC = 7 * 24 * 3600;
+const jwtSecretPath = resolve(dataDir, '.jwt-secret');
+let _jwtSecret = null;
+async function jwtSecret() {
+  if (_jwtSecret) return _jwtSecret;
+  await mkdir(dataDir, { recursive: true });
+  try {
+    _jwtSecret = (await readFile(jwtSecretPath, 'utf8')).trim();
+    if (_jwtSecret) return _jwtSecret;
+  } catch {}
+  _jwtSecret = crypto.randomBytes(48).toString('base64');
+  await writeFile(jwtSecretPath, _jwtSecret, 'utf8');
+  return _jwtSecret;
+}
+
+function pbkdf2(plain, salt) {
+  return new Promise((res, rej) => {
+    crypto.pbkdf2(plain, salt, 100000, 64, 'sha512', (e, key) => e ? rej(e) : res(key));
+  });
+}
+async function hashPassword(plain) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const key = await pbkdf2(plain, salt);
+  return salt + ':' + key.toString('hex');
+}
+async function verifyPassword(plain, stored) {
+  if (!stored || stored.indexOf(':') < 0) return false;
+  const [salt, hash] = stored.split(':');
+  const key = await pbkdf2(plain, salt);
+  const hashBuf = Buffer.from(hash, 'hex');
+  if (hashBuf.length !== key.length) return false;
+  return crypto.timingSafeEqual(hashBuf, key);
+}
+
+function b64url(input) { return Buffer.from(input).toString('base64url'); }
+async function jwtSign(payload) {
+  const secret = await jwtSecret();
+  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = b64url(JSON.stringify(payload));
+  const sig = b64url(crypto.createHmac('sha256', secret).update(header + '.' + body).digest());
+  return header + '.' + body + '.' + sig;
+}
+async function jwtVerify(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const secret = await jwtSecret();
+  const [h, b, s] = parts;
+  const expected = b64url(crypto.createHmac('sha256', secret).update(h + '.' + b).digest());
+  const sigBuf = Buffer.from(s);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  let payload;
+  try { payload = JSON.parse(Buffer.from(b, 'base64url').toString()); } catch { return null; }
+  if (!payload || typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
 const mime = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -143,7 +214,7 @@ function sendJson(res, status, body) {
     'cache-control': 'no-store',
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-sips-admin-pin'
+    'access-control-allow-headers': 'content-type,x-sips-admin-pin,authorization'
   });
   res.end(data);
 }
@@ -170,13 +241,65 @@ function readBody(req) {
   });
 }
 
-function requireAdmin(req, res) {
-  const pin = req.headers['x-sips-admin-pin'];
-  if (pin !== adminPin) {
-    sendJson(res, 401, { ok: false, error: 'PIN admin invalide' });
-    return false;
+// Resout l'utilisateur authentifie via le JWT (header Authorization: Bearer ...).
+// Verifie a chaque appel que le compte existe, est actif, et que le token
+// n'a pas ete emis avant un changement de mot de passe.
+async function authUser(req) {
+  const header = req.headers['authorization'] || '';
+  const m = header.match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  const payload = await jwtVerify(m[1]);
+  if (!payload || !payload.sub) return null;
+  const db = await readDb();
+  const user = db.users.find(u => u.id === payload.sub);
+  if (!user || user.enabled === false) return null;
+  if ((user.passwordChangedAt || 0) > (payload.iat || 0)) return null;
+  return user;
+}
+
+async function requireAuth(req, res) {
+  const user = await authUser(req);
+  if (!user) {
+    sendJson(res, 401, { ok: false, error: 'Authentification requise' });
+    return null;
   }
-  return true;
+  return user;
+}
+
+// Accepte l'ancien PIN (compatibilite transitoire) OU un JWT de role admin.
+async function requireAdmin(req, res) {
+  const pin = req.headers['x-sips-admin-pin'];
+  if (pin && pin === adminPin) return true;
+  const user = await authUser(req);
+  if (user && user.role === 'admin') return true;
+  sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
+  return false;
+}
+
+function publicUser(u) {
+  return {
+    id: u.id,
+    username: u.username,
+    nom: u.nom,
+    role: u.role,
+    enabled: u.enabled !== false,
+    lastLogin: u.lastLogin || null,
+    createdAt: u.createdAt
+  };
+}
+function sessionUser(u) {
+  return {
+    id: u.id,
+    username: u.username,
+    nom: u.nom,
+    role: u.role,
+    tabs: roleTabs(u.role),
+    canSign: roleCanSign(u.role)
+  };
+}
+async function issueToken(user) {
+  const iat = Math.floor(Date.now() / 1000);
+  return jwtSign({ sub: user.id, role: user.role, nom: user.nom, iat, exp: iat + TOKEN_TTL_SEC });
 }
 
 function audit(db, action, actor, details) {
@@ -258,12 +381,157 @@ async function handleApi(req, res, url) {
     });
   }
 
+  // ====== AUTH ======
+  if (req.method === 'GET' && url.pathname === '/api/auth/setup') {
+    const db = await readDb();
+    return sendJson(res, 200, { ok: true, needsSetup: db.users.length === 0 });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/setup') {
+    const db = await readDb();
+    if (db.users.length > 0) {
+      return sendJson(res, 409, { ok: false, error: 'Configuration deja effectuee' });
+    }
+    const body = await readBody(req);
+    const username = String(body.username || '').trim().toLowerCase();
+    const nom = String(body.nom || '').trim();
+    const password = String(body.password || '');
+    if (!username || !nom || password.length < 4) {
+      return sendJson(res, 400, { ok: false, error: 'Identifiant, nom et mot de passe (4 caracteres minimum) requis' });
+    }
+    const user = {
+      id: 'usr_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      username, nom, role: 'admin',
+      passwordHash: await hashPassword(password),
+      enabled: true,
+      passwordChangedAt: Math.floor(Date.now() / 1000),
+      createdAt: new Date().toISOString(),
+      createdBy: 'setup',
+      lastLogin: new Date().toISOString()
+    };
+    db.users.push(user);
+    audit(db, 'user.setup', nom, { id: user.id });
+    await writeDb(db);
+    return sendJson(res, 201, { ok: true, token: await issueToken(user), user: sessionUser(user) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+    const body = await readBody(req);
+    const username = String(body.username || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    const db = await readDb();
+    const user = db.users.find(u => u.username === username);
+    const ok = user && user.enabled !== false && await verifyPassword(password, user.passwordHash);
+    if (!ok) {
+      return sendJson(res, 401, { ok: false, error: 'Identifiant ou mot de passe incorrect' });
+    }
+    user.lastLogin = new Date().toISOString();
+    audit(db, 'user.login', user.nom, { id: user.id });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, token: await issueToken(user), user: sessionUser(user) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/me') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    return sendJson(res, 200, { ok: true, user: sessionUser(user) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/verify-password') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    const ok = await verifyPassword(String(body.password || ''), user.passwordHash);
+    return sendJson(res, 200, { ok });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/users') {
+    if (!(await requireAdmin(req, res))) return;
+    const db = await readDb();
+    return sendJson(res, 200, {
+      ok: true,
+      users: db.users.map(publicUser),
+      roles: Object.keys(ROLES).map(k => ({ key: k, label: ROLES[k].label }))
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/users') {
+    if (!(await requireAdmin(req, res))) return;
+    const body = await readBody(req);
+    const username = String(body.username || '').trim().toLowerCase();
+    const nom = String(body.nom || '').trim();
+    const role = String(body.role || '');
+    const password = String(body.password || '');
+    if (!username || !nom || !ROLES[role] || password.length < 4) {
+      return sendJson(res, 400, { ok: false, error: 'Identifiant, nom, role valide et mot de passe (4 caracteres minimum) requis' });
+    }
+    const db = await readDb();
+    if (db.users.some(u => u.username === username)) {
+      return sendJson(res, 409, { ok: false, error: 'Identifiant deja utilise' });
+    }
+    const actor = await authUser(req);
+    const user = {
+      id: 'usr_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      username, nom, role,
+      passwordHash: await hashPassword(password),
+      enabled: true,
+      passwordChangedAt: Math.floor(Date.now() / 1000),
+      createdAt: new Date().toISOString(),
+      createdBy: actor ? actor.nom : 'admin',
+      lastLogin: null
+    };
+    db.users.push(user);
+    audit(db, 'user.created', actor ? actor.nom : 'admin', { id: user.id, role });
+    await writeDb(db);
+    return sendJson(res, 201, { ok: true, user: publicUser(user) });
+  }
+
+  const userEdit = url.pathname.match(/^\/api\/auth\/users\/([^/]+)$/);
+  if (req.method === 'POST' && userEdit) {
+    if (!(await requireAdmin(req, res))) return;
+    const actor = await authUser(req);
+    const body = await readBody(req);
+    const db = await readDb();
+    const user = db.users.find(u => u.id === userEdit[1]);
+    if (!user) return sendJson(res, 404, { ok: false, error: 'Utilisateur introuvable' });
+
+    const isSelf = actor && actor.id === user.id;
+    const otherEnabledAdmins = db.users.filter(u => u.role === 'admin' && u.enabled !== false && u.id !== user.id);
+    const isLastAdmin = user.role === 'admin' && otherEnabledAdmins.length === 0;
+
+    if (body.role !== undefined) {
+      if (!ROLES[body.role]) return sendJson(res, 400, { ok: false, error: 'Role invalide' });
+      if (isLastAdmin && body.role !== 'admin') {
+        return sendJson(res, 409, { ok: false, error: 'Impossible de retirer le role du dernier admin' });
+      }
+      user.role = body.role;
+    }
+    if (body.enabled !== undefined) {
+      const enabled = !!body.enabled;
+      if (!enabled && isSelf) return sendJson(res, 409, { ok: false, error: 'Impossible de desactiver son propre compte' });
+      if (!enabled && isLastAdmin) return sendJson(res, 409, { ok: false, error: 'Impossible de desactiver le dernier admin' });
+      user.enabled = enabled;
+    }
+    if (body.password) {
+      if (String(body.password).length < 4) return sendJson(res, 400, { ok: false, error: 'Mot de passe trop court (4 caracteres minimum)' });
+      user.passwordHash = await hashPassword(String(body.password));
+      user.passwordChangedAt = Math.floor(Date.now() / 1000);
+    }
+    if (body.nom !== undefined) {
+      const nom = String(body.nom).trim();
+      if (nom) user.nom = nom;
+    }
+    audit(db, 'user.updated', actor ? actor.nom : 'admin', { id: user.id });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, user: publicUser(user) });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/submissions') {
     const db = await readDb();
     const status = url.searchParams.get('status');
     const type = url.searchParams.get('type');
     const includePayload = url.searchParams.get('include') === 'payload';
-    if (includePayload && !requireAdmin(req, res)) return;
+    if (includePayload && !(await requireAdmin(req, res))) return;
     let rows = db.submissions;
     if (status) rows = rows.filter(s => s.status === status);
     if (type) rows = rows.filter(s => s.type === type);
@@ -273,7 +541,7 @@ async function handleApi(req, res, url) {
 
   const detail = url.pathname.match(/^\/api\/submissions\/([^/]+)$/);
   if (req.method === 'GET' && detail) {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const db = await readDb();
     const sub = db.submissions.find(s => s.id === detail[1]);
     if (!sub) return sendJson(res, 404, { ok: false, error: 'Soumission introuvable' });
@@ -314,7 +582,7 @@ async function handleApi(req, res, url) {
 
   const decision = url.pathname.match(/^\/api\/submissions\/([^/]+)\/(validate|reject)$/);
   if (req.method === 'POST' && decision) {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const [, id, action] = decision;
     const body = await readBody(req);
     const db = await readDb();
@@ -352,7 +620,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/records') {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const db = await readDb();
     const type = url.searchParams.get('type');
     const status = url.searchParams.get('status');
@@ -364,7 +632,7 @@ async function handleApi(req, res, url) {
 
   const cancelRecord = url.pathname.match(/^\/api\/records\/([^/]+)\/cancel$/);
   if (req.method === 'POST' && cancelRecord) {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = await readBody(req);
     const db = await readDb();
     const rec = db.records.find(r => r.id === cancelRecord[1]);
@@ -387,13 +655,13 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/audit') {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const db = await readDb();
     return sendJson(res, 200, { ok: true, audit: db.audit.slice().reverse() });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/backup') {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const body = await readBody(req);
     const db = await readDb();
     audit(db, 'backup.created', body.actor || 'admin', { reason: 'manual' });
@@ -403,14 +671,14 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/backups') {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     await mkdir(backupDir, { recursive: true });
     return sendJson(res, 200, { ok: true, backups: await backupList() });
   }
 
   const backupDownload = url.pathname.match(/^\/api\/backups\/([^/]+)$/);
   if (req.method === 'GET' && backupDownload) {
-    if (!requireAdmin(req, res)) return;
+    if (!(await requireAdmin(req, res))) return;
     const file = decodeURIComponent(backupDownload[1]);
     if (!safeBackupName(file)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
     const target = resolve(backupDir, file);
