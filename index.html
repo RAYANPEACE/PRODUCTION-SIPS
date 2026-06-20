@@ -1820,18 +1820,29 @@ function sipsPending(){return lsGet('lep_server_pending',[]);}
 function sipsSetPending(rows){lsSet('lep_server_pending',rows||[]);}
 function sipsQueue(type,payload,note){
   const rows=sipsPending();
-  rows.push({id:'pend_'+Date.now(),type,payload,author:sipsActor(),note:note||'',createdAt:new Date().toISOString()});
+  const hash=localSig('server:'+type,payload);
+  if(rows.some(r=>(r&&r.hash)===hash||localSig('server:'+((r&&r.type)||''),(r&&r.payload)||{})===hash)){
+    return false;
+  }
+  rows.push({id:'pend_'+Date.now(),type,payload,hash,author:sipsActor(),note:note||'',createdAt:new Date().toISOString()});
   sipsSetPending(rows);
+  return true;
 }
 async function sipsSubmit(type,payload,note){
   const body={type,payload,author:sipsActor(),note:note||''};
   try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast(r.duplicate?'Deja soumis au serveur':'Soumis au serveur');return {ok:true,duplicate:!!r.duplicate,submission:r.submission};}
-  catch(e){sipsQueue(type,payload,note);toast('Serveur indisponible : ajoutÃ© en attente');return {ok:false,queued:true,error:e.message};}
+  catch(e){const queued=sipsQueue(type,payload,note);toast(queued?'Serveur indisponible : ajoute en attente':'Soumission deja en attente serveur');return {ok:false,queued:queued,error:e.message};}
 }
 async function sipsFlushPending(){
   const rows=sipsPending();if(!rows.length){toast('Aucune soumission en attente');return {sent:0,failed:0};}
-  const keep=[];let sent=0;
-  for(const row of rows){try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}catch(e){keep.push(row);}}
+  const keep=[];let sent=0;const seen={};
+  for(const row of rows){
+    const hash=(row&&row.hash)||localSig('server:'+((row&&row.type)||''),(row&&row.payload)||{});
+    if(seen[hash])continue;
+    seen[hash]=1;
+    try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}
+    catch(e){keep.push(Object.assign({},row,{hash:hash}));}
+  }
   sipsSetPending(keep);toast(sent+' envoyÃ©e(s), '+keep.length+' en attente');return {sent,failed:keep.length};
 }
 function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
