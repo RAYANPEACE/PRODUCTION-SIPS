@@ -2427,11 +2427,34 @@ function sipsPayloadSummary(type,payload){
   if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
   return payload.title||payload.message||'';
 }
+function sipsKV(rows){return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-top:8px">'+rows.filter(x=>x&&x[1]!=null&&x[1]!=='').map(x=>'<div style="background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:7px"><b style="display:block;font-size:11px;color:var(--mute);text-transform:uppercase">'+esc(x[0])+'</b><span style="font-size:13px">'+esc(x[1])+'</span></div>').join('')+'</div>';}
+function sipsLines(title,rows,cols){
+  rows=(rows||[]).filter(r=>r&&cols.some(c=>String(r[c[0]]||'').trim()));
+  if(!rows.length)return '';
+  return '<div style="margin-top:8px"><b style="font-size:12px;color:var(--steel-d)">'+esc(title)+'</b>'+rows.map((r,i)=>'<div style="font-size:12px;border-bottom:1px solid var(--line);padding:6px 0"><b>'+(i+1)+'.</b> '+cols.map(c=>{const v=r[c[0]];return v==null||v===''?'':'<span>'+esc(c[1])+': '+esc(v)+'</span>';}).filter(Boolean).join(' - ')+'</div>').join('')+'</div>';
+}
+function sipsSubmissionDetailHTML(s){
+  const p=s.payload||{};
+  if(s.type==='sortie'||s.type==='entree'){
+    return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Reference',p.ref],['Photos',(p.photos||[]).length],['Note',p.note]])
+      +sipsLines('Produits finis',p.finis,[['a','Article'],['q','Qte']])
+      +sipsLines('Matieres premieres / Echantillons',p.mp,[['a','Article'],['q','Qte']]);
+  }
+  if(s.type==='quality'){
+    const i=p.informations||{},v=p.visas||{};
+    const visaRows=['operateur','responsableProd','responsableQualite'].map(k=>{const x=v[k]||{};return {role:k==='operateur'?'Operateur':(k==='responsableProd'?'Resp. production':'Resp. qualite'),nom:x.nom||'',date:x.date||'',signature:x.signature?'oui':'non'};});
+    return sipsKV([['Produit',i.refProduit],['Lot',i.numeroLot],['Date production',frDate(i.dateProduction||p.date)],['Heure debut',i.heureDebut],['Heure fin',i.heureFin],['Quantite produite',i.quantiteProduite?i.quantiteProduite+' kg':''],['Taille batch',i.tailleBatch?i.tailleBatch+' kg':'']])
+      +sipsLines('Matieres premieres',p.matieresPremieres,[['designation','Designation'],['code','Code'],['refFournisseur','Ref fournisseur'],['dateProd','Date prod'],['dateExp','Date exp']])
+      +sipsLines('Batches / melanges',p.melanges,[['batchNum','Batch'],['heureDebut','Debut'],['heureFin','Fin']])
+      +sipsLines('Visas',visaRows,[['role','Role'],['nom','Nom'],['date','Date'],['signature','Signature']]);
+  }
+  return '<pre style="white-space:pre-wrap;font-size:12px;background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0 0">'+esc(JSON.stringify(p,null,2).slice(0,2000))+'</pre>';
+}
 function sipsSubmissionHTML(s){
   const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
   const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
   const summary=sipsPayloadSummary(s.type,s.payload);
-  return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+(s.status==='submitted'?'<button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>':'')+'</div>';
+  return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+(s.status==='submitted'?'<button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>':'')+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
 }
 function sipsRecordHTML(r){
   const rec=r.payload||{};

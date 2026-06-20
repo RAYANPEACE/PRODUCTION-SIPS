@@ -147,6 +147,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : soumissions et historiques serveur valides par test utilisateur.
 - 2026-06-20 : 5 bugs de revue high effort corriges (import profil, compteur partage, ST.agent, compteur import, qNew confirmation). Cache SW v71.
 - 2026-06-20 : annulation admin des records valides ajoutee. Backend `POST /api/records/:id/cancel`, filtres `GET /api/records?type=...&status=...`, audit `record.cancelled`, bouton `Annuler` dans l'onglet `Serveur`, historiques `Sorties` / `Entrees` limites aux records `validated`. Cache SW v72. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK hors sandbox.
+- 2026-06-20 : vue detail des soumissions avant validation ajoutee dans l'onglet `Serveur` (sorties/entrees : date, operateur, reference, lignes produits finis, lignes MP, photos, note ; qualite : produit, lot, dates/heures, quantite, taille batch, MP, batches, visas/signatures). Cache SW v73. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 
 ## Comportement actuel important
 
@@ -220,21 +221,16 @@ Anti-doublon :
 
 ## Prochaines taches recommandees
 
-### Priorite 1 - Vue detail des soumissions avant validation
+### Vue detail des soumissions avant validation - fait
 
-Actuellement l'admin voit un resume. Il faut une vraie vue detail :
+L'admin voit maintenant le detail d'une soumission en attente directement dans l'onglet `Serveur` avant les boutons `Valider` / `Rejeter` :
 
 - lignes produits finis ;
 - lignes MP ;
 - ref / date / agent ;
 - pour qualite : produit, lot, MP, batches, signatures.
 
-Puis seulement :
-
-- `Valider`
-- `Rejeter`
-
-### Priorite 2 - Qualite serveur
+### Priorite 1 - Qualite serveur
 
 Workflow cible :
 
@@ -254,7 +250,7 @@ Aujourd'hui `Qualite` peut soumettre au serveur, mais il manque :
 - statuts multi-signatures ;
 - validation finale plus stricte.
 
-### Priorite 3 - Sauvegardes automatiques
+### Priorite 2 - Sauvegardes automatiques
 
 Ajouter :
 
@@ -264,7 +260,7 @@ Ajouter :
 - route admin `POST /api/backup`;
 - eventuellement export telechargeable.
 
-### Priorite 4 - SQLite
+### Priorite 3 - SQLite
 
 Le JSON central est volontairement temporaire.
 
