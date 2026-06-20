@@ -308,7 +308,7 @@ async function renderQualite(){
   }
 
   /* Init sig pads */
-  roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],!QS_SERVER_VIEW&&myRole===rr[0]);});
+  roles.forEach(function(rr){qInitSigPad('qSigCv_'+rr[0],rr[0],!QS_SERVER_VIEW&&qCanSignRole(rr[0]));});
   /* Paste button — for WhatsApp received files */
   var qpb=$('#qPasteBtn');
   if(qpb)qpb.onclick=function(){
