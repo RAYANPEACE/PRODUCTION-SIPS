@@ -352,11 +352,12 @@ async function renderServeur(){
   const app=$('#app');const pending=sipsPending();
   app.innerHTML='<div class="prod-wrap"><h2 class="prod-title">Serveur local SIPS</h2>'
     +'<div class="pf-sec"><div class="pf-h">Connexion</div><div class="pf-id"><label>Adresse serveur<input id="srvUrl" placeholder="http://192.168.x.x:3000" value="'+esc((SIPS_SERVER&&SIPS_SERVER.url)||'')+'"></label><label>PIN serveur<input id="srvPin" type="password" value="'+esc((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')+'"></label></div>'
-    +'<div class="pf-actions"><button id="srvSave" class="b-sec">Enregistrer</button><button id="srvTest" class="b-go">Tester</button><button id="srvFlush" class="b-sec">Envoyer attente ('+pending.length+')</button><button id="srvBackup" class="b-sec">Sauvegarde serveur</button></div><p id="srvStatus" class="ref-hint">URL active : '+esc(sipsServerUrl())+'</p></div>'
+    +'<div class="pf-actions"><button id="srvSave" class="b-sec">Enregistrer</button><button id="srvTest" class="b-go">Tester</button><button id="srvRefresh" class="b-sec">Actualiser liste</button><button id="srvFlush" class="b-sec">Envoyer attente ('+pending.length+')</button><button id="srvBackup" class="b-sec">Sauvegarde serveur</button></div><p id="srvStatus" class="ref-hint">URL active : '+esc(sipsServerUrl())+'</p></div>'
     +'<div class="pf-sec"><div class="pf-h">Soumissions en attente de validation</div><div id="srvSubs">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div></div>';
   $('#srvSave').onclick=function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);toast('Configuration serveur enregistree');renderServeur();};
   $('#srvTest').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);const r=await sipsPing();$('#srvStatus').textContent=r.ok?'Serveur connecte - '+r.data.time:'Hors ligne - '+r.error;};
+  $('#srvRefresh').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsLoadServeur();toast('Liste serveur actualisee');};
   $('#srvFlush').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsFlushPending();renderServeur();};
   $('#srvBackup').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsCreateBackup();};
   await sipsLoadServeur();
@@ -364,14 +365,19 @@ async function renderServeur(){
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
   try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>sipsDecide(id,b.dataset.act));});}
-  catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+'</p>';}
+  catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi avec un compte admin ou renseigne le PIN serveur.':'')+'</p>';}
   try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
 }
 async function sipsDecide(id,act){
   const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
+  const row=document.querySelector('[data-sub="'+id+'"]');
+  if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
   try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');}
-  catch(e){toast(/trait/i.test(e.message||'')?'Deja traitee - liste mise a jour':'Erreur serveur : '+e.message);}
+  catch(e){
+    if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();}
+    else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+  }
   // Resynchronise la liste avec le serveur dans tous les cas : un element deja
   // traite (ailleurs / double-clic) disparait au lieu de rester affiche.
   try{await sipsLoadServeur();}catch(e){}
@@ -380,8 +386,13 @@ async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');
   if(reason===null)return;
   if(!confirm('Annuler cet enregistrement validé ?\n\nIl restera dans le journal serveur mais sera retiré des historiques officiels.'))return;
+  const row=document.querySelector('[data-rec="'+id+'"]');
+  if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
   try{await sipsFetch('/api/records/'+encodeURIComponent(id)+'/cancel',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',reason:reason})});toast('Enregistrement annulé');}
-  catch(e){toast(/annul/i.test(e.message||'')?'Deja annule - liste mise a jour':'Erreur serveur : '+e.message);}
+  catch(e){
+    if(/annul/i.test(e.message||'')){toast('Deja annule - liste mise a jour');if(row)row.remove();}
+    else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+  }
   try{await sipsLoadServeur();}catch(e){}
 }
 async function sipsCreateBackup(){
