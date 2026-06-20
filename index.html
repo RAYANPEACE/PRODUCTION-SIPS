@@ -1559,6 +1559,20 @@ async function openHistory(){
   const fiB=document.createElement('input');fiB.type='file';fiB.accept='.txt,.json,text/plain';fiB.style.display='none';fiB.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
   const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde locale';impB.onclick=function(){fiB.click();};
   bk.append(expB,expLB,fiB,impB);list.append(bk);
+  const serverRows=await sipsRecords('inventory');
+  if(serverRows.length){
+    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
+    h.textContent='Valides serveur';list.append(h);
+    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+      const rec=row.payload||{};
+      const it=document.createElement('div');it.className='hist-item locked';
+      const when=row.validatedAt||row.createdAt||rec.submittedAt||'';
+      const bilan=rec.bilan||{};
+      it.innerHTML='<div class="info"><b>'+esc(rec.date||'—')+'</b><span>OFFICIEL serveur - '+esc(rec.agent||'—')+' - '+(rec.filled||0)+' art. - '+(bilan.nbAlertes||0)+' alerte(s) - '+(when?new Date(when).toLocaleDateString('fr-FR'):'')+'</span></div>';
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{if(!rec.st){toast('Inventaire serveur sans detail consultable');return;}histDlg.close();openArchive({st:rec.st,date:rec.date,agent:rec.agent,filled:rec.filled,savedAt:Date.parse(when)||Date.now(),locked:true,server:true});};
+      it.append(open);list.append(it);
+    });
+  }
   const fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
   fi.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importInventory(rd.result);};rd.readAsText(f);};
   const imp=document.createElement('button');imp.style.cssText='width:100%;margin-bottom:10px;padding:10px;border-radius:8px;border:1.5px solid #c5e4d2;color:var(--green);background:#e7f3ec;font-weight:700;font-size:14px';
@@ -1566,10 +1580,12 @@ async function openHistory(){
   list.append(fi,imp);
   if(!recs.length){
     const p=document.createElement('p');p.style.cssText='color:#6a7280;font-size:13px;margin:4px 0 0;line-height:1.5';
-    p.textContent='Aucun inventaire archivé pour l\u2019instant. Importe un fichier reçu avec le bouton ci-dessus, ou une fiche sera créée quand tu envoies / démarres un inventaire.';
+    p.textContent='Aucun inventaire local archive pour l\u2019instant. Importe un fichier recu avec le bouton ci-dessus, ou une fiche sera creee quand tu soumets / demarres un inventaire.';
     list.append(p);
   }
   else{
+    const localH=document.createElement('div');localH.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(serverRows.length?'10px':'0')+' 0 6px;text-transform:uppercase';
+    localH.textContent='Historique local';list.append(localH);
     const clear=document.createElement('button');clear.className='del';clear.style.cssText='width:100%;margin-bottom:10px;padding:9px;border-radius:8px';
     clear.textContent='Vider tout l\'historique';
     clear.onclick=async()=>{
@@ -2368,8 +2384,26 @@ function migrateProdRec(rec){
 async function loadProdHist(){
   const host=$('#pfHist');if(!host)return;
   let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf('prod_')===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
-  if(!recs.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune production enregistrée.</p>';return;}
   host.innerHTML='';
+  const serverRows=await sipsRecords('production');
+  if(serverRows.length){
+    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
+    h.textContent='Validees serveur';host.append(h);
+    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+      const rec=row.payload||{};
+      const blocks=prodRecBlocks(rec);
+      const np=blocks.filter(b=>b.p&&num(b.n)>0).length;
+      const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
+      const it=document.createElement('div');it.className='hist-item locked';
+      it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+np+' produit(s) - '+ph+' photo(s)</span></div>';
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
+      it.append(open);host.append(it);
+    });
+  }
+  if(recs.length){
+    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(serverRows.length?'10px':'0')+' 0 6px;text-transform:uppercase';
+    h.textContent='Historique local';host.append(h);
+  }
   recs.forEach(rec=>{
     const blocks=migrateProdRec(rec);
     const np=blocks.filter(b=>b.p&&num(b.n)>0).length;
@@ -2380,6 +2414,7 @@ async function loadProdHist(){
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer cette production ?')){await idbDel(rec.id);loadProdHist();}};
     it.append(open,del);host.append(it);
   });
+  if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune production enregistree.</p>';}
 }
 const MOVCFG={
  sortie:{title:'Sorties',word:'SORTIE',icon:'🚚',refLabel:'Véhicule / plaque / destinataire',refPlace:'ex. camion 1234-AB / labo',pfx:'sortie_',saved:'Sortie enregistrée',hint:'Enregistre une sortie : produits finis expédiés et/ou matières & échantillons (les deux possibles). Date vide = aujourd\u2019hui. Photo véhicule/plaque depuis la galerie.'},

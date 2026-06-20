@@ -156,6 +156,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : refonte UX legere serveur/offline et anti-doublons locaux. Les actions serveur sont mises en avant, les exports WhatsApp/fichier sont renommes en secours/local. Les sauvegardes locales n'acceptent plus les doublons pour sorties, entrees, productions, fiches qualite et inventaires archives/fusionnes. Cache SW v79. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : soumissions serveur ajoutees pour `inventory` et `production`. Le bouton principal comptage devient `Soumettre inventaire`, le dialogue resume propose `Soumettre au serveur`, Production a un bouton `Soumettre au serveur`, et l'onglet `Serveur` affiche les details admin de ces deux types avant validation. Cache SW v80. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : anti-doublon renforce cote file d'attente serveur offline. Une meme soumission en attente n'est plus ajoutee deux fois, et les anciennes files avec doublons sont dedupliquees au moment de l'envoi. Cache SW v81. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : historiques serveur ajoutes pour `production` et `inventory`. Les productions validees serveur apparaissent en haut de l'historique Production, et les inventaires valides serveur apparaissent dans l'Historique inventaire en lecture seule, separes de l'historique local. Cache SW v82. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 
 ## Comportement actuel important
 
@@ -259,13 +260,16 @@ Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees se
 - statuts multi-signatures ;
 - workflow serveur multi-etapes entre les responsables avant validation finale.
 
-### Priorite 2 - Historiques serveur inventaire / production
+### Priorite 2 - Fragmentation serveur
 
-Les soumissions `inventory` et `production` peuvent etre validees par l'admin. Il reste a afficher les records serveur valides dans les historiques metier correspondants :
+Les soumissions `inventory` et `production` peuvent etre validees par l'admin, puis relues dans les historiques metier correspondants.
 
-- historique `Production` : section `Validees serveur` comme sorties/entrees ;
-- historique inventaires : distinguer `Valides serveur` et `Historique local` ;
-- fragmenté : remplacer progressivement export/import/fusion par sessions serveur.
+Il reste a remplacer progressivement le workflow fragmente export/import/fusion par des sessions serveur :
+
+- creer une session d'inventaire serveur ;
+- permettre a plusieurs compteurs de soumettre leurs fragments a cette session ;
+- fusionner/valider la session cote admin ;
+- garder export/import fragment comme secours local uniquement.
 
 ### Sauvegardes automatiques - fait
 
