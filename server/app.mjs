@@ -1,4 +1,5 @@
-import { createServer } from 'node:http';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { readFile, writeFile, mkdir, stat, rename, readdir, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
@@ -721,7 +722,7 @@ async function serveStatic(req, res, url) {
   }
 }
 
-const server = createServer(async (req, res) => {
+async function requestHandler(req, res) {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
     if (url.pathname.startsWith('/api/')) {
@@ -731,14 +732,46 @@ const server = createServer(async (req, res) => {
   } catch (err) {
     sendJson(res, 500, { ok: false, error: err.message || 'Erreur serveur' });
   }
-});
+}
+
+const tlsPort = Number(process.env.SIPS_TLS_PORT || 3443);
+const tlsCertPath = process.env.SIPS_TLS_CERT || resolve(__dirname, 'certs', 'cert.pem');
+const tlsKeyPath = process.env.SIPS_TLS_KEY || resolve(__dirname, 'certs', 'key.pem');
+
+async function loadTls() {
+  try {
+    const [cert, key] = await Promise.all([readFile(tlsCertPath), readFile(tlsKeyPath)]);
+    return { cert, key };
+  } catch {
+    return null;
+  }
+}
 
 await ensureDb();
-server.listen(port, '0.0.0.0', () => {
-  console.log('SIPS local server');
+
+// HTTP reste TOUJOURS actif : secours, acces localhost, compatibilite existante.
+const httpServer = createHttpServer(requestHandler);
+httpServer.listen(port, '0.0.0.0', () => {
+  console.log('SIPS local server (HTTP)');
   console.log('  Local:   http://localhost:' + port);
   console.log('  Reseau:  http://ADRESSE_IP_DU_PC:' + port);
-  if (!process.env.SIPS_ADMIN_PIN) {
-    console.log('  PIN admin par defaut: 1234 (changer avec SIPS_ADMIN_PIN)');
-  }
 });
+
+// HTTPS optionnel : actif uniquement si un certificat est present dans server/certs/.
+// Necessaire pour le mode hors-ligne PWA sur les telephones. Voir SERVER_HTTPS.md.
+const tls = await loadTls();
+if (tls) {
+  const httpsServer = createHttpsServer(tls, requestHandler);
+  httpsServer.on('error', err => console.log('HTTPS erreur: ' + err.message));
+  httpsServer.listen(tlsPort, '0.0.0.0', () => {
+    console.log('SIPS local server (HTTPS)');
+    console.log('  Local:   https://localhost:' + tlsPort);
+    console.log('  Reseau:  https://ADRESSE_IP_DU_PC:' + tlsPort);
+  });
+} else {
+  console.log('HTTPS desactive : aucun certificat dans server/certs/ (mode hors-ligne PWA indisponible). Voir SERVER_HTTPS.md.');
+}
+
+if (!process.env.SIPS_ADMIN_PIN) {
+  console.log('  PIN admin par defaut: 1234 (changer avec SIPS_ADMIN_PIN)');
+}

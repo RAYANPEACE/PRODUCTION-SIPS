@@ -2,4 +2,5 @@ server/data/*.json
 server/data/*.tmp
 server/data/backups/
 server/data/.jwt-secret
+server/certs/
 !server/data/.gitkeep
