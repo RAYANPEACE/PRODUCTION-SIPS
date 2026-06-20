@@ -1869,6 +1869,23 @@ async function sipsFlushPending(){
   }
   sipsSetPending(keep);toast(sent+' envoyÃ©e(s), '+keep.length+' en attente');return {sent,failed:keep.length};
 }
+// Met a jour la carte "Serveur local" de l'accueil avec l'etat REEL (re-teste a chaque appel).
+async function updSrvDash(){
+  var el=$('#srvDash');if(!el)return;
+  var pend=sipsPending().length;
+  var r=await sipsPing();
+  el.innerHTML=(r.ok?'<span style="color:var(--green);font-weight:700">Connecte</span>':'<span style="color:var(--red);font-weight:700">Hors ligne</span>')+' - '+esc(sipsServerUrl())+' - '+pend+' en attente';
+}
+// A la reouverture de l'app (retour au premier plan) : re-teste le serveur,
+// envoie les soumissions en attente si joignable, et rafraichit le statut.
+async function sipsAutoSyncOnVisible(){
+  if(document.hidden)return;
+  try{var r=await sipsPing();if(r.ok&&sipsPending().length)await sipsFlushPending();}catch(e){}
+  updSrvDash();
+}
+document.addEventListener('visibilitychange',sipsAutoSyncOnVisible);
+// Rafraichissement leger du statut quand l'accueil est visible (toutes les 15 s).
+setInterval(function(){if(!document.hidden)updSrvDash();},15000);
 function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
 async function sipsRecords(type){
   try{
@@ -2854,8 +2871,6 @@ async function renderAccueil(){
   var bbS=$('#backupShare');if(bbS)bbS.onclick=function(){exportAll();};
   var bbD=$('#backupDL');if(bbD)bbD.onclick=function(){exportAllDownload();};
   app.querySelectorAll('.dash-b').forEach(b=>{if(b.dataset.go)b.onclick=()=>switchTab(b.dataset.go);});
-  var srvDash=$('#srvDash');
-  async function updSrvDash(){var pend=sipsPending().length;var r=await sipsPing();if(srvDash)srvDash.innerHTML=(r.ok?'<span style="color:var(--green);font-weight:700">Connecte</span>':'<span style="color:var(--red);font-weight:700">Hors ligne</span>')+' - '+esc(sipsServerUrl())+' - '+pend+' en attente';}
   var sdt=$('#srvDashTest');if(sdt)sdt.onclick=updSrvDash;
   var sdf=$('#srvDashFlush');if(sdf)sdf.onclick=async()=>{await sipsFlushPending();updSrvDash();};
   updSrvDash();
