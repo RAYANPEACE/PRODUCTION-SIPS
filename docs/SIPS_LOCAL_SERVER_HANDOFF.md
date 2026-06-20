@@ -148,6 +148,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : 5 bugs de revue high effort corriges (import profil, compteur partage, ST.agent, compteur import, qNew confirmation). Cache SW v71.
 - 2026-06-20 : annulation admin des records valides ajoutee. Backend `POST /api/records/:id/cancel`, filtres `GET /api/records?type=...&status=...`, audit `record.cancelled`, bouton `Annuler` dans l'onglet `Serveur`, historiques `Sorties` / `Entrees` limites aux records `validated`. Cache SW v72. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK hors sandbox.
 - 2026-06-20 : vue detail des soumissions avant validation ajoutee dans l'onglet `Serveur` (sorties/entrees : date, operateur, reference, lignes produits finis, lignes MP, photos, note ; qualite : produit, lot, dates/heures, quantite, taille batch, MP, batches, visas/signatures). Cache SW v73. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : lecture des fiches qualite validees serveur ajoutee dans l'historique `Qualite`. Les fiches officielles s'ouvrent en consultation lecture seule, avec PDF disponible mais sans sauvegarde/resoumission/import accidentels. Cache SW v74. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 
 ## Comportement actuel important
 
@@ -243,10 +244,8 @@ operateur renseigne + signe
 -> archive officielle
 ```
 
-Aujourd'hui `Qualite` peut soumettre au serveur, mais il manque :
+Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees serveur en consultation. Il manque encore :
 
-- lecture des fiches qualite serveur ;
-- vue detail qualite cote admin ;
 - statuts multi-signatures ;
 - validation finale plus stricte.
 
