@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, writeFile, mkdir, stat, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, rename, readdir, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '..');
 const dataDir = resolve(__dirname, 'data');
 const dbPath = resolve(dataDir, 'sips-data.json');
+const backupDir = resolve(dataDir, 'backups');
 const port = Number(process.env.SIPS_PORT || 3000);
 const adminPin = process.env.SIPS_ADMIN_PIN || '1234';
 
@@ -58,6 +59,65 @@ async function writeJson(path, value) {
 
 async function writeDb(db) {
   await writeJson(dbPath, db);
+  await createDailyBackup();
+}
+
+function dateKey(value) {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function backupStamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+function weekKey(dateText) {
+  const d = new Date(dateText + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return d.getUTCFullYear() + '-W' + String(week).padStart(2, '0');
+}
+
+async function listBackupFiles(prefix) {
+  try {
+    const names = await readdir(backupDir);
+    return names.filter(name => name.startsWith(prefix) && name.endsWith('.json')).sort().reverse();
+  } catch {
+    return [];
+  }
+}
+
+async function pruneDailyBackups() {
+  const files = await listBackupFiles('sips-data-daily-');
+  const keep = new Set(files.slice(0, 7));
+  const weekly = new Set();
+  for (const file of files.slice(7)) {
+    const m = file.match(/^sips-data-daily-(\d{4}-\d{2}-\d{2})/);
+    if (!m) continue;
+    const wk = weekKey(m[1]);
+    if (weekly.size < 4 && !weekly.has(wk)) {
+      weekly.add(wk);
+      keep.add(file);
+    }
+  }
+  await Promise.all(files.filter(file => !keep.has(file)).map(file => unlink(resolve(backupDir, file)).catch(() => {})));
+}
+
+async function createBackup(reason) {
+  await ensureDb();
+  await mkdir(backupDir, { recursive: true });
+  const raw = await readFile(dbPath, 'utf8');
+  const file = 'sips-data-' + reason + '-' + backupStamp() + '.json';
+  await writeFile(resolve(backupDir, file), raw, 'utf8');
+  if (reason === 'daily') await pruneDailyBackups();
+  return file;
+}
+
+async function createDailyBackup() {
+  const today = dateKey(Date.now());
+  const existing = await listBackupFiles('sips-data-daily-' + today);
+  if (existing.length) return existing[0];
+  return createBackup('daily');
 }
 
 function sendJson(res, status, body) {
@@ -315,6 +375,16 @@ async function handleApi(req, res, url) {
     if (!requireAdmin(req, res)) return;
     const db = await readDb();
     return sendJson(res, 200, { ok: true, audit: db.audit.slice().reverse() });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/backup') {
+    if (!requireAdmin(req, res)) return;
+    const body = await readBody(req);
+    const db = await readDb();
+    audit(db, 'backup.created', body.actor || 'admin', { reason: 'manual' });
+    await writeDb(db);
+    const file = await createBackup('manual');
+    return sendJson(res, 200, { ok: true, backup: file });
   }
 
   return sendJson(res, 404, { ok: false, error: 'Route API inconnue' });

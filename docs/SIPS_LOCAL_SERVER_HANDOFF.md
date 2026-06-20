@@ -150,6 +150,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : vue detail des soumissions avant validation ajoutee dans l'onglet `Serveur` (sorties/entrees : date, operateur, reference, lignes produits finis, lignes MP, photos, note ; qualite : produit, lot, dates/heures, quantite, taille batch, MP, batches, visas/signatures). Cache SW v73. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : lecture des fiches qualite validees serveur ajoutee dans l'historique `Qualite`. Les fiches officielles s'ouvrent en consultation lecture seule, avec PDF disponible mais sans sauvegarde/resoumission/import accidentels. Cache SW v74. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : validation finale qualite durcie cote serveur. `POST /api/submissions/:id/validate` refuse une soumission `quality` tant que les signatures operateur, responsable production et responsable qualite ne sont pas toutes presentes. Le resume admin affiche maintenant `x/3 signatures`. Cache SW v75. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API temporaire OK sans toucher `server/data/sips-data.json`.
+- 2026-06-20 : sauvegardes serveur ajoutees. `server/data/backups/` recoit une sauvegarde quotidienne automatique apres la premiere ecriture du jour, avec retention 7 jours + 4 semaines, et `POST /api/backup` cree une sauvegarde manuelle. Bouton `Sauvegarde serveur` ajoute dans l'onglet `Serveur`. Cache SW v76. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API backup temporaire OK sans toucher `server/data/sips-data.json`.
 
 ## Comportement actuel important
 
@@ -206,6 +207,7 @@ Routes principales :
 - `GET /api/records`
 - `GET /api/records?type=sortie&status=validated`
 - `POST /api/records/:id/cancel`
+- `POST /api/backup`
 - `GET /api/audit`
 
 Routes admin : ajouter header :
@@ -250,17 +252,19 @@ Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees se
 - statuts multi-signatures ;
 - workflow serveur multi-etapes entre les responsables avant validation finale.
 
-### Priorite 2 - Sauvegardes automatiques
+### Sauvegardes automatiques - fait
 
-Ajouter :
+Etat actuel :
 
-- dossier `server/data/backups/`;
-- backup quotidien de `sips-data.json`;
+- dossier `server/data/backups/` ignore par Git ;
+- backup quotidien automatique apres premiere ecriture du jour ;
 - retention simple : 7 derniers jours + 4 semaines ;
-- route admin `POST /api/backup`;
-- eventuellement export telechargeable.
+- route admin `POST /api/backup` ;
+- bouton admin `Sauvegarde serveur`.
 
-### Priorite 3 - SQLite
+Reste eventuellement : export telechargeable depuis l'interface.
+
+### Priorite 2 - SQLite
 
 Le JSON central est volontairement temporaire.
 

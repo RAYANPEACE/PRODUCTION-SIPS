@@ -36,7 +36,15 @@ Le serveur cree une base locale JSON ici :
 server/data/sips-data.json
 ```
 
-Ce fichier est ignore par Git. Il faudra plus tard ajouter une sauvegarde automatique vers disque externe.
+Ce fichier est ignore par Git.
+
+Le serveur cree aussi des sauvegardes JSON ici :
+
+```text
+server/data/backups/
+```
+
+Une sauvegarde quotidienne est creee automatiquement apres la premiere ecriture serveur de la journee. Retention actuelle : 7 derniers jours + 4 semaines. Une sauvegarde manuelle peut etre lancee depuis l'onglet `Serveur` ou via `POST /api/backup`.
 
 ## API minimale
 
@@ -46,6 +54,8 @@ Ce fichier est ignore par Git. Il faudra plus tard ajouter une sauvegarde automa
 - `POST /api/submissions/:id/validate` : valider une soumission, avec header `x-sips-admin-pin`.
 - `POST /api/submissions/:id/reject` : rejeter une soumission, avec header `x-sips-admin-pin`.
 - `GET /api/records` : lire les donnees validees, avec header `x-sips-admin-pin`.
+- `POST /api/records/:id/cancel` : annuler un record valide sans le supprimer, avec header `x-sips-admin-pin`.
+- `POST /api/backup` : creer une sauvegarde manuelle, avec header `x-sips-admin-pin`.
 - `GET /api/audit` : lire le journal, avec header `x-sips-admin-pin`.
 
 ## PIN admin
@@ -61,8 +71,6 @@ npm run server
 
 ## Etapes suivantes
 
-1. Tester l'acces depuis un telephone sur le Wi-Fi usine.
-2. Ajouter dans l'app un statut `Serveur connecte / hors ligne`.
-3. Ajouter un bouton `Soumettre au serveur` sur mouvements et qualite.
-4. Ajouter un ecran responsable pour valider/rejeter.
-5. Remplacer le stockage JSON par SQLite quand le workflow est valide.
+1. Tester les annulations et sauvegardes serveur sur telephone.
+2. Finaliser le workflow qualite multi-etapes.
+3. Remplacer le stockage JSON par SQLite quand le workflow est valide.
