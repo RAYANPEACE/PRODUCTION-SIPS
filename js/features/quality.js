@@ -115,6 +115,22 @@ function qValidateBatches(){
   return '';
 }
 
+function qCanSignRole(role){
+  if(SESSION&&Array.isArray(SESSION.canSign))return SESSION.canSign.indexOf(role)>=0;
+  return usrVisaKey()===role;
+}
+function qSignerName(){
+  return SESSION?(SESSION.nom||''):(USR&&USR.nom)||'';
+}
+function qApplyAccountVisaNames(){
+  ['operateur','responsableProd','responsableQualite'].forEach(function(role){
+    if(qCanSignRole(role)){
+      var name=qSignerName();
+      if(name)QS.visas[role].nom=name;
+    }
+  });
+}
+
 /* --- Signature pad --- */
 function qInitSigPad(canvasId,role,editable){
   var cv=document.getElementById(canvasId);
@@ -134,6 +150,7 @@ function qInitSigPad(canvasId,role,editable){
   if(editable){
     function start(e){
       e.preventDefault();drawing=true;
+      var name=qSignerName();if(name)QS.visas[role].nom=name;
       var p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);
     }
     function move(e){
@@ -171,15 +188,7 @@ async function renderQualite(){
   if(!QS.informations.numeroLot){
     QS.informations.numeroLot=await qNextLotNum();
   }
-  if(usrVisaKey()==='operateur'&&!QS.visas.operateur.nom&&USR.nom){
-    QS.visas.operateur.nom=USR.nom;
-  }
-  if(usrVisaKey()==='responsableProd'&&!QS.visas.responsableProd.nom&&USR.nom){
-    QS.visas.responsableProd.nom=USR.nom;
-  }
-  if(usrVisaKey()==='responsableQualite'&&!QS.visas.responsableQualite.nom&&USR.nom){
-    QS.visas.responsableQualite.nom=USR.nom;
-  }
+  qApplyAccountVisaNames();
   qComputeTimes();
   var app=$('#app');
   var h='<div class="q-wrap">';
@@ -256,16 +265,17 @@ async function renderQualite(){
   h+='<div class="q-sec open" id="qSecD"><div class="q-sec-h" onclick="this.parentElement.classList.toggle(\'open\')"><h3>D — Visas / Signatures</h3><span class="chev">▸</span></div>';
   h+='<div class="q-sec-body">';
   var roles=[['operateur','Operateur'],['responsableProd','Responsable production'],['responsableQualite','Responsable qualite']];
-  var myRole=usrVisaKey();
   roles.forEach(function(rr){
     var key=rr[0],label=rr[1];
     var v=QS.visas[key];
-    var isMine=myRole===key;
+    var isMine=qCanSignRole(key);
+    var lockName=!!SESSION||!isMine;
     h+='<div class="q-sig-block'+(isMine?'':' q-sig-locked')+'">';
     h+='<div class="q-sig-title">'+esc(label)+(key==='operateur'?' <span style="color:var(--red);font-size:11px">(obligatoire)</span>':'');
     if(!isMine)h+=' <span style="color:var(--mute);font-size:10px;font-style:italic">(lecture seule)</span>';
+    else if(SESSION)h+=' <span style="color:var(--green);font-size:10px;font-style:italic">(compte connecte)</span>';
     h+='</div>';
-    h+='<input class="q-sig-nom" type="text" id="qSigNom_'+key+'" value="'+esc(v.nom)+'" placeholder="Nom"'+(isMine?' oninput="QS.visas.'+key+'.nom=this.value"':' readonly style="background:#eef2f6;color:var(--mute)"')+'>';
+    h+='<input class="q-sig-nom" type="text" id="qSigNom_'+key+'" value="'+esc(v.nom)+'" placeholder="Nom"'+(lockName?' readonly style="background:#eef2f6;color:var(--mute)"':' oninput="QS.visas.'+key+'.nom=this.value"')+'>';
     h+='<canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"'+(isMine?'':' style="pointer-events:none;opacity:0.6"')+'></canvas>';
     if(isMine){h+='<button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';}
     h+='<div class="q-sig-ts" id="qSigTs_'+key+'">'+esc(v.date)+'</div>';

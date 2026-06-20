@@ -167,6 +167,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : **Phase 4 auth - gestion comptes dans l'app.** L'onglet `Serveur` affiche maintenant une section `Utilisateurs` : liste comptes, creation d'utilisateur, modification nom/role/statut actif, reset mot de passe optionnel. Les protections restent cote serveur (dernier admin, auto-desactivation, roles valides). Cache SW v89. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, API `/api/auth/users` OK.
 - 2026-06-20 : **fix cache API service worker.** Cause du probleme d'actualisation identifiee : le service worker cachait aussi les GET `/api/...`, donc les listes utilisateurs/soumissions/records pouvaient rester anciennes meme apres `Actualiser`. Les routes `/api/` bypassent maintenant totalement le cache, `sipsFetch` utilise `cache:'no-store'`, et la liste utilisateurs a un bouton direct `Desactiver`/`Reactiver` (pas de suppression physique pour conserver la tracabilite). Cache SW v90. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : **durcissement auth - mots de passe personnels et actions critiques.** Les comptes crees ou reset par l'admin recoivent un mot de passe temporaire (`mustChangePassword`) que l'utilisateur doit changer a la premiere connexion. Le login devient obligatoire quand le serveur est configure ; sans session deja connectee, le mode local n'est plus propose. `Valider`, `Rejeter` et `Annuler` demandent une reconfirmation par mot de passe personnel. Cache SW v91. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : **Phase 6 partielle - visas qualite lies au compte.** Dans `Qualite`, les visas signables viennent maintenant de `SESSION.canSign`. Le nom du visa est force depuis le compte connecte et passe en lecture seule ; l'utilisateur ne peut plus changer le nom affiche sur sa signature. Legacy local conserve le comportement ancien seulement hors session. Cache SW v92. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 
 ## Comportement actuel important
 
@@ -265,7 +266,7 @@ Etat des phases :
 - **Phase 3 (onglets par role + re-confirmation actions critiques)** : FAIT pour `Valider` / `Rejeter` / `Annuler` (cache SW v91). A TESTER SUR MOBILE.
 - **Phase 4 (gestion comptes admin dans onglet Serveur)** : FAIT (cache SW v89). A TESTER SUR MOBILE : creer/modifier/desactiver un compte depuis `Serveur`.
 - **Phase 5 (mode offline avec session cachee)** : A FAIRE
-- **Phase 6 (visas qualite lies au compte)** : A FAIRE
+- **Phase 6 (visas qualite lies au compte)** : PARTIELLEMENT FAIT (cache SW v92) : verrouillage UI nom/role de signature. Reste workflow multi-etapes qualite serveur.
 - **Phase 7 (inventaire fragmente via serveur, base commune + freshCodes)** : A FAIRE (apres stabilisation)
 
 Regles importantes decidees avec l'utilisateur pour la suite :
