@@ -177,7 +177,9 @@ function fragAgentRow(val){
   return row;
 }
 function openFragDlg(){
-  FRAGFILES=[];$('#fragMergeTitle').value='';fragRenderFileList();
+  FRAGFILES=[];$('#fragMergeTitle').value='';
+  const d=$('#srvFragDate');if(d&&!d.value)d.value=todayStr();
+  fragRenderFileList();srvFragLoadSessions();
   $('#fragDlg').showModal();
 }
 function fragStartFromDlg(){
@@ -288,6 +290,138 @@ function fragRenderFileList(){
   });
   const mb=$('#fragMergeFiles');mb.disabled=false;mb.style.opacity=1;mb.textContent='⚙ Fusionner '+FRAGFILES.length+' part'+(FRAGFILES.length>1?'s':'')+' & archiver';
 }
+/* ====== MODE SERVEUR : session officielle base + freshCodes ====== */
+let SRV_FRAG_SESSIONS=[];
+function srvFragSelectedId(){
+  const r=document.querySelector('input[name="srvFragPick"]:checked');
+  return r?r.value:'';
+}
+async function srvFragLoadSessions(){
+  const host=$('#srvFragList');if(!host)return;
+  host.innerHTML='<div style="font-size:12.5px;color:#6a7280;padding:4px 0">Chargement des sessions serveur...</div>';
+  try{
+    const data=await sipsFetch('/api/inventory-sessions');
+    SRV_FRAG_SESSIONS=data.sessions||[];
+    srvFragRenderSessions();
+  }catch(e){
+    host.innerHTML='<div style="font-size:12.5px;color:var(--red);padding:4px 0">Sessions serveur indisponibles : '+esc(e.message)+'</div>';
+  }
+}
+function srvFragRenderSessions(){
+  const host=$('#srvFragList');if(!host)return;
+  if(!SRV_FRAG_SESSIONS.length){
+    host.innerHTML='<div style="font-size:12.5px;color:#6a7280;padding:4px 0">Aucune session ouverte. Un admin peut creer la session ci-dessus.</div>';
+    return;
+  }
+  host.innerHTML=SRV_FRAG_SESSIONS.map((s,i)=>{
+    const n=(s.contributions||[]).length;
+    const c=(s.contributions||[]).reduce((a,x)=>a+(x.counted||0),0);
+    const base=s.baseInventoryId?('Base '+(s.baseDate||s.baseInventoryId)):'Aucune base serveur';
+    return '<label class="frag-sess" style="cursor:pointer"><input type="radio" name="srvFragPick" value="'+esc(s.id)+'" '+(i===0?'checked':'')+'>'
+      +'<div class="fs-info"><b>'+esc(s.title||('Inventaire '+(s.date||'')))+'</b>'
+      +'<span>'+frDate(s.date)+' - '+esc(base)+' - '+n+' part(s), '+c+' article(s) recompte(s)</span></div>'
+      +'<div class="fs-acts">'+(ADMIN?'<button type="button" data-srvmerge="'+esc(s.id)+'">Analyser / fusionner</button>':'')+'</div></label>';
+  }).join('');
+  host.querySelectorAll('[data-srvmerge]').forEach(b=>b.onclick=ev=>{ev.preventDefault();srvFragAnalyze(b.dataset.srvmerge);});
+}
+function srvFragContributionPayload(){
+  ST.date=$('#date').value;
+  if(!ST.agent&&typeof USR!=='undefined'&&USR.nom)ST.agent=USR.nom;
+  const codes=freshCodes().filter(code=>ST.c[code]&&ST.c[code].counted);
+  const counts={},cfg={};
+  codes.forEach(code=>{
+    counts[code]=clone(ST.c[code]);
+    const r=REFS.find(x=>x.code===code);
+    cfg[code]=(ST.cfg&&ST.cfg[code])?clone(ST.cfg[code]):(r?clone(pOf(r)):{});
+  });
+  return {agent:ST.agent||'',freshCodes:codes,counts:counts,cfg:cfg};
+}
+async function srvFragCreateSession(){
+  const date=($('#srvFragDate')&&$('#srvFragDate').value)||todayStr();
+  const title=($('#srvFragTitle')&&$('#srvFragTitle').value.trim())||('Inventaire '+frDate(date));
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('creer une session inventaire serveur')))return;
+  try{
+    await sipsFetch('/api/inventory-sessions',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({date:date,title:title})});
+    toast('Session inventaire serveur creee');
+    await srvFragLoadSessions();
+  }catch(e){toast('Erreur session serveur : '+e.message);}
+}
+async function srvFragSendMine(){
+  const id=srvFragSelectedId();
+  if(!id){toast('Choisis une session serveur');return;}
+  const payload=srvFragContributionPayload();
+  if(!payload.freshCodes.length){toast('Aucun article recompte dans cette session de comptage');return;}
+  try{
+    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/contributions',{method:'POST',body:JSON.stringify({payload:payload})});
+    toast('Part envoyee au serveur : '+payload.freshCodes.length+' article(s)');
+    await srvFragLoadSessions();
+  }catch(e){toast('Erreur envoi fragment : '+e.message);}
+}
+function srvFragBuildMerged(sess){
+  const base=sess.baseSnapshot?clone(sess.baseSnapshot):freshCounts();
+  base.id='inv_'+Date.now();base.date=sess.date||todayStr();
+  base.agent='Fusion serveur - '+(sess.title||sess.id);
+  base.sessionStart=Date.now();
+  base.cfg=base.cfg||{};base.c=base.c||{};
+  REFS.forEach(r=>{base.c[r.code]??=blankEntry(r);base.cfg[r.code]??=clone(pOf(r));});
+  const byCode={},conflicts=[];
+  (sess.contributions||[]).forEach(c=>{
+    const p=c.payload||{};
+    Object.keys(p.counts||{}).forEach(code=>{
+      byCode[code]=byCode[code]||[];
+      byCode[code].push({agent:c.agent||p.agent||'Compteur',entry:p.counts[code],cfg:p.cfg&&p.cfg[code]});
+    });
+  });
+  Object.keys(byCode).forEach(code=>{
+    if(byCode[code].length===1){
+      base.c[code]=clone(byCode[code][0].entry);
+      if(byCode[code][0].cfg)base.cfg[code]=clone(byCode[code][0].cfg);
+    }else conflicts.push({code:code,rows:byCode[code]});
+  });
+  return {st:base,conflicts:conflicts,changed:Object.keys(byCode).length};
+}
+function srvFragInventoryPayload(sess,merged){
+  const prevST=ST,prevRO=RO;ST=merged.st;RO=true;mergeAndMigrate();
+  let bilan=null,detail=null;
+  try{
+    const b=buildBilan();
+    bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};
+    detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});
+  }catch(e){}
+  const snap=snapshot();ST=prevST;RO=prevRO;
+  const filled=REFS.filter(r=>snap.c[r.code]&&snap.c[r.code].counted).length;
+  return {kind:'inventory',date:snap.date||todayStr(),agent:snap.agent||'',filled:filled,bilan:bilan,detail:detail,st:snap,
+    frag:{source:'server',sessionId:sess.id,title:sess.title||'',baseInventoryId:sess.baseInventoryId||null,baseDate:sess.baseDate||'',agents:(sess.contributions||[]).map(c=>c.agent||'Compteur')}};
+}
+async function srvFragAnalyze(id){
+  try{
+    const data=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id));
+    const sess=data.session;
+    const merged=srvFragBuildMerged(sess);
+    let msg='Session '+(sess.title||sess.id)+'\n\nParts : '+(sess.contributions||[]).length+'\nArticles recomptees : '+merged.changed;
+    if(merged.conflicts.length){
+      msg+='\n\nCONFLITS :\n'+merged.conflicts.slice(0,12).map(c=>{
+        const r=REFS.find(x=>x.code===c.code);
+        return '- '+c.code+' '+(r?r.des:'')+' : '+c.rows.map(x=>x.agent).join(', ');
+      }).join('\n')+(merged.conflicts.length>12?'\n...':'')+'\n\nFusion bloquee : il faut corriger pour qu un article ne soit compte que par une seule personne.';
+      alert(msg);return;
+    }
+    msg+='\n\nAucun conflit. Creer une soumission inventaire a valider par admin ?';
+    if(!confirm(msg))return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('finaliser la session inventaire')))return;
+    const payload=srvFragInventoryPayload(sess,merged);
+    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
+      method:'POST',headers:sipsAdminHeaders(),
+      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,summary:{conflicts:0,changed:merged.changed,contributions:(sess.contributions||[]).length}})
+    });
+    toast('Fusion creee en soumission inventaire - validation admin requise');
+    await srvFragLoadSessions();
+  }catch(e){toast('Erreur fusion serveur : '+e.message);}
+}
+if($('#srvFragCreate'))$('#srvFragCreate').onclick=srvFragCreateSession;
+if($('#srvFragReload'))$('#srvFragReload').onclick=srvFragLoadSessions;
+if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSendMine;
+
 async function fragMergeFiles(){
   if(!FRAGFILES.length){toast('Ajoute au moins une part');return;}
   const dates=FRAGFILES.map(f=>f.date).filter(Boolean).sort();

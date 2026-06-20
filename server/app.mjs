@@ -102,6 +102,7 @@ function emptyDb() {
     version: 1,
     createdAt: new Date().toISOString(),
     users: [],
+    inventorySessions: [],
     submissions: [],
     records: [],
     audit: []
@@ -120,7 +121,13 @@ async function ensureDb() {
 async function readDb() {
   await ensureDb();
   const raw = await readFile(dbPath, 'utf8');
-  return JSON.parse(raw);
+  const db = JSON.parse(raw);
+  if (!Array.isArray(db.users)) db.users = [];
+  if (!Array.isArray(db.inventorySessions)) db.inventorySessions = [];
+  if (!Array.isArray(db.submissions)) db.submissions = [];
+  if (!Array.isArray(db.records)) db.records = [];
+  if (!Array.isArray(db.audit)) db.audit = [];
+  return db;
 }
 
 async function writeJson(path, value) {
@@ -368,6 +375,12 @@ function recordStatus(r) {
   return r.status || 'validated';
 }
 
+function latestInventoryRecord(db) {
+  return (db.records || [])
+    .filter(r => r.type === 'inventory' && recordStatus(r) === 'validated' && r.payload && r.payload.st)
+    .sort((a, b) => String(b.validatedAt || '').localeCompare(String(a.validatedAt || '')))[0] || null;
+}
+
 function activeQualityLotConflict(db, lot) {
   if (!lot) return null;
   const submitted = db.submissions.find(s => (
@@ -398,6 +411,41 @@ function missingQualitySignatures(payload) {
 
 function canSignQuality(user) {
   return user && roleCanSign(user.role).some(role => role === 'operateur' || role === 'responsableQualite');
+}
+
+function publicInventorySession(s) {
+  const contributions = (s.contributions || []).map(c => ({
+    id: c.id,
+    agent: c.agent,
+    userId: c.userId || null,
+    username: c.username || '',
+    counted: c.counted || 0,
+    freshCount: c.freshCount || 0,
+    submittedAt: c.submittedAt,
+    note: c.note || ''
+  }));
+  return {
+    id: s.id,
+    title: s.title || '',
+    date: s.date || '',
+    status: s.status || 'open',
+    baseInventoryId: s.baseInventoryId || null,
+    baseDate: s.baseDate || '',
+    createdAt: s.createdAt,
+    createdBy: s.createdBy || null,
+    finalizedAt: s.finalizedAt || null,
+    finalizedBy: s.finalizedBy || null,
+    submissionId: s.submissionId || null,
+    contributions
+  };
+}
+
+function fullInventorySession(s) {
+  return {
+    ...publicInventorySession(s),
+    baseSnapshot: s.baseSnapshot || null,
+    contributions: (s.contributions || []).map(c => ({ ...c }))
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -587,6 +635,162 @@ async function handleApi(req, res, url) {
     audit(db, 'user.updated', actor ? actor.nom : 'admin', { id: user.id });
     await writeDb(db);
     return sendJson(res, 200, { ok: true, user: publicUser(user) });
+  }
+
+  // ====== INVENTAIRE FRAGMENTE SERVEUR ======
+  if (req.method === 'GET' && url.pathname === '/api/inventory-sessions') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const db = await readDb();
+    const includeClosed = url.searchParams.get('includeClosed') === '1';
+    let rows = db.inventorySessions || [];
+    if (!includeClosed) rows = rows.filter(s => (s.status || 'open') === 'open');
+    rows = rows.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    return sendJson(res, 200, { ok: true, sessions: rows.map(publicInventorySession) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/inventory-sessions') {
+    if (!(await requireAdmin(req, res))) return;
+    const actor = await authUser(req);
+    const body = await readBody(req);
+    const date = String(body.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return sendJson(res, 400, { ok: false, error: 'Date inventaire requise' });
+    }
+    const db = await readDb();
+    const baseRecord = body.baseInventoryId
+      ? db.records.find(r => r.id === body.baseInventoryId && r.type === 'inventory' && recordStatus(r) === 'validated')
+      : latestInventoryRecord(db);
+    const sess = {
+      id: 'isess_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      title: String(body.title || '').trim(),
+      date,
+      baseInventoryId: baseRecord ? baseRecord.id : null,
+      baseDate: baseRecord && baseRecord.payload ? (baseRecord.payload.date || '') : '',
+      baseSnapshot: baseRecord && baseRecord.payload ? (baseRecord.payload.st || null) : null,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      createdBy: actor ? { id: actor.id, name: actor.nom, role: actor.role } : { name: 'admin' },
+      contributions: []
+    };
+    db.inventorySessions.push(sess);
+    audit(db, 'inventory_session.created', actor ? actor.nom : 'admin', { id: sess.id, date: sess.date });
+    await writeDb(db);
+    return sendJson(res, 201, { ok: true, session: publicInventorySession(sess) });
+  }
+
+  const inventorySessionDetail = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)$/);
+  if (req.method === 'GET' && inventorySessionDetail) {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const db = await readDb();
+    const sess = db.inventorySessions.find(s => s.id === inventorySessionDetail[1]);
+    if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
+    return sendJson(res, 200, { ok: true, session: fullInventorySession(sess) });
+  }
+
+  const inventoryContribution = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/contributions$/);
+  if (req.method === 'POST' && inventoryContribution) {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    const payload = body.payload || {};
+    const freshCodes = Array.isArray(payload.freshCodes)
+      ? [...new Set(payload.freshCodes.map(c => String(c)).filter(Boolean))]
+      : [];
+    const counts = {};
+    if (payload.counts && typeof payload.counts === 'object') {
+      for (const code of freshCodes) {
+        if (payload.counts[code] && payload.counts[code].counted) counts[code] = payload.counts[code];
+      }
+    } else if (payload.st && payload.st.c && typeof payload.st.c === 'object') {
+      for (const code of freshCodes) {
+        if (payload.st.c[code] && payload.st.c[code].counted) counts[code] = payload.st.c[code];
+      }
+    }
+    const countedCodes = Object.keys(counts);
+    if (!freshCodes.length || !countedCodes.length) {
+      return sendJson(res, 400, { ok: false, error: 'Aucun article recompte dans ce fragment' });
+    }
+    const db = await readDb();
+    const sess = db.inventorySessions.find(s => s.id === inventoryContribution[1]);
+    if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
+    if ((sess.status || 'open') !== 'open') {
+      return sendJson(res, 409, { ok: false, error: 'Session inventaire deja finalisee' });
+    }
+    const rec = {
+      id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      userId: user.id,
+      username: user.username,
+      agent: String(payload.agent || user.nom || '').trim() || user.nom,
+      counted: countedCodes.length,
+      freshCount: countedCodes.length,
+      submittedAt: new Date().toISOString(),
+      note: String(body.note || '').trim(),
+      payload: {
+        baseInventoryId: sess.baseInventoryId || null,
+        baseDate: sess.baseDate || '',
+        agent: String(payload.agent || user.nom || '').trim() || user.nom,
+        freshCodes: countedCodes,
+        counts,
+        cfg: payload.cfg || {}
+      }
+    };
+    sess.contributions = sess.contributions || [];
+    const existing = sess.contributions.findIndex(c => c.userId === user.id);
+    if (existing >= 0) sess.contributions[existing] = rec;
+    else sess.contributions.push(rec);
+    sess.updatedAt = rec.submittedAt;
+    audit(db, 'inventory_session.contribution', user.nom, { id: sess.id, counted: countedCodes.length });
+    await writeDb(db);
+    return sendJson(res, existing >= 0 ? 200 : 201, { ok: true, session: publicInventorySession(sess), contribution: rec });
+  }
+
+  const inventoryFinalize = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/finalize$/);
+  if (req.method === 'POST' && inventoryFinalize) {
+    if (!(await requireAdmin(req, res))) return;
+    const actor = await authUser(req);
+    const body = await readBody(req);
+    const payload = body.payload || {};
+    if (!payload.st || !payload.st.c) {
+      return sendJson(res, 400, { ok: false, error: 'Inventaire fusionne manquant' });
+    }
+    if (body.summary && Number(body.summary.conflicts || 0) > 0) {
+      return sendJson(res, 409, { ok: false, error: 'Conflits inventaire non resolus' });
+    }
+    const db = await readDb();
+    const sess = db.inventorySessions.find(s => s.id === inventoryFinalize[1]);
+    if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
+    if ((sess.status || 'open') !== 'open') {
+      return sendJson(res, 409, { ok: false, error: 'Session inventaire deja finalisee' });
+    }
+    const finalizedAt = new Date().toISOString();
+    const hash = submissionHash('inventory', payload);
+    const sub = {
+      id: 'sub_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      sourceInventorySessionId: sess.id,
+      hash,
+      type: 'inventory',
+      status: 'submitted',
+      payload,
+      author: payload.author || null,
+      note: body.note || ('Fusion inventaire serveur ' + (sess.title || sess.date || sess.id)),
+      createdAt: finalizedAt
+    };
+    db.submissions.push(sub);
+    sess.status = 'finalized';
+    sess.finalizedAt = finalizedAt;
+    sess.finalizedBy = body.actor || (actor ? actor.nom : 'admin');
+    sess.submissionId = sub.id;
+    sess.finalSummary = body.summary || {};
+    audit(db, 'inventory_session.finalized', sess.finalizedBy, {
+      id: sess.id,
+      submissionId: sub.id,
+      contributions: (sess.contributions || []).length,
+      conflicts: body.summary && body.summary.conflicts
+    });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, session: publicInventorySession(sess), submission: publicSubmission(sub) });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/submissions') {

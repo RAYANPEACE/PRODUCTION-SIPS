@@ -89,6 +89,20 @@
 <dialog id="fragDlg">
   <div class="dlg-h"><b>Comptage fragmenté</b><button onclick="fragDlg.close()">×</button></div>
   <div class="dlg-b">
+    <div class="frag-step">
+      <div class="fst-h">Serveur central</div>
+      <p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Session officielle avec base commune serveur. Chaque téléphone envoie seulement les articles réellement recomptés.</p>
+      <div class="pf-id">
+        <label>Date session<input type="date" id="srvFragDate"></label>
+        <label>Libellé<input id="srvFragTitle" placeholder="ex. Inventaire juin"></label>
+      </div>
+      <div class="pf-actions">
+        <button id="srvFragCreate" class="b-go">Créer session serveur</button>
+        <button id="srvFragReload" class="b-sec">Actualiser</button>
+        <button id="srvFragSend" class="b-sec">Envoyer ma part</button>
+      </div>
+      <div id="srvFragList" style="margin-top:8px"></div>
+    </div>
     <div id="fragModeFiles">
       <p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Chaque compteur compte sa partie sur <b>son</b> téléphone, puis exporte sa part et te l'envoie (WhatsApp, mail…). Toi, tu ajoutes toutes les parts reçues et l'app fusionne.</p>
       <div class="frag-step">

@@ -171,6 +171,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : **Phase 6 workflow qualite serveur.** Les fiches qualite soumises avec signature operateur apparaissent maintenant dans `Qualite` comme `A signer / en validation serveur` pour les comptes autorises. Un responsable qualite peut ouvrir la fiche serveur en attente, les donnees sont verrouillees, seule sa signature est ajoutable, puis `POST /api/submissions/:id/quality-sign` enregistre le visa avec nom force cote serveur. L'admin valide ensuite quand les 2 signatures obligatoires sont presentes. Les comptes qualite peuvent lire les records `quality` valides sans acces aux autres donnees serveur. Cache SW v93. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : **verrou qualite par numero de lot.** Le serveur refuse maintenant une nouvelle fiche `quality` si une soumission `submitted` ou un record actif non annule existe deja avec le meme `informations.numeroLot`. Une correction reste possible apres rejet de l'ancienne soumission ou annulation du record valide. Cote client, les erreurs API ne sont plus mises en attente comme si le serveur etait hors ligne, et la file offline dedoublonne aussi les fiches qualite par lot. Cache SW v94. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : **motif de rejet serveur.** `Rejeter` demande maintenant un motif/correction demandee dans l'onglet `Serveur`, l'envoie comme `decisionNote`, et l'audit serveur conserve aussi cette note. Cache SW v95. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : **Phase 7 partielle - inventaire fragmente serveur.** Ajout des sessions serveur `inventorySessions` avec base commune (`baseInventoryId`, `baseSnapshot`) issue du dernier inventaire serveur valide. Routes : liste/creation/detail/contribution/finalisation. Le client ajoute dans `Comptage fragmente` un bloc serveur : creer session, actualiser, envoyer sa part, analyser/fusionner. Regle metier appliquee : une contribution officielle ne stocke que `freshCodes + counts` (pas le snapshot complet du telephone) ; si plusieurs compteurs recompent le meme article, conflit visible et fusion bloquee ; la fusion cree une soumission `inventory` en attente de validation admin, pas un record valide direct. Les exports/imports fichiers restent en secours local. Cache SW v96. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK. A tester sur mobile.
 
 ## Comportement actuel important
 
@@ -244,6 +245,14 @@ Routes auth (Phases 0-1) :
 - `POST /api/auth/users` (admin) -> creer un compte
 - `POST /api/auth/users/:id` (admin) -> modifier role / mot de passe / actif
 
+Routes inventaire fragmente serveur :
+
+- `GET /api/inventory-sessions` -> sessions ouvertes, avec resume des contributions
+- `POST /api/inventory-sessions` (admin) -> creer une session avec base = dernier inventaire serveur valide
+- `GET /api/inventory-sessions/:id` -> detail complet, base et contributions
+- `POST /api/inventory-sessions/:id/contributions` -> envoyer sa part officielle (`freshCodes + counts`)
+- `POST /api/inventory-sessions/:id/finalize` (admin) -> creer une soumission `inventory` fusionnee si aucun conflit
+
 Routes admin : deux modes acceptes pendant la transition :
 
 ```text
@@ -272,7 +281,7 @@ Etat des phases :
 - **Phase 4 (gestion comptes admin dans onglet Serveur)** : FAIT (cache SW v89). A TESTER SUR MOBILE : creer/modifier/desactiver un compte depuis `Serveur`.
 - **Phase 5 (mode offline avec session cachee)** : A FAIRE
 - **Phase 6 (visas qualite lies au compte)** : FAIT fonctionnellement (cache SW v93) : nom/role verrouilles, soumission operateur, signature responsable qualite sur fiche serveur en attente, validation finale admin apres 2 signatures. A TESTER SUR MOBILE.
-- **Phase 7 (inventaire fragmente via serveur, base commune + freshCodes)** : A FAIRE (apres stabilisation)
+- **Phase 7 (inventaire fragmente via serveur, base commune + freshCodes)** : PARTIELLEMENT FAIT (cache SW v96). Sessions serveur, contributions strictes et fusion bloquante sur conflits sont codees. A tester sur mobile et a raffiner UX si besoin.
 
 Regles importantes decidees avec l'utilisateur pour la suite :
 
