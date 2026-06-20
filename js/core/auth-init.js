@@ -91,7 +91,9 @@ function authDialog(cfg){
         var body=cfg.withNom?{nom:nom,username:username,password:password}:{username:username,password:password};
         var r=await sipsFetch(cfg.endpoint,{method:'POST',body:JSON.stringify(body)});
         SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();
-        dlg.close();dlg.remove();resolve(true);
+        dlg.close();dlg.remove();
+        if(SESSION&&SESSION.mustChangePassword){await authChangePasswordDialog(true);}
+        resolve(true);
       }catch(e){okBtn.disabled=false;showErr(e.message||'Échec de la connexion.');}
     };
     if(cfg.allowSkip){var sk=dlg.querySelector('#authSkip');if(sk)sk.onclick=function(){dlg.close();dlg.remove();resolve(false);};}
@@ -101,7 +103,63 @@ function showLoginDialog(allowSkip){
   return authDialog({title:'Connexion',endpoint:'/api/auth/login',okLabel:'Se connecter',allowSkip:allowSkip,skipLabel:'Continuer en mode local'});
 }
 function showSetupDialog(){
-  return authDialog({title:'Première configuration',intro:'Aucun compte n’existe encore. Créez le compte administrateur (chef d’usine).',withNom:true,endpoint:'/api/auth/setup',okLabel:'Créer l’administrateur',allowSkip:true,skipLabel:'Configurer plus tard'});
+  return authDialog({title:'Première configuration',intro:'Aucun compte n’existe encore. Créez le compte administrateur (chef d’usine).',withNom:true,endpoint:'/api/auth/setup',okLabel:'Créer l’administrateur',allowSkip:false});
+}
+function authBlockedOfflineDialog(){
+  return new Promise(function(){
+    var dlg=document.createElement('dialog');
+    dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:380px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+    dlg.innerHTML='<div class="dlg-h"><b>Connexion requise</b></div><div class="dlg-b"><p style="margin:0 0 12px;font-size:13px;color:#5a6472;line-height:1.5">Le serveur est indisponible et aucun compte n est deja connecte sur cet appareil. Connecte le serveur, puis recharge l application.</p><button class="b-go" id="authReload" style="width:100%;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Recharger</button></div>';
+    document.body.appendChild(dlg);dlg.showModal();
+    dlg.addEventListener('cancel',function(e){e.preventDefault();});
+    dlg.querySelector('#authReload').onclick=function(){location.reload();};
+  });
+}
+function authChangePasswordDialog(force){
+  return new Promise(function(resolve){
+    var dlg=document.createElement('dialog');
+    dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:400px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+    dlg.innerHTML='<div class="dlg-h"><b>Changer le mot de passe</b></div><div class="dlg-b">'
+      +'<p style="margin:0 0 12px;font-size:13px;color:#5a6472;line-height:1.5">'+(force?'Ce mot de passe est temporaire. Choisis ton mot de passe personnel avant de continuer.':'Confirme ton mot de passe actuel, puis choisis le nouveau.')+'</p>'
+      +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Mot de passe actuel</label><input id="chgCur" type="password" autocomplete="current-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box"></div>'
+      +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Nouveau mot de passe</label><input id="chgNew" type="password" autocomplete="new-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box"></div>'
+      +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Confirmer</label><input id="chgNew2" type="password" autocomplete="new-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box"></div>'
+      +'<div id="chgErr" style="display:none;color:#c0392b;font-size:13px;margin-bottom:10px"></div>'
+      +'<div class="dlg-actions" style="gap:8px">'+(force?'':'<button class="b-sec" id="chgCancel" style="flex:1;padding:12px;border-radius:9px;border:1px solid var(--line);font-weight:700;font-size:14px;background:#fff">Annuler</button>')+'<button class="b-go" id="chgOk" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Enregistrer</button></div>'
+      +'</div>';
+    document.body.appendChild(dlg);dlg.showModal();
+    dlg.addEventListener('cancel',function(e){if(force)e.preventDefault();});
+    function show(m){var err=dlg.querySelector('#chgErr');err.textContent=m;err.style.display='';}
+    var cancel=dlg.querySelector('#chgCancel');if(cancel)cancel.onclick=function(){dlg.close();dlg.remove();resolve(false);};
+    dlg.querySelector('#chgOk').onclick=async function(){
+      var cur=dlg.querySelector('#chgCur').value||'',n1=dlg.querySelector('#chgNew').value||'',n2=dlg.querySelector('#chgNew2').value||'';
+      if(!cur||!n1||!n2){show('Tous les champs sont requis.');return;}
+      if(n1!==n2){show('Les deux nouveaux mots de passe ne correspondent pas.');return;}
+      try{
+        var r=await sipsFetch('/api/auth/change-password',{method:'POST',body:JSON.stringify({currentPassword:cur,newPassword:n1})});
+        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();updateAuthUI();
+        dlg.close();dlg.remove();toast('Mot de passe modifie');resolve(true);
+      }catch(e){show(e.message||'Erreur serveur');}
+    };
+  });
+}
+function authConfirmPassword(label){
+  return new Promise(function(resolve){
+    if(!SESSION_TOKEN){toast('Connexion requise');resolve(false);return;}
+    var done=false;
+    var dlg=document.createElement('dialog');
+    dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:360px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+    dlg.innerHTML='<div class="dlg-h"><b>Confirmation requise</b><button id="confirmX">×</button></div><div class="dlg-b"><p style="margin:0 0 12px;font-size:13px;color:#5a6472;line-height:1.5">Retape ton mot de passe pour '+esc(label||'cette action')+'.</p><input id="confirmPass" type="password" autocomplete="current-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box"><div id="confirmErr" style="display:none;color:#c0392b;font-size:13px;margin:10px 0"></div><div class="dlg-actions" style="gap:8px;margin-top:10px"><button class="b-sec" id="confirmCancel" style="flex:1;padding:12px;border-radius:9px;border:1px solid var(--line);font-weight:700;font-size:14px;background:#fff">Annuler</button><button class="b-go" id="confirmOk" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Confirmer</button></div></div>';
+    document.body.appendChild(dlg);dlg.showModal();
+    function close(v){if(done)return;done=true;dlg.close();dlg.remove();resolve(v);}
+    dlg.querySelector('#confirmX').onclick=function(){close(false);};
+    dlg.querySelector('#confirmCancel').onclick=function(){close(false);};
+    dlg.querySelector('#confirmOk').onclick=async function(){
+      var p=dlg.querySelector('#confirmPass').value||'',err=dlg.querySelector('#confirmErr');
+      try{var r=await sipsFetch('/api/auth/verify-password',{method:'POST',body:JSON.stringify({password:p})});if(!r.ok){err.textContent='Mot de passe incorrect';err.style.display='';return;}close(true);}
+      catch(e){err.textContent=e.message||'Erreur serveur';err.style.display='';}
+    };
+  });
 }
 // Resout l'etat d'authentification au demarrage.
 // Non bloquant pour le mode 100% local : si le serveur est injoignable ou
@@ -110,13 +168,13 @@ async function authBootstrap(){
   applySession();
   var setupInfo=null;
   try{setupInfo=await sipsFetch('/api/auth/setup');}catch(e){setupInfo=null;}
-  if(!setupInfo)return;                 // serveur injoignable -> session cachee ou legacy
+  if(!setupInfo){if(SESSION_TOKEN&&SESSION)return;await authBlockedOfflineDialog();return;}
   if(setupInfo.needsSetup){await showSetupDialog();return;}
   if(SESSION_TOKEN){
-    try{var me=await sipsFetch('/api/auth/me');SESSION=me.user;authStore();applySession();return;}
+    try{var me=await sipsFetch('/api/auth/me');SESSION=me.user;authStore();applySession();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
     catch(e){authClear();}
   }
-  await showLoginDialog(true);
+  await showLoginDialog(false);
 }
 
 /* ====== INITIALISATION ====== */

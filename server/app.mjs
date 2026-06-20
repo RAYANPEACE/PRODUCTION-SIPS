@@ -284,6 +284,7 @@ function publicUser(u) {
     nom: u.nom,
     role: u.role,
     enabled: u.enabled !== false,
+    mustChangePassword: !!u.mustChangePassword,
     lastLogin: u.lastLogin || null,
     createdAt: u.createdAt
   };
@@ -294,6 +295,7 @@ function sessionUser(u) {
     username: u.username,
     nom: u.nom,
     role: u.role,
+    mustChangePassword: !!u.mustChangePassword,
     tabs: roleTabs(u.role),
     canSign: roleCanSign(u.role)
   };
@@ -406,6 +408,7 @@ async function handleApi(req, res, url) {
       passwordHash: await hashPassword(password),
       enabled: true,
       passwordChangedAt: Math.floor(Date.now() / 1000),
+      mustChangePassword: false,
       createdAt: new Date().toISOString(),
       createdBy: 'setup',
       lastLogin: new Date().toISOString()
@@ -446,6 +449,34 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    const currentPassword = String(body.currentPassword || '');
+    const newPassword = String(body.newPassword || '');
+    if (newPassword.length < 4) {
+      return sendJson(res, 400, { ok: false, error: 'Nouveau mot de passe trop court (4 caracteres minimum)' });
+    }
+    if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+      return sendJson(res, 401, { ok: false, error: 'Mot de passe actuel incorrect' });
+    }
+    user.passwordHash = await hashPassword(newPassword);
+    user.passwordChangedAt = Math.floor(Date.now() / 1000);
+    user.mustChangePassword = false;
+    const db = await readDb();
+    const dbUser = db.users.find(u => u.id === user.id);
+    if (dbUser) {
+      dbUser.passwordHash = user.passwordHash;
+      dbUser.passwordChangedAt = user.passwordChangedAt;
+      dbUser.mustChangePassword = false;
+      audit(db, 'user.password_changed', user.nom, { id: user.id });
+      await writeDb(db);
+      return sendJson(res, 200, { ok: true, token: await issueToken(dbUser), user: sessionUser(dbUser) });
+    }
+    return sendJson(res, 404, { ok: false, error: 'Utilisateur introuvable' });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/auth/users') {
     if (!(await requireAdmin(req, res))) return;
     const db = await readDb();
@@ -477,6 +508,7 @@ async function handleApi(req, res, url) {
       passwordHash: await hashPassword(password),
       enabled: true,
       passwordChangedAt: Math.floor(Date.now() / 1000),
+      mustChangePassword: true,
       createdAt: new Date().toISOString(),
       createdBy: actor ? actor.nom : 'admin',
       lastLogin: null
@@ -517,6 +549,7 @@ async function handleApi(req, res, url) {
       if (String(body.password).length < 4) return sendJson(res, 400, { ok: false, error: 'Mot de passe trop court (4 caracteres minimum)' });
       user.passwordHash = await hashPassword(String(body.password));
       user.passwordChangedAt = Math.floor(Date.now() / 1000);
+      user.mustChangePassword = true;
     }
     if (body.nom !== undefined) {
       const nom = String(body.nom).trim();

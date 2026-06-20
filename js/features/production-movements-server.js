@@ -375,6 +375,7 @@ async function sipsLoadServeur(){
 }
 async function sipsDecide(id,act){
   const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return;
   const row=document.querySelector('[data-sub="'+id+'"]');
   if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
   try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');}
@@ -390,6 +391,7 @@ async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');
   if(reason===null)return;
   if(!confirm('Annuler cet enregistrement validé ?\n\nIl restera dans le journal serveur mais sera retiré des historiques officiels.'))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('annuler cet enregistrement')))return;
   const row=document.querySelector('[data-rec="'+id+'"]');
   if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
   try{await sipsFetch('/api/records/'+encodeURIComponent(id)+'/cancel',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',reason:reason})});toast('Enregistrement annulé');}
@@ -418,8 +420,9 @@ function sipsRoleOptionHTML(roles,selected){
 function sipsUserHTML(u){
   const role=(sipsUserRoles||[]).find(r=>r.key===u.role);
   const status=u.enabled===false?'desactive':'actif';
+  const pwd=u.mustChangePassword?' - mot de passe temporaire':'';
   const last=u.lastLogin?new Date(u.lastLogin).toLocaleString('fr-FR'):'jamais connecte';
-  return '<div class="hist-item" data-user="'+esc(u.id)+'"><div class="info"><b>'+esc(u.nom||u.username||'Utilisateur')+' - '+esc(role?role.label:u.role)+'</b><span>@'+esc(u.username||'')+' - '+status+' - derniere connexion : '+esc(last)+'</span></div><button data-act="edit">Modifier</button><button class="'+(u.enabled===false?'valid':'del')+'" data-act="toggle">'+(u.enabled===false?'Reactiver':'Desactiver')+'</button></div>';
+  return '<div class="hist-item" data-user="'+esc(u.id)+'"><div class="info"><b>'+esc(u.nom||u.username||'Utilisateur')+' - '+esc(role?role.label:u.role)+'</b><span>@'+esc(u.username||'')+' - '+status+pwd+' - derniere connexion : '+esc(last)+'</span></div><button data-act="edit">Modifier</button><button class="'+(u.enabled===false?'valid':'del')+'" data-act="toggle">'+(u.enabled===false?'Reactiver':'Desactiver')+'</button></div>';
 }
 async function sipsLoadUsers(){
   const host=$('#srvUsers');if(!host)return;
@@ -452,7 +455,7 @@ function sipsUserDialog(user,roles){
     +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Identifiant</label><input id="usrName" '+(editing?'readonly':'')+' autocapitalize="none" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box;'+(editing?'background:#eef2f6;color:var(--mute);':'')+'" value="'+esc(user?user.username:'')+'" placeholder="identifiant"></div>'
     +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Role</label><select id="usrRoleSel" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box">'+sipsRoleOptionHTML(roles,user?user.role:'operateur')+'</select></div>'
     +(editing?'<label style="display:flex;align-items:center;gap:8px;margin:8px 0 10px;font-size:13px"><input id="usrEnabled" type="checkbox" '+(enabled?'checked':'')+'> Compte actif</label>':'')
-    +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">'+(editing?'Nouveau mot de passe (optionnel)':'Mot de passe')+'</label><input id="usrPass" type="password" autocomplete="new-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="'+(editing?'laisser vide pour ne pas changer':'4 caracteres minimum')+'"></div>'
+    +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">'+(editing?'Mot de passe temporaire (optionnel)':'Mot de passe temporaire')+'</label><input id="usrPass" type="password" autocomplete="new-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="'+(editing?'laisser vide pour ne pas changer':'4 caracteres minimum')+'"></div>'
     +'<div id="usrErr" style="display:none;color:#c0392b;font-size:13px;margin-bottom:10px"></div>'
     +'<div class="dlg-actions" style="gap:8px"><button class="b-sec" id="usrCancel" style="flex:1;padding:12px;border-radius:9px;border:1px solid var(--line);font-weight:700;font-size:14px;background:#fff">Annuler</button><button class="b-go" id="usrOk" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Enregistrer</button></div>'
     +'</div>';
