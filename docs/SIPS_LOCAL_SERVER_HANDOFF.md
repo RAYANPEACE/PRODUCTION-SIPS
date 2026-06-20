@@ -114,40 +114,30 @@ PIN admin app :
 - Anti-doublon serveur : OK, une meme soumission n'est plus creee plusieurs fois.
 - Historique `Sorties` affiche les elements valides serveur : OK.
 
-## Revue high effort a traiter
+## Revue high effort — corrigee
 
 Source : `docs/code-review-2026-06-19.md`
 
-Statut actuel : a traiter. Ne pas supprimer cette section tant que les corrections n'ont pas ete faites et testees.
+Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntaxe JS OK. Cache SW incremente (v70 -> v71). A tester sur mobile.
 
-### Bugs importants
+### Bugs importants (corriges)
 
-1. `importAll` ecrase le profil utilisateur.
-   - Probleme : l'import d'une sauvegarde peut remplacer `lep_usr` par le profil du collegue.
-   - Attendu : ne jamais ecraser `lep_usr`, `lep_changes_since_backup`, `lep_backup_count` pendant un import.
+1. `importAll` ecrase le profil utilisateur. **CORRIGE** : les cles `lep_usr`, `lep_changes_since_backup`, `lep_backup_count`, `lep_last_backup_ts` sont protegees pendant l'import.
 
-2. Compteur de sauvegarde remis a zero meme si l'utilisateur annule le partage.
-   - Probleme : sur Android, `Partager` peut etre annule apres ouverture du menu natif.
-   - Attendu : ne remettre le compteur a zero qu'apres un partage/export reellement abouti, ou via une confirmation explicite.
+2. Compteur de sauvegarde remis a zero meme si partage annule. **CORRIGE** : `shareOrDownload` retourne la Promise de `navigator.share()`, les fonctions export font `await` avant reset. Logique reset factorisee dans `_resetBackupCounters()`.
 
-3. `ST.agent` vide apres `Nouvel inventaire`.
-   - Probleme : le nom du compteur disparait des exports jusqu'au rechargement.
-   - Attendu : re-remplir `ST.agent` depuis `USR.nom` apres reset.
+3. `ST.agent` vide apres `Nouvel inventaire`. **CORRIGE** : `ST.agent` est re-rempli depuis `USR.nom` apres reset.
 
 ### Bugs mineurs
 
-4. L'import gonfle artificiellement le compteur de modifications.
-   - Probleme : chaque `idbPut` d'import incremente `lep_changes_since_backup`.
-   - Attendu : un import ne doit pas etre compte comme 50 modifications locales non sauvegardees.
+4. L'import gonfle artificiellement le compteur de modifications. **CORRIGE** : le compteur est remis a zero apres la boucle d'import.
 
-5. `qNew()` ne demande pas confirmation si une fiche qualite non enregistree contient deja des donnees.
-   - Probleme : perte silencieuse possible.
-   - Attendu : detecter les champs remplis, pas seulement `QS.id`.
+5. `qNew()` ne demande pas confirmation si une fiche qualite non enregistree contient deja des donnees. **CORRIGE** : le guard verifie `refProduit`, `quantiteProduite`, `matieresPremieres.length` et `heureDebut` en plus de `QS.id`.
 
 ### Qualite de code non bloquante
 
-- Factoriser `exportAll`, `exportAllDownload`, `exportLight` pour eviter la duplication rotation A/B + reset compteurs.
-- Optimiser `qNextLotNum`, qui scanne tout IndexedDB a chaque ouverture qualite.
+- Factoriser la rotation A/B + reset compteurs : **partiellement fait** — reset factorise dans `_resetBackupCounters()`, rotation A/B encore dupliquee.
+- Optimiser `qNextLotNum`, qui scanne tout IndexedDB a chaque ouverture qualite : **a faire**.
 
 ## Fait depuis le relais
 
@@ -155,6 +145,7 @@ Statut actuel : a traiter. Ne pas supprimer cette section tant que les correctio
 - 2026-06-20 : app connectee au serveur local.
 - 2026-06-20 : validations serveur fiabilisees.
 - 2026-06-20 : soumissions et historiques serveur valides par test utilisateur.
+- 2026-06-20 : 5 bugs de revue high effort corriges (import profil, compteur partage, ST.agent, compteur import, qNew confirmation). Cache SW v71.
 
 ## Comportement actuel important
 

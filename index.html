@@ -1453,16 +1453,18 @@ function download(name,content,type){const b=new Blob([content],{type});const a=
 function collectLS(){const o={};try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k==='inv_cfg'||k.indexOf('lep_')===0)o[k]=localStorage.getItem(k);}}catch(e){}return o;}
 function shareOrDownload(filename,text,title){
   try{const blob=new Blob([text],{type:'text/plain'});const file=new File([blob],filename,{type:'text/plain'});
-    if(navigator.canShare&&navigator.canShare({files:[file]})){navigator.share({files:[file],title:title||filename}).catch(()=>{});return;}}catch(e){}
+    if(navigator.canShare&&navigator.canShare({files:[file]})){return navigator.share({files:[file],title:title||filename});}}catch(e){}
   const blob=new Blob([text],{type:'text/plain'});const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+  return Promise.resolve();
 }
+function _resetBackupCounters(){var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));}
 async function exportAll(){
   try{toast('Préparation de la sauvegarde…');const recs=await idbAll();
     const data={type:'lep-backup',v:1,ts:Date.now(),ls:collectLS(),idb:recs};
     var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_LEP_'+suffix+'.txt';
-    shareOrDownload(fn,JSON.stringify(data),'Sauvegarde complète LEP');
-    localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
+    await shareOrDownload(fn,JSON.stringify(data),'Sauvegarde complète LEP');
+    _resetBackupCounters();
   }catch(e){toast('Échec de la sauvegarde');}
 }
 async function exportAllDownload(){
@@ -1473,7 +1475,7 @@ async function exportAllDownload(){
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');a.href=url;a.download=fn;document.body.appendChild(a);a.click();a.remove();
     setTimeout(function(){URL.revokeObjectURL(url);},1500);
-    localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
+    _resetBackupCounters();
     toast('Fichier telecharge : '+fn);
   }catch(e){toast('Echec');}
 }
@@ -1486,8 +1488,8 @@ async function exportLight(){
   try{toast('Préparation de la sauvegarde légère…');const recs=(await idbAll()).map(stripPhotos);
     const data={type:'lep-backup',v:1,light:true,ts:Date.now(),ls:collectLS(),idb:recs};
     var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_legere_LEP_'+suffix+'.txt';
-    shareOrDownload(fn,JSON.stringify(data),'Sauvegarde légère LEP');
-    localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));
+    await shareOrDownload(fn,JSON.stringify(data),'Sauvegarde légère LEP');
+    _resetBackupCounters();
   }catch(e){toast('Échec de la sauvegarde');}
 }
 async function importAll(text){
@@ -1509,13 +1511,15 @@ async function importAll(text){
   const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"");
   if(!confirm(msg))return;
   try{
-    if(data.ls)Object.keys(data.ls).forEach(k=>{try{localStorage.setItem(k,data.ls[k]);}catch(e){}});
+    const protectedKeys=new Set(['lep_usr','lep_changes_since_backup','lep_backup_count','lep_last_backup_ts']);
+    if(data.ls)Object.keys(data.ls).forEach(k=>{if(protectedKeys.has(k))return;try{localStorage.setItem(k,data.ls[k]);}catch(e){}});
     let imported=0;
     if(Array.isArray(data.idb))for(const rec of data.idb){
       if(!rec||!rec.id)continue;
       if(lockedIds.has(rec.id)||localIds.has(rec.id))continue;
       try{await idbPut(rec);imported++;}catch(e){}
     }
+    localStorage.setItem('lep_changes_since_backup','0');
     alert("Import : "+imported+" ajoutee(s).\nRechargement en cours...");location.reload();
   }catch(e){alert("Echec de l’import.");}
 }
@@ -1649,7 +1653,7 @@ $('#fragMergeFiles').onclick=fragMergeFiles;
 $('#newInv').onclick=async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
-  if(!keep){REFS.forEach(r=>ST.c[r.code]=blankEntry(r));ST.agent='';}
+  if(!keep){REFS.forEach(r=>ST.c[r.code]=blankEntry(r));ST.agent=(typeof USR!=='undefined'&&USR.nom)||'';}
   ST.id='inv_'+Date.now();ST.sessionStart=Date.now();   // nouvelle session de comptage
   ST.date=new Date().toISOString().slice(0,10);$('#date').value=ST.date;$('#agent').value=ST.agent;
   saveCounts();render();toast(keep?'Inventaire archivé · base conservée':'Inventaire archivé · comptages vidés');
@@ -4190,7 +4194,8 @@ async function qLoadLastBatch(){
 
 /* --- New form --- */
 async function qNew(){
-  if(QS.id&&!confirm('Creer une nouvelle fiche ? Les modifications non enregistrees seront perdues.'))return;
+  var qHasData=QS.id||QS.informations.refProduit||QS.informations.quantiteProduite||QS.matieresPremieres.length>0||QS.informations.heureDebut;
+  if(qHasData&&!confirm('Creer une nouvelle fiche ? Les modifications non enregistrees seront perdues.'))return;
   QS=freshQS();
   QS.informations.numeroLot=await qNextLotNum();
   renderQualite();
