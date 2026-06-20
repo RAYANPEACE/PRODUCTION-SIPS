@@ -2661,15 +2661,19 @@ async function sipsLoadServeur(){
 }
 async function sipsDecide(id,act){
   const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
-  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');renderServeur();}
-  catch(e){toast('Erreur serveur : '+e.message);}
+  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');}
+  catch(e){toast(/trait/i.test(e.message||'')?'Deja traitee - liste mise a jour':'Erreur serveur : '+e.message);}
+  // Resynchronise la liste avec le serveur dans tous les cas : un element deja
+  // traite (ailleurs / double-clic) disparait au lieu de rester affiche.
+  try{await sipsLoadServeur();}catch(e){}
 }
 async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');
   if(reason===null)return;
   if(!confirm('Annuler cet enregistrement validé ?\n\nIl restera dans le journal serveur mais sera retiré des historiques officiels.'))return;
-  try{await sipsFetch('/api/records/'+encodeURIComponent(id)+'/cancel',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',reason:reason})});toast('Enregistrement annulé');renderServeur();}
-  catch(e){toast('Erreur serveur : '+e.message);}
+  try{await sipsFetch('/api/records/'+encodeURIComponent(id)+'/cancel',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',reason:reason})});toast('Enregistrement annulé');}
+  catch(e){toast(/annul/i.test(e.message||'')?'Deja annule - liste mise a jour':'Erreur serveur : '+e.message);}
+  try{await sipsLoadServeur();}catch(e){}
 }
 async function sipsCreateBackup(){
   try{const r=await sipsFetch('/api/backup',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast('Sauvegarde serveur creee : '+(r.backup||''));if(r.backup)await sipsDownloadBackup(r.backup);}
