@@ -216,6 +216,14 @@
   .frag-step .fst-h{font-size:13px;font-weight:700;margin-bottom:8px}
   .fst-btn{width:100%;padding:11px;border-radius:9px;border:none;font-weight:700;font-size:14px}
   .fst-btn.b-prim{background:var(--steel);color:#fff}.fst-btn.b-sec{background:#eef0ee;color:var(--ink)}.fst-btn.b-go{background:var(--green);color:#fff}
+  .srv-conf{border:1px solid var(--line);border-radius:10px;background:#fff;margin:8px 0;padding:10px}
+  .srv-conf-h{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:8px;font-size:12.5px}
+  .srv-conf-h b{line-height:1.25}.srv-conf-h span{color:var(--red);font-size:11px;font-weight:800;white-space:nowrap}
+  .srv-conf-choice{display:flex;align-items:center;gap:8px;border:1px solid #e7ece9;border-radius:9px;padding:9px;margin-top:6px;background:#fbfcfb;font-size:13px}
+  .srv-conf-choice input{width:18px;height:18px;flex:none}
+  .srv-conf-choice span{display:flex;justify-content:space-between;gap:10px;align-items:center;width:100%;min-width:0}
+  .srv-conf-choice b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srv-conf-choice small{font:700 12px ui-monospace,monospace;color:var(--steel-d);white-space:nowrap}
   .etat-date{border:1px solid #d4e3f3;background:#f6f9fd;border-radius:10px;padding:10px;margin:0 0 12px}
   .etat-date label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
   .etat-date input{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px}

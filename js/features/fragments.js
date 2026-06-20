@@ -357,14 +357,14 @@ async function srvFragSendMine(){
     await srvFragLoadSessions();
   }catch(e){toast('Erreur envoi fragment : '+e.message);}
 }
-function srvFragBuildMerged(sess){
+function srvFragBuildMerged(sess,resolutions){
   const base=sess.baseSnapshot?clone(sess.baseSnapshot):freshCounts();
   base.id='inv_'+Date.now();base.date=sess.date||todayStr();
   base.agent='Fusion serveur - '+(sess.title||sess.id);
   base.sessionStart=Date.now();
   base.cfg=base.cfg||{};base.c=base.c||{};
   REFS.forEach(r=>{base.c[r.code]??=blankEntry(r);base.cfg[r.code]??=clone(pOf(r));});
-  const byCode={},conflicts=[];
+  const byCode={},conflicts=[],applied=[];
   (sess.contributions||[]).forEach(c=>{
     const p=c.payload||{};
     Object.keys(p.counts||{}).forEach(code=>{
@@ -373,12 +373,61 @@ function srvFragBuildMerged(sess){
     });
   });
   Object.keys(byCode).forEach(code=>{
-    if(byCode[code].length===1){
-      base.c[code]=clone(byCode[code][0].entry);
-      if(byCode[code][0].cfg)base.cfg[code]=clone(byCode[code][0].cfg);
+    const rows=byCode[code];
+    const resolvedIndex=resolutions&&resolutions[code]!=null?Number(resolutions[code]):null;
+    if(rows.length===1||resolvedIndex!=null){
+      const idx=resolvedIndex!=null?resolvedIndex:0;
+      if(!rows[idx]){conflicts.push({code:code,rows:rows});return;}
+      base.c[code]=clone(rows[idx].entry);
+      if(rows[idx].cfg)base.cfg[code]=clone(rows[idx].cfg);
+      if(rows.length>1)applied.push({code:code,agent:rows[idx].agent,choices:rows.map(x=>x.agent)});
     }else conflicts.push({code:code,rows:byCode[code]});
   });
-  return {st:base,conflicts:conflicts,changed:Object.keys(byCode).length};
+  return {st:base,conflicts:conflicts,changed:Object.keys(byCode).length,resolutions:applied};
+}
+function srvFragEntryTotal(code,row){
+  const r=REFS.find(x=>x.code===code);if(!r)return '';
+  const prevST=ST,prevRO=RO;
+  ST={id:'tmp_srvfrag',date:todayStr(),agent:'',c:{},cfg:{}};RO=true;
+  ST.c[code]=clone(row.entry);ST.cfg[code]=row.cfg?clone(row.cfg):clone(pOf(r));
+  try{mergeAndMigrate();return fmt(total(r))+' '+(r.u||'');}
+  catch(e){return 'valeur saisie';}
+  finally{ST=prevST;RO=prevRO;}
+}
+function srvFragResolveConflicts(sess,conflicts){
+  return new Promise(resolve=>{
+    const dlg=document.createElement('dialog');
+    dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:94vw;width:620px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+    const rows=conflicts.map(c=>{
+      const r=REFS.find(x=>x.code===c.code);
+      const choices=c.rows.map((row,i)=>'<label class="srv-conf-choice"><input type="radio" name="conf_'+esc(c.code)+'" value="'+i+'"> <span><b>'+esc(row.agent)+'</b><small>'+esc(srvFragEntryTotal(c.code,row))+'</small></span></label>').join('');
+      return '<div class="srv-conf" data-code="'+esc(c.code)+'"><div class="srv-conf-h"><b>'+esc(c.code)+' - '+esc(r?r.des:'Article')+'</b><span>'+c.rows.length+' comptages</span></div>'+choices+'</div>';
+    }).join('');
+    dlg.innerHTML='<div class="dlg-h"><b>Conflits inventaire</b><button data-close>×</button></div><div class="dlg-b">'
+      +'<p class="ref-hint" style="margin-top:0">Plusieurs compteurs ont recompte le meme article. Choisis explicitement la valeur a garder pour chaque conflit, puis la fusion creera une soumission a valider.</p>'
+      +rows
+      +'<div id="srvConfErr" style="display:none;color:var(--red);font-size:13px;margin-top:8px"></div>'
+      +'<div class="dlg-actions"><button class="b-sec" data-cancel>Annuler</button><button class="b-go" data-ok>Utiliser les choix</button></div></div>';
+    document.body.appendChild(dlg);dlg.showModal();
+    const close=v=>{dlg.close();dlg.remove();resolve(v);};
+    dlg.querySelector('[data-close]').onclick=()=>close(null);
+    dlg.querySelector('[data-cancel]').onclick=()=>close(null);
+    dlg.querySelector('[data-ok]').onclick=()=>{
+      const out={};
+      for(const c of conflicts){
+        const box=[...dlg.querySelectorAll('.srv-conf')].find(el=>el.dataset.code===c.code);
+        const pick=box&&box.querySelector('input[type="radio"]:checked');
+        if(!pick){
+          const err=dlg.querySelector('#srvConfErr');
+          err.textContent='Choisis une valeur pour chaque conflit avant de fusionner.';
+          err.style.display='';
+          return;
+        }
+        out[c.code]=Number(pick.value);
+      }
+      close(out);
+    };
+  });
 }
 function srvFragInventoryPayload(sess,merged){
   const prevST=ST,prevRO=RO;ST=merged.st;RO=true;mergeAndMigrate();
@@ -391,20 +440,20 @@ function srvFragInventoryPayload(sess,merged){
   const snap=snapshot();ST=prevST;RO=prevRO;
   const filled=REFS.filter(r=>snap.c[r.code]&&snap.c[r.code].counted).length;
   return {kind:'inventory',date:snap.date||todayStr(),agent:snap.agent||'',filled:filled,bilan:bilan,detail:detail,st:snap,
-    frag:{source:'server',sessionId:sess.id,title:sess.title||'',baseInventoryId:sess.baseInventoryId||null,baseDate:sess.baseDate||'',agents:(sess.contributions||[]).map(c=>c.agent||'Compteur')}};
+    frag:{source:'server',sessionId:sess.id,title:sess.title||'',baseInventoryId:sess.baseInventoryId||null,baseDate:sess.baseDate||'',agents:(sess.contributions||[]).map(c=>c.agent||'Compteur'),resolutions:merged.resolutions||[]}};
 }
 async function srvFragAnalyze(id){
   try{
     const data=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id));
     const sess=data.session;
-    const merged=srvFragBuildMerged(sess);
+    let merged=srvFragBuildMerged(sess);
     let msg='Session '+(sess.title||sess.id)+'\n\nParts : '+(sess.contributions||[]).length+'\nArticles recomptees : '+merged.changed;
     if(merged.conflicts.length){
-      msg+='\n\nCONFLITS :\n'+merged.conflicts.slice(0,12).map(c=>{
-        const r=REFS.find(x=>x.code===c.code);
-        return '- '+c.code+' '+(r?r.des:'')+' : '+c.rows.map(x=>x.agent).join(', ');
-      }).join('\n')+(merged.conflicts.length>12?'\n...':'')+'\n\nFusion bloquee : il faut corriger pour qu un article ne soit compte que par une seule personne.';
-      alert(msg);return;
+      const resolutions=await srvFragResolveConflicts(sess,merged.conflicts);
+      if(!resolutions)return;
+      merged=srvFragBuildMerged(sess,resolutions);
+      if(merged.conflicts.length){toast('Conflits non resolus');return;}
+      msg+='\n\nConflits resolus explicitement : '+merged.resolutions.length+'.';
     }
     msg+='\n\nAucun conflit. Creer une soumission inventaire a valider par admin ?';
     if(!confirm(msg))return;
@@ -412,7 +461,7 @@ async function srvFragAnalyze(id){
     const payload=srvFragInventoryPayload(sess,merged);
     await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
       method:'POST',headers:sipsAdminHeaders(),
-      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,summary:{conflicts:0,changed:merged.changed,contributions:(sess.contributions||[]).length}})
+      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,summary:{conflicts:0,resolvedConflicts:(merged.resolutions||[]).length,changed:merged.changed,contributions:(sess.contributions||[]).length}})
     });
     toast('Fusion creee en soumission inventaire - validation admin requise');
     await srvFragLoadSessions();
