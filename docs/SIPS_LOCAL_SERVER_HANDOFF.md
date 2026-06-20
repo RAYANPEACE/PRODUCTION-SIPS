@@ -19,6 +19,34 @@ Apres chaque intervention, l'agent doit mettre a jour ce document :
 - deplacer les taches terminees dans "Fait depuis le relais" ;
 - laisser les taches restantes avec leur priorite.
 
+## Prompt de redemarrage
+
+Utiliser ce prompt dans une nouvelle conversation Claude Code ou Codex :
+
+```text
+Tu reprends le projet SIPS dans C:\Users\halao\PRODUCTION-SIPS.
+
+Lis d'abord CLAUDE.md, puis docs/SIPS_LOCAL_SERVER_HANDOFF.md, puis docs/code-review-2026-06-19.md.
+
+Ne repars pas de zero : le relais officiel est docs/SIPS_LOCAL_SERVER_HANDOFF.md.
+Chaque agent, Claude comme Codex, doit mettre a jour ce fichier apres ses changements :
+- ce qui a ete fait ;
+- les tests lances ;
+- ce qui reste a faire ;
+- les decisions prises avec l'utilisateur.
+
+Priorite actuelle :
+1. Corriger les 5 bugs de docs/code-review-2026-06-19.md.
+2. Garder le serveur local fonctionnel.
+3. Ne pas casser le mode offline.
+4. Lancer npm run check:js apres toute modification de index.html.
+5. Ne pas modifier server/data/sips-data.json.
+6. Ne pas toucher aux fichiers non lies comme BLUEPRINT.md ou docs/superpowers/ sans demande explicite.
+
+Avant de coder, verifie git status et lis les fonctions concernees.
+Si tu modifies le code, fais un commit propre et mets a jour docs/SIPS_LOCAL_SERVER_HANDOFF.md.
+```
+
 ## Objectif global
 
 Remplacer progressivement les echanges de fichiers WhatsApp par une base centrale locale, sans toucher au serveur industriel de l'usine.
