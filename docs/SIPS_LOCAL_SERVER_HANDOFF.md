@@ -157,6 +157,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : soumissions serveur ajoutees pour `inventory` et `production`. Le bouton principal comptage devient `Soumettre inventaire`, le dialogue resume propose `Soumettre au serveur`, Production a un bouton `Soumettre au serveur`, et l'onglet `Serveur` affiche les details admin de ces deux types avant validation. Cache SW v80. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : anti-doublon renforce cote file d'attente serveur offline. Une meme soumission en attente n'est plus ajoutee deux fois, et les anciennes files avec doublons sont dedupliquees au moment de l'envoi. Cache SW v81. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : historiques serveur ajoutes pour `production` et `inventory`. Les productions validees serveur apparaissent en haut de l'historique Production, et les inventaires valides serveur apparaissent dans l'Historique inventaire en lecture seule, separes de l'historique local. Cache SW v82. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : **authentification serveur ajoutee (Phases 0-1 du plan auth, serveur uniquement, aucun impact client).** Primitives crypto sans dependance (pbkdf2 SHA-512 pour les mots de passe, JWT maison HMAC-SHA256, secret dans `server/data/.jwt-secret` ajoute au `.gitignore`). Roles serveur definis : `admin`, `magasinier`, `operateur`, `preparateur`, `responsableQualite`, chacun avec ses onglets autorises (`tabs`) et ses visas signables (`canSign`). Routes : `GET/POST /api/auth/setup`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/verify-password`, `GET/POST /api/auth/users`, `POST /api/auth/users/:id`. Middleware `requireAuth` + `requireAdmin` compatible a la fois avec l'ancien PIN (`x-sips-admin-pin`) ET le nouveau JWT (`Authorization: Bearer`). Gardes : compte desactive rejete a chaque requete, dernier admin protege (pas de desactivation ni retrait de role), pas d'auto-desactivation, tokens emis avant un changement de mot de passe invalides. Tests : `node --check` OK, 26 tests API isoles OK (serveur temporaire, `sips-data.json` non touche). Commit `d0fed5d`. **Le PIN `1951`/`1234` continue de fonctionner — rien n'est casse.**
 
 ## Comportement actuel important
 
@@ -218,10 +219,22 @@ Routes principales :
 - `GET /api/backups/:file`
 - `GET /api/audit`
 
-Routes admin : ajouter header :
+Routes auth (Phases 0-1) :
+
+- `GET /api/auth/setup` -> `{needsSetup}`
+- `POST /api/auth/setup` -> cree le premier admin (bloque si users non vide)
+- `POST /api/auth/login` -> `{token, user:{id,nom,role,tabs,canSign}}`
+- `GET /api/auth/me` -> user courant (verifie compte actif)
+- `POST /api/auth/verify-password` -> `{ok}` (re-confirmation actions critiques)
+- `GET /api/auth/users` (admin) -> liste comptes + roles
+- `POST /api/auth/users` (admin) -> creer un compte
+- `POST /api/auth/users/:id` (admin) -> modifier role / mot de passe / actif
+
+Routes admin : deux modes acceptes pendant la transition :
 
 ```text
-x-sips-admin-pin: 1234
+x-sips-admin-pin: 1234         (ancien, encore valable)
+Authorization: Bearer <jwt>    (nouveau, role admin)
 ```
 
 Anti-doublon :
@@ -230,6 +243,47 @@ Anti-doublon :
 - Les champs volatils `id` et `submittedAt` sont ignores.
 - Si une soumission identique est deja `submitted` ou correspond a un record actif non annule, le serveur renvoie `duplicate: true`.
 - Si le record valide a ete annule, la meme charge utile peut etre resoumise puis revalidee.
+
+## Chantier authentification + roles (plan valide avec l'utilisateur)
+
+Plan complet valide. Objectif : remplacer le PIN partage par des comptes individuels serveur, droits par role, session JWT persistante.
+
+Etat des phases :
+
+- **Phase 0 (crypto serveur)** : FAIT — commit `d0fed5d`
+- **Phase 1 (routes auth serveur)** : FAIT — commit `d0fed5d`
+- **Phase 2 (login client + session + filtrage onglets + adaptateur SESSION->USR)** : EN COURS — gros changement `index.html`. Scope strict : login client, session utilisateur persistante, filtrage des onglets par role, couche de compatibilite avec l'ancien profil/PIN. NE PAS lancer la refonte fragmente ici.
+- **Phase 3 (onglets par role + re-confirmation actions critiques)** : A FAIRE
+- **Phase 4 (gestion comptes admin dans onglet Serveur)** : A FAIRE
+- **Phase 5 (mode offline avec session cachee)** : A FAIRE
+- **Phase 6 (visas qualite lies au compte)** : A FAIRE
+- **Phase 7 (inventaire fragmente via serveur, base commune + freshCodes)** : A FAIRE (apres stabilisation)
+
+Regles importantes decidees avec l'utilisateur pour la suite :
+
+- **Ne pas supprimer brutalement `USR`, `lep_usr`, `ADMIN`, `ADMIN_PIN`.** Creer d'abord un adaptateur (`currentUserName()`, `currentUserRole()`, `sessionActor()`, `usrVisaKey()` bases sur SESSION avec fallback ancien USR), alimenter `USR`/`ADMIN` depuis SESSION, puis nettoyer seulement apres stabilisation.
+- **Droits separes en 3 niveaux** : acces onglet / droit de signer / droit serveur (valider-rejeter-annuler reste admin).
+- **Qualite** : validation finale = signature operateur + responsable qualite obligatoires, responsable production OPTIONNEL. Ne pas revenir a 3 signatures obligatoires.
+- **Fragmente serveur (a coder PLUS TARD, pas en Phase 2)** : regle de fusion stricte.
+  - Base de depart : dernier inventaire valide serveur, ou inventaire de reference choisi par l'admin (`baseInventoryId` + `baseSnapshot`).
+  - Chaque fragment officiel ne contient QUE les articles reellement recomptes pendant la session, identifies explicitement :
+    ```json
+    {
+      "baseInventoryId": "inv_...",
+      "baseDate": "2026-06-20",
+      "agent": "ahmed",
+      "freshCodes": ["190001", "190004"],
+      "counts": { "190001": {}, "190004": {} }
+    }
+    ```
+  - Fusion, pour chaque article :
+    - recompte par un seul compteur -> utiliser sa nouvelle valeur ;
+    - recompte par personne -> garder la valeur du dernier inventaire valide serveur (base) ;
+    - recompte par PLUSIEURS compteurs -> **CONFLIT visible a l'admin, ne jamais choisir silencieusement**.
+  - **Ne jamais fusionner tout le snapshot du telephone.** Une valeur presente dans le telephone peut juste venir de l'ancien inventaire charge : ce n'est PAS un recomptage. Seuls `freshCodes`/`changedCodes` comptent comme recomptage.
+  - Resultat : l'inventaire fusionne devient une soumission serveur `inventory` ; apres validation admin, elle devient le nouveau dernier inventaire officiel.
+
+ATTENTION COORDINATION : Phases 0-1 etaient serveur-only (frontiere de deploiement sure). Les Phases 2+ modifient lourdement `index.html`, fichier co-developpe par Codex. Avant d'attaquer la Phase 2, s'assurer qu'aucun autre agent n'edite `index.html` en parallele pour eviter les conflits. Toujours relire les helpers concernes (lignes ~1870-1902 admin/tabs, ~4549-4590 USR/init) car ils ont pu bouger.
 
 ## Prochaines taches recommandees
 
