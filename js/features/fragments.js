@@ -324,6 +324,38 @@ function srvFragRenderSessions(){
   }).join('');
   host.querySelectorAll('[data-srvmerge]').forEach(b=>b.onclick=ev=>{ev.preventDefault();srvFragAnalyze(b.dataset.srvmerge);});
 }
+function srvFragClearInheritedTimestamps(st){
+  if(!st||!st.c)return st;
+  Object.keys(st.c).forEach(code=>{if(st.c[code]&&st.c[code]._ts!=null)delete st.c[code]._ts;});
+  return st;
+}
+async function srvFragLoadBase(){
+  const id=srvFragSelectedId();
+  if(!id){toast('Choisis une session serveur');return;}
+  try{
+    const data=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id));
+    const sess=data.session;
+    if(!confirm('Charger la base de cette session dans le comptage ?\n\nLe comptage courant sera archive localement, puis seuls les articles modifies apres chargement seront envoyes comme part officielle.'))return;
+    if(FRAG)fragExitState();
+    await archiveCurrent();
+    RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
+    ST=sess.baseSnapshot?clone(sess.baseSnapshot):freshCounts();
+    ST=srvFragClearInheritedTimestamps(ST);
+    ST.id='srvfrag_'+Date.now();
+    ST.date=sess.date||todayStr();
+    ST.agent=(typeof USR!=='undefined'&&USR.nom)||ST.agent||'';
+    ST.sessionStart=Date.now();
+    ST.serverFragmentSessionId=sess.id;
+    ST.serverFragmentBaseId=sess.baseInventoryId||null;
+    mergeAndMigrate();
+    $('#agent').value=ST.agent;$('#date').value=ST.date;
+    await idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST},false);
+    $('#fragDlg').close();
+    if(TAB!=='comptage')switchTab('comptage');else render();
+    window.scrollTo(0,0);
+    toast('Base session chargee - compte uniquement ta partie');
+  }catch(e){toast('Erreur chargement session : '+e.message);}
+}
 function srvFragContributionPayload(){
   ST.date=$('#date').value;
   if(!ST.agent&&typeof USR!=='undefined'&&USR.nom)ST.agent=USR.nom;
@@ -334,7 +366,7 @@ function srvFragContributionPayload(){
     const r=REFS.find(x=>x.code===code);
     cfg[code]=(ST.cfg&&ST.cfg[code])?clone(ST.cfg[code]):(r?clone(pOf(r)):{});
   });
-  return {agent:ST.agent||'',freshCodes:codes,counts:counts,cfg:cfg};
+  return {agent:ST.agent||'',sessionId:ST.serverFragmentSessionId||'',baseInventoryId:ST.serverFragmentBaseId||null,freshCodes:codes,counts:counts,cfg:cfg};
 }
 async function srvFragCreateSession(){
   const date=($('#srvFragDate')&&$('#srvFragDate').value)||todayStr();
@@ -350,6 +382,8 @@ async function srvFragSendMine(){
   const id=srvFragSelectedId();
   if(!id){toast('Choisis une session serveur');return;}
   const payload=srvFragContributionPayload();
+  if(payload.sessionId&&payload.sessionId!==id&&!confirm('Le comptage courant a ete charge depuis une autre session serveur.\n\nEnvoyer quand meme cette part vers la session selectionnee ?'))return;
+  if(!payload.sessionId&&!confirm('Ce comptage n a pas ete charge depuis une session serveur.\n\nEnvoyer quand meme uniquement les articles modifies recemment ?'))return;
   if(!payload.freshCodes.length){toast('Aucun article recompte dans cette session de comptage');return;}
   try{
     await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/contributions',{method:'POST',body:JSON.stringify({payload:payload})});
@@ -468,6 +502,7 @@ async function srvFragAnalyze(id){
   }catch(e){toast('Erreur fusion serveur : '+e.message);}
 }
 if($('#srvFragCreate'))$('#srvFragCreate').onclick=srvFragCreateSession;
+if($('#srvFragLoad'))$('#srvFragLoad').onclick=srvFragLoadBase;
 if($('#srvFragReload'))$('#srvFragReload').onclick=srvFragLoadSessions;
 if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSendMine;
 

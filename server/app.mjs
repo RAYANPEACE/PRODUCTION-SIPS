@@ -718,6 +718,9 @@ async function handleApi(req, res, url) {
     if ((sess.status || 'open') !== 'open') {
       return sendJson(res, 409, { ok: false, error: 'Session inventaire deja finalisee' });
     }
+    if (payload.baseInventoryId && payload.baseInventoryId !== sess.baseInventoryId) {
+      return sendJson(res, 409, { ok: false, error: 'Base inventaire differente de la session serveur' });
+    }
     const rec = {
       id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
       userId: user.id,
