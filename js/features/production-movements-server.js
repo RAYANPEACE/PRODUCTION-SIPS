@@ -375,10 +375,12 @@ async function sipsLoadServeur(){
 }
 async function sipsDecide(id,act){
   const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
+  const note=act==='reject'?prompt('Motif du rejet / correction demandee ?','Correction demandee'):null;
+  if(act==='reject'&&note===null)return;
   if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return;
   const row=document.querySelector('[data-sub="'+id+'"]');
   if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
-  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');}
+  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||''})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');}
   catch(e){
     if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();}
     else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}

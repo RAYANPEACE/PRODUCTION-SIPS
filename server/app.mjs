@@ -734,7 +734,7 @@ async function handleApi(req, res, url) {
         validatedAt: sub.decidedAt
       });
     }
-    audit(db, 'submission.' + sub.status, sub.decidedBy, { id: sub.id, type: sub.type });
+    audit(db, 'submission.' + sub.status, sub.decidedBy, { id: sub.id, type: sub.type, note: sub.decisionNote || '' });
     await writeDb(db);
     return sendJson(res, 200, { ok: true, submission: publicSubmission(sub) });
   }
