@@ -1762,7 +1762,7 @@ function sipsQueue(type,payload,note){
 }
 async function sipsSubmit(type,payload,note){
   const body={type,payload,author:sipsActor(),note:note||''};
-  try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast('Soumis au serveur');return {ok:true,submission:r.submission};}
+  try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast(r.duplicate?'Deja soumis au serveur':'Soumis au serveur');return {ok:true,duplicate:!!r.duplicate,submission:r.submission};}
   catch(e){sipsQueue(type,payload,note);toast('Serveur indisponible : ajoutÃ© en attente');return {ok:false,queued:true,error:e.message};}
 }
 async function sipsFlushPending(){
@@ -1772,6 +1772,13 @@ async function sipsFlushPending(){
   sipsSetPending(keep);toast(sent+' envoyÃ©e(s), '+keep.length+' en attente');return {sent,failed:keep.length};
 }
 function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
+async function sipsRecords(type){
+  try{
+    const data=await sipsFetch('/api/records',{headers:sipsAdminHeaders()});
+    const rows=data.records||[];
+    return type?rows.filter(r=>r.type===type):rows;
+  }catch(e){return [];}
+}
 
 let META=lsGet('lep_meta',{});                 // {code:{des?,ub?,cat?}}
 let ADDED=lsGet('lep_added',[]);               // [{code,des,ub,cat}]
@@ -2376,16 +2383,33 @@ function renderMov(kind,focusSel){
 async function loadMovHist(kind){
   const c=MOVCFG[kind];const host=$('#mvHist');if(!host)return;
   let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf(c.pfx)===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
-  if(!recs.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune '+(kind==='entree'?'entrée':'sortie')+' enregistrée.</p>';return;}
   host.innerHTML='';
+  const serverRows=await sipsRecords(kind);
+  if(serverRows.length){
+    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
+    h.textContent='Validees serveur';host.append(h);
+    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+      const rec=row.payload||{};
+      const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
+      const it=document.createElement('div');it.className='hist-item locked';
+      it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+esc(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span></div>';
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
+      it.append(open);host.append(it);
+    });
+  }
+  if(recs.length){
+    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:10px 0 6px;text-transform:uppercase';
+    h.textContent='Historique local';host.append(h);
+  }
   recs.forEach(rec=>{
     const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
     const it=document.createElement('div');it.className='hist-item';
-    it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.ref||'—')+' · '+nf+' fini(s) · '+nm+' MP · '+ph+' photo(s)</span></div>';
+    it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span></div>';
     const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer ?')){await idbDel(rec.id);loadMovHist(kind);}};
     it.append(open,del);host.append(it);
   });
+  if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune '+(kind==='entree'?'entree':'sortie')+' enregistree.</p>';}
 }
 function renderSorties(f){renderMov('sortie',f);}
 function renderEntrees(f){renderMov('entree',f);}

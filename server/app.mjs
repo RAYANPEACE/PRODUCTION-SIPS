@@ -113,6 +113,26 @@ function audit(db, action, actor, details) {
   });
 }
 
+function stableForHash(value) {
+  if (Array.isArray(value)) return value.map(stableForHash);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      if (key === 'id' || key === 'submittedAt') continue;
+      out[key] = stableForHash(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function submissionHash(type, payload) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ type, payload: stableForHash(payload) }))
+    .digest('hex');
+}
+
 function publicSubmission(s) {
   return {
     id: s.id,
@@ -175,9 +195,20 @@ async function handleApi(req, res, url) {
       return sendJson(res, 400, { ok: false, error: 'type et payload requis' });
     }
     const db = await readDb();
+    const type = String(body.type);
+    const hash = submissionHash(type, body.payload);
+    const existing = db.submissions.find(s =>
+      s.hash === hash && (s.status === 'submitted' || s.status === 'validated')
+    );
+    if (existing) {
+      audit(db, 'submission.duplicate', body.author, { id: existing.id, type });
+      await writeDb(db);
+      return sendJson(res, 200, { ok: true, duplicate: true, submission: publicSubmission(existing) });
+    }
     const rec = {
       id: 'sub_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
-      type: String(body.type),
+      type,
+      hash,
       status: 'submitted',
       author: body.author || null,
       payload: body.payload,
@@ -209,6 +240,7 @@ async function handleApi(req, res, url) {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
         sourceSubmissionId: sub.id,
+        hash: sub.hash || submissionHash(sub.type, sub.payload),
         type: sub.type,
         payload: sub.payload,
         author: sub.author || null,
