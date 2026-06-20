@@ -353,6 +353,7 @@ async function renderServeur(){
   app.innerHTML='<div class="prod-wrap"><h2 class="prod-title">Serveur local SIPS</h2>'
     +'<div class="pf-sec"><div class="pf-h">Connexion</div><div class="pf-id"><label>Adresse serveur<input id="srvUrl" placeholder="http://192.168.x.x:3000" value="'+esc((SIPS_SERVER&&SIPS_SERVER.url)||'')+'"></label><label>PIN serveur<input id="srvPin" type="password" value="'+esc((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')+'"></label></div>'
     +'<div class="pf-actions"><button id="srvSave" class="b-sec">Enregistrer</button><button id="srvTest" class="b-go">Tester</button><button id="srvRefresh" class="b-sec">Actualiser liste</button><button id="srvFlush" class="b-sec">Envoyer attente ('+pending.length+')</button><button id="srvBackup" class="b-sec">Sauvegarde serveur</button></div><p id="srvStatus" class="ref-hint">URL active : '+esc(sipsServerUrl())+'</p></div>'
+    +'<div class="pf-sec"><div class="pf-h">Utilisateurs</div><div class="pf-actions"><button id="srvUserNew" class="b-go">+ Nouvel utilisateur</button><button id="srvUserReload" class="b-sec">Actualiser utilisateurs</button></div><div id="srvUsers">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Soumissions en attente de validation</div><div id="srvSubs">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div></div>';
   $('#srvSave').onclick=function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);toast('Configuration serveur enregistree');renderServeur();};
@@ -360,7 +361,10 @@ async function renderServeur(){
   $('#srvRefresh').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsLoadServeur();toast('Liste serveur actualisee');};
   $('#srvFlush').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsFlushPending();renderServeur();};
   $('#srvBackup').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsCreateBackup();};
+  $('#srvUserNew').onclick=function(){sipsUserDialog(null,sipsUserRoles||[]);};
+  $('#srvUserReload').onclick=function(){sipsLoadUsers();};
   await sipsLoadServeur();
+  await sipsLoadUsers();
 }
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
@@ -405,4 +409,57 @@ async function sipsDownloadBackup(file){
   const blob=await res.blob();const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;a.download=file;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+let sipsUserRows=[],sipsUserRoles=[];
+function sipsRoleOptionHTML(roles,selected){
+  roles=roles&&roles.length?roles:[{key:'admin',label:'Chef d usine'},{key:'magasinier',label:'Magasinier'},{key:'operateur',label:'Operateur'},{key:'preparateur',label:'Preparateur melanges'},{key:'responsableQualite',label:'Responsable qualite'}];
+  return roles.map(r=>'<option value="'+esc(r.key)+'"'+(r.key===selected?' selected':'')+'>'+esc(r.label||r.key)+'</option>').join('');
+}
+function sipsUserHTML(u){
+  const role=(sipsUserRoles||[]).find(r=>r.key===u.role);
+  const status=u.enabled===false?'desactive':'actif';
+  const last=u.lastLogin?new Date(u.lastLogin).toLocaleString('fr-FR'):'jamais connecte';
+  return '<div class="hist-item" data-user="'+esc(u.id)+'"><div class="info"><b>'+esc(u.nom||u.username||'Utilisateur')+' - '+esc(role?role.label:u.role)+'</b><span>@'+esc(u.username||'')+' - '+status+' - derniere connexion : '+esc(last)+'</span></div><button data-act="edit">Modifier</button></div>';
+}
+async function sipsLoadUsers(){
+  const host=$('#srvUsers');if(!host)return;
+  host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Chargement...</p>';
+  try{
+    const data=await sipsFetch('/api/auth/users',{headers:sipsAdminHeaders()});
+    sipsUserRows=data.users||[];sipsUserRoles=data.roles||[];
+    host.innerHTML=sipsUserRows.length?sipsUserRows.map(sipsUserHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun utilisateur.</p>';
+    host.querySelectorAll('[data-user]').forEach(el=>{const u=sipsUserRows.find(x=>x.id===el.dataset.user);const b=el.querySelector('button[data-act="edit"]');if(b&&u)b.onclick=()=>sipsUserDialog(u,sipsUserRoles);});
+  }catch(e){
+    host.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Gestion utilisateurs indisponible : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi admin ou renseigne le PIN serveur.':'')+'</p>';
+  }
+}
+function sipsUserDialog(user,roles){
+  const editing=!!user;
+  const dlg=document.createElement('dialog');
+  dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:420px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+  const enabled=user?user.enabled!==false:true;
+  dlg.innerHTML='<div class="dlg-h"><b>'+(editing?'Modifier utilisateur':'Nouvel utilisateur')+'</b><button onclick="this.closest(\'dialog\').close()">×</button></div><div class="dlg-b">'
+    +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Nom complet</label><input id="usrNom" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" value="'+esc(user?user.nom:'')+'" placeholder="Prenom Nom"></div>'
+    +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Identifiant</label><input id="usrName" '+(editing?'readonly':'')+' autocapitalize="none" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box;'+(editing?'background:#eef2f6;color:var(--mute);':'')+'" value="'+esc(user?user.username:'')+'" placeholder="identifiant"></div>'
+    +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Role</label><select id="usrRoleSel" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box">'+sipsRoleOptionHTML(roles,user?user.role:'operateur')+'</select></div>'
+    +(editing?'<label style="display:flex;align-items:center;gap:8px;margin:8px 0 10px;font-size:13px"><input id="usrEnabled" type="checkbox" '+(enabled?'checked':'')+'> Compte actif</label>':'')
+    +'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">'+(editing?'Nouveau mot de passe (optionnel)':'Mot de passe')+'</label><input id="usrPass" type="password" autocomplete="new-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="'+(editing?'laisser vide pour ne pas changer':'4 caracteres minimum')+'"></div>'
+    +'<div id="usrErr" style="display:none;color:#c0392b;font-size:13px;margin-bottom:10px"></div>'
+    +'<div class="dlg-actions" style="gap:8px"><button class="b-sec" id="usrCancel" style="flex:1;padding:12px;border-radius:9px;border:1px solid var(--line);font-weight:700;font-size:14px;background:#fff">Annuler</button><button class="b-go" id="usrOk" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Enregistrer</button></div>'
+    +'</div>';
+  document.body.appendChild(dlg);dlg.showModal();
+  dlg.querySelector('#usrCancel').onclick=function(){dlg.close();dlg.remove();};
+  dlg.querySelector('#usrOk').onclick=async function(){
+    const err=dlg.querySelector('#usrErr');function show(m){err.textContent=m;err.style.display='';}
+    const body={nom:dlg.querySelector('#usrNom').value.trim(),role:dlg.querySelector('#usrRoleSel').value};
+    const pass=dlg.querySelector('#usrPass').value||'';
+    if(editing){body.enabled=dlg.querySelector('#usrEnabled').checked;if(pass)body.password=pass;}
+    else{body.username=dlg.querySelector('#usrName').value.trim().toLowerCase();body.password=pass;}
+    if(!body.nom||(!editing&&!body.username)||(!editing&&!body.password)){show('Nom, identifiant et mot de passe sont requis.');return;}
+    try{
+      const path=editing?('/api/auth/users/'+encodeURIComponent(user.id)):'/api/auth/users';
+      await sipsFetch(path,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify(body)});
+      dlg.close();dlg.remove();toast(editing?'Utilisateur mis a jour':'Utilisateur cree');await sipsLoadUsers();
+    }catch(e){show(e.message||'Erreur serveur');}
+  };
 }
