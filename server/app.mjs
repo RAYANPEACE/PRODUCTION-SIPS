@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, stat, rename, readdir, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
-import { dirname, extname, join, normalize, resolve } from 'node:path';
+import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 
@@ -85,6 +85,22 @@ async function listBackupFiles(prefix) {
   } catch {
     return [];
   }
+}
+
+async function backupList() {
+  const files = await listBackupFiles('sips-data-');
+  const rows = [];
+  for (const file of files) {
+    try {
+      const st = await stat(resolve(backupDir, file));
+      rows.push({ file, size: st.size, createdAt: st.mtime.toISOString() });
+    } catch {}
+  }
+  return rows;
+}
+
+function safeBackupName(file) {
+  return file === basename(file) && /^sips-data-(daily|manual)-[\w.-]+\.json$/.test(file);
 }
 
 async function pruneDailyBackups() {
@@ -385,6 +401,33 @@ async function handleApi(req, res, url) {
     await writeDb(db);
     const file = await createBackup('manual');
     return sendJson(res, 200, { ok: true, backup: file });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/backups') {
+    if (!requireAdmin(req, res)) return;
+    await mkdir(backupDir, { recursive: true });
+    return sendJson(res, 200, { ok: true, backups: await backupList() });
+  }
+
+  const backupDownload = url.pathname.match(/^\/api\/backups\/([^/]+)$/);
+  if (req.method === 'GET' && backupDownload) {
+    if (!requireAdmin(req, res)) return;
+    const file = decodeURIComponent(backupDownload[1]);
+    if (!safeBackupName(file)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
+    const target = resolve(backupDir, file);
+    if (!target.startsWith(backupDir)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
+    try {
+      await stat(target);
+    } catch {
+      return sendJson(res, 404, { ok: false, error: 'Sauvegarde introuvable' });
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': 'attachment; filename="' + file + '"',
+      'cache-control': 'no-store',
+      'access-control-allow-origin': '*'
+    });
+    return createReadStream(target).pipe(res);
   }
 
   return sendJson(res, 404, { ok: false, error: 'Route API inconnue' });

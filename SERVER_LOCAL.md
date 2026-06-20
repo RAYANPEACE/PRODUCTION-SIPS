@@ -44,7 +44,7 @@ Le serveur cree aussi des sauvegardes JSON ici :
 server/data/backups/
 ```
 
-Une sauvegarde quotidienne est creee automatiquement apres la premiere ecriture serveur de la journee. Retention actuelle : 7 derniers jours + 4 semaines. Une sauvegarde manuelle peut etre lancee depuis l'onglet `Serveur` ou via `POST /api/backup`.
+Une sauvegarde quotidienne est creee automatiquement apres la premiere ecriture serveur de la journee. Retention actuelle : 7 derniers jours + 4 semaines. Une sauvegarde manuelle peut etre lancee et telechargee depuis l'onglet `Serveur` ou via `POST /api/backup`.
 
 ## API minimale
 
@@ -56,6 +56,8 @@ Une sauvegarde quotidienne est creee automatiquement apres la premiere ecriture 
 - `GET /api/records` : lire les donnees validees, avec header `x-sips-admin-pin`.
 - `POST /api/records/:id/cancel` : annuler un record valide sans le supprimer, avec header `x-sips-admin-pin`.
 - `POST /api/backup` : creer une sauvegarde manuelle, avec header `x-sips-admin-pin`.
+- `GET /api/backups` : lister les sauvegardes disponibles, avec header `x-sips-admin-pin`.
+- `GET /api/backups/:file` : telecharger une sauvegarde, avec header `x-sips-admin-pin`.
 - `GET /api/audit` : lire le journal, avec header `x-sips-admin-pin`.
 
 ## PIN admin

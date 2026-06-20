@@ -151,6 +151,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : lecture des fiches qualite validees serveur ajoutee dans l'historique `Qualite`. Les fiches officielles s'ouvrent en consultation lecture seule, avec PDF disponible mais sans sauvegarde/resoumission/import accidentels. Cache SW v74. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : validation finale qualite durcie cote serveur. `POST /api/submissions/:id/validate` refuse une soumission `quality` tant que les signatures operateur, responsable production et responsable qualite ne sont pas toutes presentes. Le resume admin affiche maintenant `x/3 signatures`. Cache SW v75. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API temporaire OK sans toucher `server/data/sips-data.json`.
 - 2026-06-20 : sauvegardes serveur ajoutees. `server/data/backups/` recoit une sauvegarde quotidienne automatique apres la premiere ecriture du jour, avec retention 7 jours + 4 semaines, et `POST /api/backup` cree une sauvegarde manuelle. Bouton `Sauvegarde serveur` ajoute dans l'onglet `Serveur`. Cache SW v76. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API backup temporaire OK sans toucher `server/data/sips-data.json`.
+- 2026-06-20 : export telechargeable des sauvegardes serveur ajoute. Routes admin `GET /api/backups` et `GET /api/backups/:file`, et le bouton `Sauvegarde serveur` telecharge le JSON cree. Cache SW v77. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API backup download temporaire OK.
 
 ## Comportement actuel important
 
@@ -208,6 +209,8 @@ Routes principales :
 - `GET /api/records?type=sortie&status=validated`
 - `POST /api/records/:id/cancel`
 - `POST /api/backup`
+- `GET /api/backups`
+- `GET /api/backups/:file`
 - `GET /api/audit`
 
 Routes admin : ajouter header :
@@ -261,8 +264,7 @@ Etat actuel :
 - retention simple : 7 derniers jours + 4 semaines ;
 - route admin `POST /api/backup` ;
 - bouton admin `Sauvegarde serveur`.
-
-Reste eventuellement : export telechargeable depuis l'interface.
+- export telechargeable depuis l'interface.
 
 ### Priorite 2 - SQLite
 
