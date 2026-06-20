@@ -154,6 +154,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : export telechargeable des sauvegardes serveur ajoute. Routes admin `GET /api/backups` et `GET /api/backups/:file`, et le bouton `Sauvegarde serveur` telecharge le JSON cree. Cache SW v77. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API backup download temporaire OK.
 - 2026-06-20 : decision workflow qualite appliquee partiellement. La validation finale serveur exige maintenant seulement les signatures `operateur` et `responsableQualite`; `responsableProd` reste visible mais optionnel. Le compteur de sauvegarde locale n'est plus incremente par les autosauvegardes `current` / fragment. Cache SW v78. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API temporaire 2 signatures OK.
 - 2026-06-20 : refonte UX legere serveur/offline et anti-doublons locaux. Les actions serveur sont mises en avant, les exports WhatsApp/fichier sont renommes en secours/local. Les sauvegardes locales n'acceptent plus les doublons pour sorties, entrees, productions, fiches qualite et inventaires archives/fusionnes. Cache SW v79. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
+- 2026-06-20 : soumissions serveur ajoutees pour `inventory` et `production`. Le bouton principal comptage devient `Soumettre inventaire`, le dialogue resume propose `Soumettre au serveur`, Production a un bouton `Soumettre au serveur`, et l'onglet `Serveur` affiche les details admin de ces deux types avant validation. Cache SW v80. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 
 ## Comportement actuel important
 
@@ -257,6 +258,14 @@ Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees se
 - statuts multi-signatures ;
 - workflow serveur multi-etapes entre les responsables avant validation finale.
 
+### Priorite 2 - Historiques serveur inventaire / production
+
+Les soumissions `inventory` et `production` peuvent etre validees par l'admin. Il reste a afficher les records serveur valides dans les historiques metier correspondants :
+
+- historique `Production` : section `Validees serveur` comme sorties/entrees ;
+- historique inventaires : distinguer `Valides serveur` et `Historique local` ;
+- fragmenté : remplacer progressivement export/import/fusion par sessions serveur.
+
 ### Sauvegardes automatiques - fait
 
 Etat actuel :
@@ -268,7 +277,7 @@ Etat actuel :
 - bouton admin `Sauvegarde serveur`.
 - export telechargeable depuis l'interface.
 
-### Priorite 2 - SQLite
+### Priorite 3 - SQLite
 
 Le JSON central est volontairement temporaire.
 

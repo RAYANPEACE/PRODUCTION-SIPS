@@ -659,7 +659,7 @@
 <main id="app"></main>
 <footer id="footMain">
   <div class="count">Comptés : <b id="filled">0</b> / <span id="tot">0</span><br>Pense aussi aux quantités envoyées séparément.</div>
-  <button id="export">Terminer & exporter</button>
+  <button id="export">Soumettre inventaire</button>
 </footer>
 
 <dialog id="warn">
@@ -677,13 +677,14 @@
 <dialog id="dlg">
   <div class="dlg-h"><b>Résumé du comptage</b><button onclick="dlg.close()">×</button></div>
   <div class="dlg-b">
-    <p style="margin:0 0 8px;font-size:13px;color:#6a7280">Vérifie, puis envoie le fichier. Il contient toutes les données et les photos.</p>
+    <p style="margin:0 0 8px;font-size:13px;color:#6a7280">Vérifie, puis soumets au serveur. L'export fichier reste disponible en secours local.</p>
     <div id="out" class="sumview"></div>
     <div class="dlg-actions">
-      <button class="b-go" id="shareBtn">Envoyer (WhatsApp, mail…)</button>
+      <button class="b-go" id="submitInvBtn">Soumettre au serveur</button>
     </div>
     <div class="dlg-actions" style="margin-top:8px">
-      <button class="b-sec" id="dlBtn">Télécharger le fichier</button>
+      <button class="b-sec" id="shareBtn">Secours WhatsApp / mail</button>
+      <button class="b-sec" id="dlBtn">Télécharger secours local</button>
     </div>
     <div class="dlg-actions" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
       <button class="b-go" id="validBtn" style="background:#0e1a12;color:#5dffb0">🔒 Valider cet inventaire (devient la référence)</button>
@@ -1713,6 +1714,19 @@ $('#export').onclick=()=>{
 };
 $('#confirmExport').onclick=()=>{$('#warn').close();showSummary();};
 function showSummary(){$('#out').innerHTML=buildSummaryHTML();$('#dlg').showModal();}
+function inventoryServerPayload(){
+  const filled=REFS.filter(r=>ST.c[r.code].counted).length;
+  let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
+  return {kind:'inventory',date:ST.date||todayStr(),agent:ST.agent||'',filled:filled,bilan:bilan,detail:detail,st:snapshot(),submittedAt:new Date().toISOString()};
+}
+async function submitInventoryServer(){
+  if(RO){toast('Mode consultation — non modifiable');return;}
+  if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
+  const filled=REFS.filter(r=>ST.c[r.code].counted).length;
+  if(!filled){toast('Aucun article compté à soumettre');return;}
+  await archiveCurrent();
+  await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
+}
 async function shareJSON(){
   archiveCurrent();
   const name=exportName(),content=buildJSON();
@@ -1726,6 +1740,7 @@ async function shareJSON(){
   }catch(err){if(err&&err.name==='AbortError')return;}
   download(name,content,'text/plain');toast('Partage indisponible ici \u2014 fichier enregistré');
 }
+$('#submitInvBtn').onclick=submitInventoryServer;
 $('#shareBtn').onclick=shareJSON;
 $('#dlBtn').onclick=()=>{archiveCurrent();download(exportName(),buildJSON(),'text/plain');toast('Fichier enregistré');};
 $('#validBtn').onclick=validateCurrent;
@@ -2251,6 +2266,14 @@ async function prodSave(pf){
   if(await findLocalDuplicate('prod',rec._sig,rec.id)){toast('Production deja enregistree dans l historique local');return false;}
   try{await idbPut(rec);toast('Production enregistrée');return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
+async function prodSubmit(pf){
+  const blocks=(pf.blocks||[]).filter(pfBlockHasInput);
+  if(!blocks.length){toast('Rien a soumettre');return false;}
+  if(!pf.agent&&typeof USR!=='undefined'&&USR.nom)pf.agent=USR.nom;
+  const payload={kind:'production',date:pf.date||todayStr(),agent:pf.agent||'',blocks:clone(pf.blocks),note:pf.note||'',submittedAt:new Date().toISOString()};
+  await sipsSubmit('production',payload,'Production '+(payload.date||''));
+  return true;
+}
 function photoArrayUI(host,arr,redraw){
   host.innerHTML='';
   const camIn=document.createElement('input');camIn.type='file';camIn.accept='image/*';camIn.capture='environment';camIn.style.display='none';
@@ -2292,7 +2315,7 @@ function renderProduction(focusBi){
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="pfSave" class="b-go">Enregistrer localement</button><button id="pfShare" class="b-sec">📤 Secours WhatsApp</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfShare" class="b-sec">📤 Secours WhatsApp</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderProduction();
@@ -2314,6 +2337,7 @@ function renderProduction(focusBi){
     photoArrayUI(card.querySelector('.pb-photos'),b.photos,re);
   });
   $('#pfAddBlock').onclick=()=>{PF.blocks.push(freshBlock());renderProduction(PF.blocks.length-1);};
+  $('#pfSubmit').onclick=()=>prodSubmit(PF);
   $('#pfShare').onclick=()=>prodShare(PF);
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
@@ -2468,11 +2492,13 @@ function renderSorties(f){renderMov('sortie',f);}
 function renderEntrees(f){renderMov('entree',f);}
 
 /* ================= SERVEUR LOCAL ================= */
-function sipsTypeLabel(t){return ({quality:'Qualite',sortie:'Sortie',entree:'Entree',test:'Test'})[t]||t||'Soumission';}
+function sipsTypeLabel(t){return ({quality:'Qualite',sortie:'Sortie',entree:'Entree',production:'Production',inventory:'Inventaire',test:'Test'})[t]||t||'Soumission';}
 function sipsPayloadSummary(type,payload){
   payload=payload||{};
   if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=['operateur','responsableQualite'].filter(k=>v[k]&&v[k].signature).length;return (i.numeroLot||'lot ?')+' - '+(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/2 signatures obligatoires';}
   if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
+  if(type==='production'){const nb=(payload.blocks||[]).filter(b=>b.p&&num(b.n)>0).length;return (payload.date||'date ?')+' - '+nb+' production(s)';}
+  if(type==='inventory'){return (payload.date||'date ?')+' - '+(payload.filled||0)+' article(s) comptés';}
   return payload.title||payload.message||'';
 }
 function sipsKV(rows){return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-top:8px">'+rows.filter(x=>x&&x[1]!=null&&x[1]!=='').map(x=>'<div style="background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:7px"><b style="display:block;font-size:11px;color:var(--mute);text-transform:uppercase">'+esc(x[0])+'</b><span style="font-size:13px">'+esc(x[1])+'</span></div>').join('')+'</div>';}
@@ -2495,6 +2521,15 @@ function sipsSubmissionDetailHTML(s){
       +sipsLines('Matieres premieres',p.matieresPremieres,[['designation','Designation'],['code','Code'],['refFournisseur','Ref fournisseur'],['dateProd','Date prod'],['dateExp','Date exp']])
       +sipsLines('Batches / melanges',p.melanges,[['batchNum','Batch'],['heureDebut','Debut'],['heureFin','Fin']])
       +sipsLines('Visas',visaRows,[['role','Role'],['nom','Nom'],['date','Date'],['signature','Signature']]);
+  }
+  if(s.type==='production'){
+    return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Note',p.note]])
+      +sipsLines('Productions',p.blocks,[['p','Produit'],['n','Qte'],['w_emb','Dechet emb.'],['w_film','Dechet film'],['w_mel','Melange kg']]);
+  }
+  if(s.type==='inventory'){
+    const detail=Object.keys(p.detail||{}).map(code=>Object.assign({code:code},p.detail[code]));
+    return sipsKV([['Date',frDate(p.date)],['Compteur',p.agent],['Articles comptes',p.filled],['Alertes bilan',p.bilan&&p.bilan.nbAlertes],['Ecart total',p.bilan&&p.bilan.total]])
+      +sipsLines('Articles comptes',detail.slice(0,80),[['code','Code'],['n','Article'],['p','Physique'],['t','Theorique'],['e','Ecart']]);
   }
   return '<pre style="white-space:pre-wrap;font-size:12px;background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0 0">'+esc(JSON.stringify(p,null,2).slice(0,2000))+'</pre>';
 }
