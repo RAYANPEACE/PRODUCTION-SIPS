@@ -7,6 +7,15 @@ Application de suivi de production, inventaire physique et qualite pour une usin
 Mobile-first (Android en priorite), aussi sur PC.
 Tout le texte UI est en francais.
 
+## Relais de reprise entre agents
+
+Avant toute intervention, lire aussi :
+
+- `docs/SIPS_LOCAL_SERVER_HANDOFF.md` : etat courant, serveur local, prochaines taches, decisions prises avec l'utilisateur.
+- `docs/code-review-2026-06-19.md` : 5 bugs de revue high effort a corriger.
+
+Apres chaque correction, mettre a jour `docs/SIPS_LOCAL_SERVER_HANDOFF.md` avec ce qui a ete fait, les tests lances et les taches restantes.
+
 ## Architecture technique
 
 - **IndexedDB** : base `inv_db`, store `inv`, keyPath `id`

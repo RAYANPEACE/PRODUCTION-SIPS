@@ -4,6 +4,21 @@ Derniere mise a jour : 2026-06-20
 
 Ce document sert de relais entre Codex, Claude Code et tout autre agent. Il decrit l'etat actuel, les choix d'architecture, les commandes, les tests deja faits et les prochaines taches.
 
+## Mode relais entre agents IA
+
+Avant de reprendre le projet, lire dans cet ordre :
+
+1. `CLAUDE.md` pour les regles de travail et les pieges du fichier `index.html`.
+2. `docs/SIPS_LOCAL_SERVER_HANDOFF.md` pour l'etat du serveur local et le plan courant.
+3. `docs/code-review-2026-06-19.md` pour les 5 bugs identifies par revue high effort.
+
+Apres chaque intervention, l'agent doit mettre a jour ce document :
+
+- indiquer ce qui a ete corrige ;
+- indiquer les tests lances ;
+- deplacer les taches terminees dans "Fait depuis le relais" ;
+- laisser les taches restantes avec leur priorite.
+
 ## Objectif global
 
 Remplacer progressivement les echanges de fichiers WhatsApp par une base centrale locale, sans toucher au serveur industriel de l'usine.
@@ -70,6 +85,48 @@ PIN admin app :
 - Validation des soumissions : OK.
 - Anti-doublon serveur : OK, une meme soumission n'est plus creee plusieurs fois.
 - Historique `Sorties` affiche les elements valides serveur : OK.
+
+## Revue high effort a traiter
+
+Source : `docs/code-review-2026-06-19.md`
+
+Statut actuel : a traiter. Ne pas supprimer cette section tant que les corrections n'ont pas ete faites et testees.
+
+### Bugs importants
+
+1. `importAll` ecrase le profil utilisateur.
+   - Probleme : l'import d'une sauvegarde peut remplacer `lep_usr` par le profil du collegue.
+   - Attendu : ne jamais ecraser `lep_usr`, `lep_changes_since_backup`, `lep_backup_count` pendant un import.
+
+2. Compteur de sauvegarde remis a zero meme si l'utilisateur annule le partage.
+   - Probleme : sur Android, `Partager` peut etre annule apres ouverture du menu natif.
+   - Attendu : ne remettre le compteur a zero qu'apres un partage/export reellement abouti, ou via une confirmation explicite.
+
+3. `ST.agent` vide apres `Nouvel inventaire`.
+   - Probleme : le nom du compteur disparait des exports jusqu'au rechargement.
+   - Attendu : re-remplir `ST.agent` depuis `USR.nom` apres reset.
+
+### Bugs mineurs
+
+4. L'import gonfle artificiellement le compteur de modifications.
+   - Probleme : chaque `idbPut` d'import incremente `lep_changes_since_backup`.
+   - Attendu : un import ne doit pas etre compte comme 50 modifications locales non sauvegardees.
+
+5. `qNew()` ne demande pas confirmation si une fiche qualite non enregistree contient deja des donnees.
+   - Probleme : perte silencieuse possible.
+   - Attendu : detecter les champs remplis, pas seulement `QS.id`.
+
+### Qualite de code non bloquante
+
+- Factoriser `exportAll`, `exportAllDownload`, `exportLight` pour eviter la duplication rotation A/B + reset compteurs.
+- Optimiser `qNextLotNum`, qui scanne tout IndexedDB a chaque ouverture qualite.
+
+## Fait depuis le relais
+
+- 2026-06-20 : serveur local Node.js ajoute.
+- 2026-06-20 : app connectee au serveur local.
+- 2026-06-20 : validations serveur fiabilisees.
+- 2026-06-20 : soumissions et historiques serveur valides par test utilisateur.
 
 ## Comportement actuel important
 
