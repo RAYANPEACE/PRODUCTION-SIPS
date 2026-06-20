@@ -419,7 +419,7 @@ function sipsUserHTML(u){
   const role=(sipsUserRoles||[]).find(r=>r.key===u.role);
   const status=u.enabled===false?'desactive':'actif';
   const last=u.lastLogin?new Date(u.lastLogin).toLocaleString('fr-FR'):'jamais connecte';
-  return '<div class="hist-item" data-user="'+esc(u.id)+'"><div class="info"><b>'+esc(u.nom||u.username||'Utilisateur')+' - '+esc(role?role.label:u.role)+'</b><span>@'+esc(u.username||'')+' - '+status+' - derniere connexion : '+esc(last)+'</span></div><button data-act="edit">Modifier</button></div>';
+  return '<div class="hist-item" data-user="'+esc(u.id)+'"><div class="info"><b>'+esc(u.nom||u.username||'Utilisateur')+' - '+esc(role?role.label:u.role)+'</b><span>@'+esc(u.username||'')+' - '+status+' - derniere connexion : '+esc(last)+'</span></div><button data-act="edit">Modifier</button><button class="'+(u.enabled===false?'valid':'del')+'" data-act="toggle">'+(u.enabled===false?'Reactiver':'Desactiver')+'</button></div>';
 }
 async function sipsLoadUsers(){
   const host=$('#srvUsers');if(!host)return;
@@ -428,10 +428,19 @@ async function sipsLoadUsers(){
     const data=await sipsFetch('/api/auth/users',{headers:sipsAdminHeaders()});
     sipsUserRows=data.users||[];sipsUserRoles=data.roles||[];
     host.innerHTML=sipsUserRows.length?sipsUserRows.map(sipsUserHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun utilisateur.</p>';
-    host.querySelectorAll('[data-user]').forEach(el=>{const u=sipsUserRows.find(x=>x.id===el.dataset.user);const b=el.querySelector('button[data-act="edit"]');if(b&&u)b.onclick=()=>sipsUserDialog(u,sipsUserRoles);});
+    host.querySelectorAll('[data-user]').forEach(el=>{const u=sipsUserRows.find(x=>x.id===el.dataset.user);const b=el.querySelector('button[data-act="edit"]');if(b&&u)b.onclick=()=>sipsUserDialog(u,sipsUserRoles);const t=el.querySelector('button[data-act="toggle"]');if(t&&u)t.onclick=()=>sipsToggleUser(u);});
   }catch(e){
     host.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Gestion utilisateurs indisponible : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi admin ou renseigne le PIN serveur.':'')+'</p>';
   }
+}
+async function sipsToggleUser(user){
+  const enable=user.enabled===false;
+  if(!confirm((enable?'Reactiver':'Desactiver')+' le compte '+(user.nom||user.username)+' ?'))return;
+  try{
+    await sipsFetch('/api/auth/users/'+encodeURIComponent(user.id),{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({enabled:enable})});
+    toast(enable?'Utilisateur reactive':'Utilisateur desactive');
+    await sipsLoadUsers();
+  }catch(e){toast('Erreur utilisateur : '+e.message);}
 }
 function sipsUserDialog(user,roles){
   const editing=!!user;

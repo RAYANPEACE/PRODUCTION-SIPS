@@ -48,7 +48,7 @@ function sipsActor(){
 async function sipsFetch(path,opt){
   opt=opt||{};
   const headers=Object.assign({'content-type':'application/json'},authHeader(),opt.headers||{});
-  const res=await fetch(sipsServerUrl()+path,Object.assign({},opt,{headers}));
+  const res=await fetch(sipsServerUrl()+path,Object.assign({cache:'no-store'},opt,{headers}));
   let data=null;try{data=await res.json();}catch(e){}
   if(!res.ok||!data||data.ok===false)throw new Error((data&&data.error)||('HTTP '+res.status));
   return data;
