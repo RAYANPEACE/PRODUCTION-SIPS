@@ -152,6 +152,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : validation finale qualite durcie cote serveur. `POST /api/submissions/:id/validate` refuse une soumission `quality` tant que les signatures operateur, responsable production et responsable qualite ne sont pas toutes presentes. Le resume admin affiche maintenant `x/3 signatures`. Cache SW v75. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API temporaire OK sans toucher `server/data/sips-data.json`.
 - 2026-06-20 : sauvegardes serveur ajoutees. `server/data/backups/` recoit une sauvegarde quotidienne automatique apres la premiere ecriture du jour, avec retention 7 jours + 4 semaines, et `POST /api/backup` cree une sauvegarde manuelle. Bouton `Sauvegarde serveur` ajoute dans l'onglet `Serveur`. Cache SW v76. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API backup temporaire OK sans toucher `server/data/sips-data.json`.
 - 2026-06-20 : export telechargeable des sauvegardes serveur ajoute. Routes admin `GET /api/backups` et `GET /api/backups/:file`, et le bouton `Sauvegarde serveur` telecharge le JSON cree. Cache SW v77. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API backup download temporaire OK.
+- 2026-06-20 : decision workflow qualite appliquee partiellement. La validation finale serveur exige maintenant seulement les signatures `operateur` et `responsableQualite`; `responsableProd` reste visible mais optionnel. Le compteur de sauvegarde locale n'est plus incremente par les autosauvegardes `current` / fragment. Cache SW v78. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, test API temporaire 2 signatures OK.
 
 ## Comportement actuel important
 
@@ -250,7 +251,7 @@ operateur renseigne + signe
 -> archive officielle
 ```
 
-Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees serveur en consultation. La validation finale serveur exige les 3 signatures. Il manque encore :
+Aujourd'hui `Qualite` peut soumettre au serveur et relire les fiches validees serveur en consultation. La validation finale serveur exige les signatures operateur et responsable qualite. Le visa responsable production reste optionnel. Il manque encore :
 
 - statuts multi-signatures ;
 - workflow serveur multi-etapes entre les responsables avant validation finale.

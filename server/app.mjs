@@ -237,7 +237,6 @@ function recordStatus(r) {
 function missingQualitySignatures(payload) {
   const labels = {
     operateur: 'operateur',
-    responsableProd: 'responsable production',
     responsableQualite: 'responsable qualite'
   };
   const visas = (payload && payload.visas) || {};

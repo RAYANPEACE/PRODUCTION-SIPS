@@ -1309,8 +1309,8 @@ function idb(){return new Promise((res,rej)=>{if(_db)return res(_db);
   const rq=indexedDB.open('inv_db',1);
   rq.onupgradeneeded=()=>{const db=rq.result;if(!db.objectStoreNames.contains('inv'))db.createObjectStore('inv',{keyPath:'id'});};
   rq.onsuccess=()=>{_db=rq.result;res(_db);};rq.onerror=()=>rej(rq.error);});}
-function idbPut(rec){return idb().then(db=>new Promise((res,rej)=>{
-  const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=function(){try{var c=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;localStorage.setItem('lep_changes_since_backup',String(c+1));}catch(e){}res();};t.onerror=()=>rej(t.error);}));}
+function idbPut(rec,countChange){if(countChange===undefined)countChange=true;return idb().then(db=>new Promise((res,rej)=>{
+  const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=function(){if(countChange)try{var c=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;localStorage.setItem('lep_changes_since_backup',String(c+1));}catch(e){}res();};t.onerror=()=>rej(t.error);}));}
 function idbGet(id){return idb().then(db=>new Promise((res,rej)=>{
   const rq=db.transaction('inv','readonly').objectStore('inv').get(id);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);}));}
 function idbAll(){return idb().then(db=>new Promise((res,rej)=>{
@@ -1321,8 +1321,8 @@ function idbDel(id){return idb().then(db=>new Promise((res,rej)=>{
 let _saveTimer=null;
 function saveCounts(){if(RO)return;clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
-    if(FRAG){fragPersist();idbPut(FRAG).catch(()=>{});}
-    else idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST}).catch(()=>{});
+    if(FRAG){fragPersist();idbPut(FRAG,false).catch(()=>{});}
+    else idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST},false).catch(()=>{});
   },400);}
 function snapshot(){const s=JSON.parse(JSON.stringify(ST));if(!s.cfg){s.cfg={};REFS.forEach(r=>{s.cfg[r.code]={...r.p};});}return s;}
 function archiveCurrent(){ // une fiche par inventaire (mise à jour, pas de doublon)
@@ -2423,7 +2423,7 @@ function renderEntrees(f){renderMov('entree',f);}
 function sipsTypeLabel(t){return ({quality:'Qualite',sortie:'Sortie',entree:'Entree',test:'Test'})[t]||t||'Soumission';}
 function sipsPayloadSummary(type,payload){
   payload=payload||{};
-  if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=['operateur','responsableProd','responsableQualite'].filter(k=>v[k]&&v[k].signature).length;return (i.numeroLot||'lot ?')+' - '+(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/3 signatures';}
+  if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=['operateur','responsableQualite'].filter(k=>v[k]&&v[k].signature).length;return (i.numeroLot||'lot ?')+' - '+(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/2 signatures obligatoires';}
   if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
   return payload.title||payload.message||'';
 }
@@ -4199,10 +4199,10 @@ async function qLoadHist(){
       htm+='<div style="font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase">Validees serveur</div>';
       QSERVER_RECORDS.forEach(function(r,idx){
         var b=r.payload||{},info=b.informations||{},visas=b.visas||{};
-        var sigs=['operateur','responsableProd','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
+        var sigs=['operateur','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
         htm+='<div class="q-hist-item">';
         htm+='<div class="info"><b>'+esc(info.refProduit||'—')+'</b>';
-        htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date||info.dateProduction||'')+' — '+sigs+'/3 signature(s) — officielle serveur</span></div>';
+        htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date||info.dateProduction||'')+' — '+sigs+'/2 signature(s) obligatoires — officielle serveur</span></div>';
         htm+='<button onclick="qLoadServerBatch('+idx+')">Voir</button>';
         htm+='</div>';
       });
@@ -4213,10 +4213,10 @@ async function qLoadHist(){
     batches.forEach(function(b){
       var info=b.informations||{};
       var visas=b.visas||{};
-      var sigs=['operateur','responsableProd','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
+      var sigs=['operateur','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
       htm+='<div class="q-hist-item">';
       htm+='<div class="info"><b>'+esc(info.refProduit||'—')+'</b>';
-      htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+' — '+sigs+'/3 signature(s)</span></div>';
+      htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+' — '+sigs+'/2 signature(s) obligatoires</span></div>';
       htm+='<button onclick="qLoadBatch(\''+esc(b.id)+'\')">Voir</button>';
       htm+='<button class="del" onclick="qDelBatch(\''+esc(b.id)+'\')">Suppr</button>';
       htm+='</div>';
