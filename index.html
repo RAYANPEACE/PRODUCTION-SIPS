@@ -1317,6 +1317,27 @@ function idbAll(){return idb().then(db=>new Promise((res,rej)=>{
   const rq=db.transaction('inv','readonly').objectStore('inv').getAll();rq.onsuccess=()=>res(rq.result||[]);rq.onerror=()=>rej(rq.error);}));}
 function idbDel(id){return idb().then(db=>new Promise((res,rej)=>{
   const t=db.transaction('inv','readwrite');t.objectStore('inv').delete(id);t.oncomplete=res;t.onerror=()=>rej(t.error);}));}
+function localRecordKind(r){
+  const id=String((r&&r.id)||'');
+  if(id.indexOf('sortie_')===0)return 'sortie';
+  if(id.indexOf('entree_')===0)return 'entree';
+  if(id.indexOf('prod_')===0)return 'prod';
+  if(id.indexOf('batch_')===0)return 'quality';
+  if(r&&r.st&&id!=='current'&&id.indexOf('fragsess_')!==0)return 'inv';
+  return '';
+}
+function localRecordSig(r){
+  if(r&&r._sig)return r._sig;
+  const k=localRecordKind(r);
+  if(k==='sortie'||k==='entree')return localSig(k,{date:r.date||'',ref:r.ref||'',finis:r.finis||[],mp:r.mp||[],note:r.note||''});
+  if(k==='prod')return localSig('prod',{date:r.date||'',blocks:typeof migrateProdRec==='function'?migrateProdRec(r):(r.blocks||[]),note:r.note||''});
+  if(k==='quality')return localSig('quality',{informations:r.informations||{},matieresPremieres:r.matieresPremieres||[],melanges:r.melanges||[],visas:r.visas||{}});
+  if(k==='inv')return localSig('inv',{date:r.date||'',detail:r.detail||null,st:r.st&&r.st.c?r.st.c:null});
+  return '';
+}
+async function findLocalDuplicate(kind,sig,selfId){
+  try{const all=await idbAll();return all.find(r=>r&&r.id!==selfId&&localRecordKind(r)===kind&&localRecordSig(r)===sig)||null;}catch(e){return null;}
+}
 
 let _saveTimer=null;
 function saveCounts(){if(RO)return;clearTimeout(_saveTimer);
@@ -1325,17 +1346,20 @@ function saveCounts(){if(RO)return;clearTimeout(_saveTimer);
     else idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST},false).catch(()=>{});
   },400);}
 function snapshot(){const s=JSON.parse(JSON.stringify(ST));if(!s.cfg){s.cfg={};REFS.forEach(r=>{s.cfg[r.code]={...r.p};});}return s;}
-function archiveCurrent(){ // une fiche par inventaire (mise à jour, pas de doublon)
-  if(FRAG)return Promise.resolve(); // en mode fragmenté, ST est un fragment : jamais archivé seul
-  const filled=REFS.filter(r=>ST.c[r.code].counted).length;if(!filled)return Promise.resolve();
+async function archiveCurrent(){ // une fiche par inventaire (mise à jour, pas de doublon)
+  if(FRAG)return; // en mode fragmenté, ST est un fragment : jamais archivé seul
+  const filled=REFS.filter(r=>ST.c[r.code].counted).length;if(!filled)return;
   if(!ST.id)ST.id='inv_'+Date.now();
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
   const snap=snapshot();
   // Ne jamais écraser un inventaire validé : si l'id courant pointe sur un verrouillé, on archive sous un nouvel id
-  return idbGet(ST.id).then(function(ex){
-    if(ex&&ex.locked)ST.id='inv_'+Date.now();
-    return idbPut({id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snap});
-  });
+  try{const ex=await idbGet(ST.id);if(ex&&ex.locked)ST.id='inv_'+Date.now();}catch(e){}
+  const rec={id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snap};
+  rec._sig=localSig('inv',{date:rec.date,detail:rec.detail||null,st:rec.st&&rec.st.c?rec.st.c:null});
+  const dup=await findLocalDuplicate('inv',rec._sig,rec.id);
+  if(dup){ST.id=dup.id;return dup;}
+  await idbPut(rec);
+  return rec;
 }
 
 /* ====== PHOTOS ====== */
@@ -1529,10 +1553,10 @@ async function openHistory(){
   list.innerHTML='';
   const bk=document.createElement('div');bk.style.cssText='border:1px solid #d4e3f3;border-radius:10px;padding:10px;margin-bottom:12px;background:#f6f9fd';
   bk.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:8px">💾 Sauvegarde complète <span style="font-weight:400;color:#6a7280">(réglages, machines, référentiels, inventaires, photos)</span></div>';
-  const expB=document.createElement('button');expB.style.cssText='width:100%;margin-bottom:8px;padding:10px;border-radius:8px;border:1.5px solid var(--steel);color:var(--steel-d);background:#fff;font-weight:700;font-size:13px';expB.textContent='Exporter toutes mes données';expB.onclick=()=>exportAll();
-  const expLB=document.createElement('button');expLB.style.cssText='width:100%;margin-bottom:8px;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLB.textContent='Exporter sans les photos (léger)';expLB.onclick=()=>exportLight();
+  const expB=document.createElement('button');expB.style.cssText='width:100%;margin-bottom:8px;padding:10px;border-radius:8px;border:1.5px solid var(--steel);color:var(--steel-d);background:#fff;font-weight:700;font-size:13px';expB.textContent='Sauvegarde locale complete';expB.onclick=()=>exportAll();
+  const expLB=document.createElement('button');expLB.style.cssText='width:100%;margin-bottom:8px;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLB.textContent='Secours local sans photos';expLB.onclick=()=>exportLight();
   const fiB=document.createElement('input');fiB.type='file';fiB.accept='.txt,.json,text/plain';fiB.style.display='none';fiB.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
-  const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde';impB.onclick=function(){fiB.click();};
+  const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde locale';impB.onclick=function(){fiB.click();};
   bk.append(expB,expLB,fiB,impB);list.append(bk);
   const fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
   fi.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importInventory(rd.result);};rd.readAsText(f);};
@@ -1715,7 +1739,13 @@ async function validateCurrent(){
   if(!ST.id)ST.id='inv_'+Date.now();
   try{const ex=await idbGet(ST.id);if(ex&&ex.locked)ST.id='inv_'+Date.now();}catch(e){}
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
-  try{await idbPut({id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snapshot(),locked:true,validatedAt:Date.now()});}
+  try{
+    const snap=snapshot();
+    const rec={id:ST.id,date:ST.date,agent:ST.agent,savedAt:Date.now(),filled,bilan:bilan,detail:detail,st:snap,locked:true,validatedAt:Date.now()};
+    rec._sig=localSig('inv',{date:rec.date,detail:rec.detail||null,st:rec.st&&rec.st.c?rec.st.c:null});
+    if(await findLocalDuplicate('inv',rec._sig,rec.id)){toast('Inventaire deja enregistre dans l historique local');return;}
+    await idbPut(rec);
+  }
   catch(e){toast('Échec de la validation');return;}
   $('#dlg').close();
   REFS.forEach(r=>ST.c[r.code]=blankEntry(r));
@@ -1736,6 +1766,20 @@ const MEM={};
 function lsGet(k,def){try{const v=localStorage.getItem(k);if(v!=null)return JSON.parse(v);}catch(e){}return (k in MEM)?MEM[k]:def;}
 function lsSet(k,v){MEM[k]=v;try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 function clone(o){return JSON.parse(JSON.stringify(o));}
+function stableClean(v){
+  if(Array.isArray(v))return v.map(stableClean);
+  if(v&&typeof v==='object'){
+    const out={};
+    Object.keys(v).sort().forEach(k=>{
+      if(['id','savedAt','submittedAt','validatedAt','cancelledAt','photo','photos','_sig'].includes(k))return;
+      out[k]=stableClean(v[k]);
+    });
+    return out;
+  }
+  if(typeof v==='string')return v.trim();
+  return v;
+}
+function localSig(type,payload){return JSON.stringify(stableClean({type:type,payload:payload}));}
 
 /* ---------- SERVEUR LOCAL SIPS ---------- */
 let SIPS_SERVER=lsGet('lep_server_cfg',{url:'',adminPin:''});
@@ -2203,6 +2247,8 @@ async function prodSave(pf){
   const blocks=(pf.blocks||[]).filter(pfBlockHasInput);
   if(!blocks.length){toast('Rien à enregistrer');return false;}
   const rec={id:'prod_'+Date.now(),kind:'prod',date:pf.date||todayStr(),agent:pf.agent||'',blocks:clone(pf.blocks),note:pf.note,savedAt:Date.now()};
+  rec._sig=localSig('prod',{date:rec.date,blocks:rec.blocks,note:rec.note||''});
+  if(await findLocalDuplicate('prod',rec._sig,rec.id)){toast('Production deja enregistree dans l historique local');return false;}
   try{await idbPut(rec);toast('Production enregistrée');return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
 function photoArrayUI(host,arr,redraw){
@@ -2246,7 +2292,7 @@ function renderProduction(focusBi){
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="pfShare" class="b-go">📤 Partager sur WhatsApp</button><button id="pfSave" class="b-sec">Enregistrer dans l\u2019historique</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="pfSave" class="b-go">Enregistrer localement</button><button id="pfShare" class="b-sec">📤 Secours WhatsApp</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderProduction();
@@ -2332,6 +2378,8 @@ async function movSave(kind,mf){
   const c=MOVCFG[kind];
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
   const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
+  rec._sig=localSig(kind,{date:rec.date,ref:rec.ref,finis:rec.finis,mp:rec.mp,note:rec.note||''});
+  if(await findLocalDuplicate(kind,rec._sig,rec.id)){toast(c.word+' deja enregistree dans l historique local');return false;}
   try{await idbPut(rec);toast(c.saved);return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
 async function movSubmit(kind,mf){
@@ -2365,7 +2413,7 @@ function renderMov(kind,focusSel){
     +movSectionHTML(mf,'mp','Matières premières / Échantillons')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="mvSave" class="b-go">Enregistrer dans l\u2019historique</button><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvShare" class="b-sec">📤 Partager sur WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvShare" class="b-sec">📤 Secours WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderMov(kind);
@@ -2677,7 +2725,7 @@ async function renderAccueil(){
   let urg=0;REFS.forEach(r=>{if(r.cat!=='mp')return;((ST.c[r.code]&&ST.c[r.code].blocks)||[]).forEach(b=>{const st=perimStatus(b.date);if(st&&st.rank>=2)urg++;});});
   let h='<div class="prod-wrap"><h2 class="prod-title">Tableau de bord</h2>';
   var _chg=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;var _lts=parseInt(localStorage.getItem('lep_last_backup_ts'))||0;
-  if(_chg>0||_lts===0){var _lastStr=_lts?frDate(new Date(_lts).toISOString().slice(0,10)):'jamais';var _msg=_lts===0?'Aucune sauvegarde realisee':('<b>'+_chg+'</b> modification(s) non sauvegardee(s)');h+='<div id="backupBanner" style="background:#fef6e7;border:1.5px solid #e6cf95;border-left:5px solid #c8791b;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';h+='<div style="flex:1;min-width:180px;font-size:13px;color:#8a6d1b;line-height:1.4">'+_msg+'<br><span style="font-size:11px;color:#a08530">Derniere sauvegarde : '+_lastStr+'</span></div>';h+='<div style="display:flex;gap:6px;flex:none"><button id="backupShare" style="padding:8px 12px;border:none;border-radius:9px;background:#c8791b;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Partager</button><button id="backupDL" style="padding:8px 12px;border:none;border-radius:9px;background:#15487f;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Telecharger</button></div>';h+='</div>';}
+  if(_chg>0||_lts===0){var _lastStr=_lts?frDate(new Date(_lts).toISOString().slice(0,10)):'jamais';var _msg=_lts===0?'Aucune sauvegarde locale realisee':('<b>'+_chg+'</b> modification(s) locales non sauvegardee(s)');h+='<div id="backupBanner" style="background:#fef6e7;border:1.5px solid #e6cf95;border-left:5px solid #c8791b;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';h+='<div style="flex:1;min-width:180px;font-size:13px;color:#8a6d1b;line-height:1.4">'+_msg+'<br><span style="font-size:11px;color:#a08530">Derniere sauvegarde locale : '+_lastStr+'</span></div>';h+='<div style="display:flex;gap:6px;flex:none"><button id="backupShare" style="padding:8px 12px;border:none;border-radius:9px;background:#c8791b;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Partager local</button><button id="backupDL" style="padding:8px 12px;border:none;border-radius:9px;background:#15487f;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Telecharger local</button></div>';h+='</div>';}
   h+='<div class="dash-card"><div class="dash-t">Inventaire en cours'+(ST.date?(' — '+esc(ST.date)):'')+'</div>'
     +'<div class="dash-prog"><div class="dash-pb"><div class="dash-pf" style="width:'+pct+'%"></div></div><div class="dash-pv">'+counted+'/'+tot+'</div></div>'
     +'<div class="dash-sub">'+pct+' % des articles comptés</div></div>';
@@ -2692,7 +2740,7 @@ async function renderAccueil(){
   h+='</div></div>';
   h+='<div id="dashRecent" class="dash-card"><div class="dash-t">Dernières saisies</div><div class="dash-rec">Chargement…</div></div>';
   h+='<div class="dash-card"><div class="dash-t">Serveur local</div><div id="srvDash" class="dash-rec">Verification...</div><div class="dash-btns" style="margin-top:8px"><button class="dash-b" id="srvDashTest">Tester</button><button class="dash-b" id="srvDashFlush">Synchroniser</button>'+(ADMIN?'<button class="dash-b" data-go="serveur">Validation</button>':'')+'</div></div>';
-  h+='<div class="dash-card"><div class="dash-t">Sauvegardes & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
+  h+='<div class="dash-card"><div class="dash-t">Secours local & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
   h+='</div>';
   app.innerHTML=h;
   var bbS=$('#backupShare');if(bbS)bbS.onclick=function(){exportAll();};
@@ -2704,11 +2752,11 @@ async function renderAccueil(){
   var sdf=$('#srvDashFlush');if(sdf)sdf.onclick=async()=>{await sipsFlushPending();updSrvDash();};
   updSrvDash();
   const saveBtnBox=$('#saveBtnBox');
-  const expShareBtn=document.createElement('button');expShareBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expShareBtn.textContent='Partager donnees';expShareBtn.onclick=()=>exportAll();
-  const expDLBtn=document.createElement('button');expDLBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#eef4fb;color:var(--steel-d);font-weight:700;font-size:13px';expDLBtn.textContent='Telecharger donnees';expDLBtn.onclick=()=>exportAllDownload();
-  const expLghtBtn=document.createElement('button');expLghtBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLghtBtn.textContent='Exporter sans photos';expLghtBtn.onclick=()=>exportLight();
+  const expShareBtn=document.createElement('button');expShareBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expShareBtn.textContent='Partager sauvegarde locale';expShareBtn.onclick=()=>exportAll();
+  const expDLBtn=document.createElement('button');expDLBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#eef4fb;color:var(--steel-d);font-weight:700;font-size:13px';expDLBtn.textContent='Telecharger sauvegarde locale';expDLBtn.onclick=()=>exportAllDownload();
+  const expLghtBtn=document.createElement('button');expLghtBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLghtBtn.textContent='Secours sans photos';expLghtBtn.onclick=()=>exportLight();
   const fileInput=document.createElement('input');fileInput.type='file';fileInput.accept='.txt,.json,text/plain';fileInput.style.display='none';fileInput.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
-  const impBtn=document.createElement('button');impBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impBtn.textContent='Importer une sauvegarde';impBtn.onclick=function(){fileInput.click();};
+  const impBtn=document.createElement('button');impBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impBtn.textContent='Restaurer une sauvegarde locale';impBtn.onclick=function(){fileInput.click();};
   saveBtnBox.append(expShareBtn,expDLBtn,expLghtBtn,fileInput,impBtn);
   let recs=[];try{recs=await idbAll();}catch(e){}
   const pick=(pfx,n)=>recs.filter(r=>String(r.id).indexOf(pfx)===0).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0)).slice(0,n);
@@ -3525,6 +3573,9 @@ async function fragArchiveMerged(sess){
     fragments:sess.agents.map(n=>{const fr=sess.fragments[n]||{};return {agent:n,status:fr.status||'pending',doneAt:fr.doneAt||null,savedAt:fr.savedAt||null,count:fragCount(fr)};}),
     sources:sources};
   const rec={id:st.id,date:st.date,agent:st.agent,savedAt:Date.now(),filled,bilan,detail,st:snap,frag};
+  rec._sig=localSig('inv',{date:rec.date,detail:rec.detail||null,st:rec.st&&rec.st.c?rec.st.c:null});
+  const dup=await findLocalDuplicate('inv',rec._sig,rec.id);
+  if(dup)return {rec:dup,filled};
   await idbPut(rec);
   return {rec,filled};
 }
@@ -3992,13 +4043,13 @@ async function renderQualite(){
   /* Actions */
   h+='<div class="q-actions">';
   if(!QS_SERVER_VIEW){
-    h+='<button class="q-save" onclick="qSave()">Enregistrer</button>';
     h+='<button class="q-save" onclick="qSubmitServer()">Soumettre au serveur</button>';
+    h+='<button class="q-save" onclick="qSave()">Enregistrer localement</button>';
   }
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
   if(!QS_SERVER_VIEW){
-    h+='<button class="q-json" onclick="qExportJSON()">Envoyer pour signature</button>';
-    h+='<button class="q-import-json" id="qPasteBtn">Coller une fiche reçue</button>';
+    h+='<button class="q-json" onclick="qExportJSON()">Secours fichier signature</button>';
+    h+='<button class="q-import-json" id="qPasteBtn">Coller fiche de secours</button>';
   }
   h+='<button class="q-new" onclick="qNew()">Nouvelle fiche</button>';
   h+='</div>';
@@ -4151,8 +4202,8 @@ async function qSave(){
   }catch(e){}
   if(duplicate){
     var di=duplicate.informations||{};
-    var msg='Une fiche qualite existe deja pour '+(di.refProduit||'ce produit')+' le '+frDate(di.dateProduction||duplicate.date||'')+(di.numeroLot?(' ('+di.numeroLot+')'):'')+'.\n\nOK = enregistrer quand meme une nouvelle fiche.\nAnnuler = revenir sans enregistrer.';
-    if(!confirm(msg))return;
+    toast('Fiche qualite deja enregistree : '+(di.refProduit||'produit')+' '+frDate(di.dateProduction||duplicate.date||''));
+    return;
   }
   var rec={
     id:recId,
@@ -4164,6 +4215,7 @@ async function qSave(){
     visas:clone(QS.visas),
     savedAt:Date.now()
   };
+  rec._sig=localSig('quality',{informations:rec.informations,matieresPremieres:rec.matieresPremieres,melanges:rec.melanges,visas:rec.visas});
   await idbPut(rec);
   QS.id=rec.id;
   toast(wasUpdate?'Fiche mise a jour':'Fiche enregistree');
