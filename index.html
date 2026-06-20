@@ -1733,6 +1733,46 @@ function lsGet(k,def){try{const v=localStorage.getItem(k);if(v!=null)return JSON
 function lsSet(k,v){MEM[k]=v;try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 function clone(o){return JSON.parse(JSON.stringify(o));}
 
+/* ---------- SERVEUR LOCAL SIPS ---------- */
+let SIPS_SERVER=lsGet('lep_server_cfg',{url:'',adminPin:''});
+function sipsServerUrl(){
+  const u=String((SIPS_SERVER&&SIPS_SERVER.url)||'').trim().replace(/\/+$/,'');
+  if(u)return u;
+  if(location.protocol==='http:'||location.protocol==='https:')return location.origin;
+  return 'http://localhost:3000';
+}
+function sipsActor(){
+  return {name:(typeof USR!=='undefined'&&USR.nom)||ST.agent||'',role:(typeof USR!=='undefined'&&USR.poste)||''};
+}
+async function sipsFetch(path,opt){
+  opt=opt||{};
+  const headers=Object.assign({'content-type':'application/json'},opt.headers||{});
+  const res=await fetch(sipsServerUrl()+path,Object.assign({},opt,{headers}));
+  let data=null;try{data=await res.json();}catch(e){}
+  if(!res.ok||!data||data.ok===false)throw new Error((data&&data.error)||('HTTP '+res.status));
+  return data;
+}
+async function sipsPing(){try{return {ok:true,data:await sipsFetch('/api/health')};}catch(e){return {ok:false,error:e.message};}}
+function sipsPending(){return lsGet('lep_server_pending',[]);}
+function sipsSetPending(rows){lsSet('lep_server_pending',rows||[]);}
+function sipsQueue(type,payload,note){
+  const rows=sipsPending();
+  rows.push({id:'pend_'+Date.now(),type,payload,author:sipsActor(),note:note||'',createdAt:new Date().toISOString()});
+  sipsSetPending(rows);
+}
+async function sipsSubmit(type,payload,note){
+  const body={type,payload,author:sipsActor(),note:note||''};
+  try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast('Soumis au serveur');return {ok:true,submission:r.submission};}
+  catch(e){sipsQueue(type,payload,note);toast('Serveur indisponible : ajoutÃ© en attente');return {ok:false,queued:true,error:e.message};}
+}
+async function sipsFlushPending(){
+  const rows=sipsPending();if(!rows.length){toast('Aucune soumission en attente');return {sent:0,failed:0};}
+  const keep=[];let sent=0;
+  for(const row of rows){try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}catch(e){keep.push(row);}}
+  sipsSetPending(keep);toast(sent+' envoyÃ©e(s), '+keep.length+' en attente');return {sent,failed:keep.length};
+}
+function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
+
 let META=lsGet('lep_meta',{});                 // {code:{des?,ub?,cat?}}
 let ADDED=lsGet('lep_added',[]);               // [{code,des,ub,cat}]
 let ETAT=lsGet('lep_etat',null); if(ETAT===null){ETAT={...SEED_ETAT};lsSet('lep_etat',ETAT);}
@@ -1791,7 +1831,7 @@ function updateAdminUI(){
 }
 
 /* ---------- ONGLETS ---------- */
-const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true]];
+const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true],['serveur','Serveur',true,true]];
 let TAB='accueil';
 function buildTabbar(){
   const tb=$('#tabbar');if(!tb)return;tb.innerHTML='';
@@ -1824,6 +1864,7 @@ async function switchTab(id){
   else if(id==='entree'){renderEntrees();}
   else if(id==='analyse'){renderAnalyse();}
   else if(id==='qualite'){renderQualite();}
+  else if(id==='serveur'){renderServeur();}
   else{$('#app').innerHTML='<div class="placeholder"><b>Module «\u00a0'+id+'\u00a0»</b><br>À construire à l\u2019étape suivante.</div>';}
   if(typeof renderFragBanner==='function')renderFragBanner();
   window.scrollTo(0,0);
@@ -2281,6 +2322,13 @@ async function movSave(kind,mf){
   const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
   try{await idbPut(rec);toast(c.saved);return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
+async function movSubmit(kind,mf){
+  if(!movHasInput(mf)){toast('Rien a soumettre');return false;}
+  if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
+  const payload={kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note||'',submittedAt:new Date().toISOString()};
+  await sipsSubmit(kind,payload,MOVCFG[kind].word+' '+(payload.date||''));
+  return true;
+}
 function movSectionHTML(mf,sec,title){
   const arts=movArts(sec);
   const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}>${esc(r.des)}</option>`).join('');
@@ -2305,7 +2353,7 @@ function renderMov(kind,focusSel){
     +movSectionHTML(mf,'mp','Matières premières / Échantillons')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="mvSave" class="b-go">Enregistrer dans l\u2019historique</button><button id="mvShare" class="b-sec">📤 Partager sur WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="mvSave" class="b-go">Enregistrer dans l\u2019historique</button><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvShare" class="b-sec">📤 Partager sur WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderMov(kind);
@@ -2319,6 +2367,7 @@ function renderMov(kind,focusSel){
   app.querySelectorAll('.mv-add').forEach(btn=>{const sec=btn.dataset.addsec;btn.onclick=()=>{mf[sec].push({a:'',q:''});renderMov(kind,sec+'-'+(mf[sec].length-1));};});
   photoArrayUI($('#mvPhotos'),mf.photos,re);
   $('#mvSave').onclick=async()=>{if(await movSave(kind,mf))loadMovHist(kind);};
+  $('#mvSubmit').onclick=()=>movSubmit(kind,mf);
   $('#mvShare').onclick=()=>movShare(kind,mf);
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
@@ -2340,6 +2389,45 @@ async function loadMovHist(kind){
 }
 function renderSorties(f){renderMov('sortie',f);}
 function renderEntrees(f){renderMov('entree',f);}
+
+/* ================= SERVEUR LOCAL ================= */
+function sipsTypeLabel(t){return ({quality:'Qualite',sortie:'Sortie',entree:'Entree',test:'Test'})[t]||t||'Soumission';}
+function sipsPayloadSummary(type,payload){
+  payload=payload||{};
+  if(type==='quality'){const i=payload.informations||{};return (i.numeroLot||'lot ?')+' - '+(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?');}
+  if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
+  return payload.title||payload.message||'';
+}
+function sipsSubmissionHTML(s){
+  const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
+  const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
+  const summary=sipsPayloadSummary(s.type,s.payload);
+  return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+(s.status==='submitted'?'<button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>':'')+'</div>';
+}
+async function renderServeur(){
+  const app=$('#app');const pending=sipsPending();
+  app.innerHTML='<div class="prod-wrap"><h2 class="prod-title">Serveur local SIPS</h2>'
+    +'<div class="pf-sec"><div class="pf-h">Connexion</div><div class="pf-id"><label>Adresse serveur<input id="srvUrl" placeholder="http://192.168.x.x:3000" value="'+esc((SIPS_SERVER&&SIPS_SERVER.url)||'')+'"></label><label>PIN serveur<input id="srvPin" type="password" value="'+esc((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')+'"></label></div>'
+    +'<div class="pf-actions"><button id="srvSave" class="b-sec">Enregistrer</button><button id="srvTest" class="b-go">Tester</button><button id="srvFlush" class="b-sec">Envoyer attente ('+pending.length+')</button></div><p id="srvStatus" class="ref-hint">URL active : '+esc(sipsServerUrl())+'</p></div>'
+    +'<div class="pf-sec"><div class="pf-h">Soumissions en attente de validation</div><div id="srvSubs">Chargement...</div></div>'
+    +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div></div>';
+  $('#srvSave').onclick=function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);toast('Configuration serveur enregistree');renderServeur();};
+  $('#srvTest').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);const r=await sipsPing();$('#srvStatus').textContent=r.ok?'Serveur connecte - '+r.data.time:'Hors ligne - '+r.error;};
+  $('#srvFlush').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsFlushPending();renderServeur();};
+  await sipsLoadServeur();
+}
+async function sipsLoadServeur(){
+  const subs=$('#srvSubs'),records=$('#srvRecords');
+  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>sipsDecide(id,b.dataset.act));});}
+  catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+'</p>';}
+  try{const data=await sipsFetch('/api/records',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">'+rows.length+' enregistrement(s) valide(s) dans la base centrale.</p>';}
+  catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
+}
+async function sipsDecide(id,act){
+  const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
+  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');renderServeur();}
+  catch(e){toast('Erreur serveur : '+e.message);}
+}
 
 /* ================= MODULE ANALYSES ================= */
 const FR_MOIS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
@@ -2522,12 +2610,18 @@ async function renderAccueil(){
     +'<button class="dash-b" data-go="analyse">📈 Analyses</button>';
   h+='</div></div>';
   h+='<div id="dashRecent" class="dash-card"><div class="dash-t">Dernières saisies</div><div class="dash-rec">Chargement…</div></div>';
+  h+='<div class="dash-card"><div class="dash-t">Serveur local</div><div id="srvDash" class="dash-rec">Verification...</div><div class="dash-btns" style="margin-top:8px"><button class="dash-b" id="srvDashTest">Tester</button><button class="dash-b" id="srvDashFlush">Synchroniser</button>'+(ADMIN?'<button class="dash-b" data-go="serveur">Validation</button>':'')+'</div></div>';
   h+='<div class="dash-card"><div class="dash-t">Sauvegardes & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
   h+='</div>';
   app.innerHTML=h;
   var bbS=$('#backupShare');if(bbS)bbS.onclick=function(){exportAll();};
   var bbD=$('#backupDL');if(bbD)bbD.onclick=function(){exportAllDownload();};
-  app.querySelectorAll('.dash-b').forEach(b=>{b.onclick=()=>switchTab(b.dataset.go);});
+  app.querySelectorAll('.dash-b').forEach(b=>{if(b.dataset.go)b.onclick=()=>switchTab(b.dataset.go);});
+  var srvDash=$('#srvDash');
+  async function updSrvDash(){var pend=sipsPending().length;var r=await sipsPing();if(srvDash)srvDash.innerHTML=(r.ok?'<span style="color:var(--green);font-weight:700">Connecte</span>':'<span style="color:var(--red);font-weight:700">Hors ligne</span>')+' - '+esc(sipsServerUrl())+' - '+pend+' en attente';}
+  var sdt=$('#srvDashTest');if(sdt)sdt.onclick=updSrvDash;
+  var sdf=$('#srvDashFlush');if(sdf)sdf.onclick=async()=>{await sipsFlushPending();updSrvDash();};
+  updSrvDash();
   const saveBtnBox=$('#saveBtnBox');
   const expShareBtn=document.createElement('button');expShareBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expShareBtn.textContent='Partager donnees';expShareBtn.onclick=()=>exportAll();
   const expDLBtn=document.createElement('button');expDLBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#eef4fb;color:var(--steel-d);font-weight:700;font-size:13px';expDLBtn.textContent='Telecharger donnees';expDLBtn.onclick=()=>exportAllDownload();
@@ -3814,6 +3908,7 @@ async function renderQualite(){
   /* Actions */
   h+='<div class="q-actions">';
   h+='<button class="q-save" onclick="qSave()">Enregistrer</button>';
+  h+='<button class="q-save" onclick="qSubmitServer()">Soumettre au serveur</button>';
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
   h+='<button class="q-json" onclick="qExportJSON()">Envoyer pour signature</button>';
   h+='<button class="q-import-json" id="qPasteBtn">Coller une fiche reçue</button>';
@@ -3981,6 +4076,22 @@ async function qSave(){
   QS.id=rec.id;
   toast(wasUpdate?'Fiche mise a jour':'Fiche enregistree');
   qLoadHist();
+}
+
+async function qSubmitServer(){
+  if(!QS.informations.refProduit){toast('Choisir un produit');return;}
+  if(!QS.informations.tailleBatch){toast('Choisir une taille de batch');return;}
+  if(!QS.visas.operateur.signature){toast('Signature operateur obligatoire');return;}
+  for(var i=0;i<QS.matieresPremieres.length;i++){
+    var mp=QS.matieresPremieres[i];
+    if(!mp.dateProd||!mp.dateExp){toast('Dates manquantes pour MP '+(i+1)+' ('+mp.designation+')');return;}
+    if(mp.dateExp<=mp.dateProd){toast('Date expiration doit etre strictement apres date production pour MP '+(i+1)+' ('+mp.designation+')');return;}
+  }
+  var bErr=qValidateBatches();
+  if(bErr){toast(bErr);return;}
+  qComputeTimes();
+  const payload={id:QS.id||'batch_draft_'+Date.now(),date:QS.informations.dateProduction||todayStr(),informations:clone(QS.informations),matieresPremieres:clone(QS.matieresPremieres),melanges:clone(QS.melanges),visas:clone(QS.visas),submittedAt:new Date().toISOString()};
+  await sipsSubmit('quality',payload,'Fiche qualite '+(QS.informations.numeroLot||''));
 }
 
 /* --- History --- */

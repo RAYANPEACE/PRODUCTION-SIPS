@@ -64,7 +64,10 @@ function sendJson(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store'
+    'cache-control': 'no-store',
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-headers': 'content-type,x-sips-admin-pin'
   });
   res.end(data);
 }
@@ -123,7 +126,19 @@ function publicSubmission(s) {
   };
 }
 
+function fullSubmission(s) {
+  return {
+    ...publicSubmission(s),
+    payload: s.payload,
+    decisionNote: s.decisionNote || ''
+  };
+}
+
 async function handleApi(req, res, url) {
+  if (req.method === 'OPTIONS') {
+    return sendJson(res, 204, { ok: true });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/health') {
     return sendJson(res, 200, {
       ok: true,
@@ -136,11 +151,22 @@ async function handleApi(req, res, url) {
     const db = await readDb();
     const status = url.searchParams.get('status');
     const type = url.searchParams.get('type');
+    const includePayload = url.searchParams.get('include') === 'payload';
+    if (includePayload && !requireAdmin(req, res)) return;
     let rows = db.submissions;
     if (status) rows = rows.filter(s => s.status === status);
     if (type) rows = rows.filter(s => s.type === type);
     rows = rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return sendJson(res, 200, { ok: true, submissions: rows.map(publicSubmission) });
+    return sendJson(res, 200, { ok: true, submissions: rows.map(includePayload ? fullSubmission : publicSubmission) });
+  }
+
+  const detail = url.pathname.match(/^\/api\/submissions\/([^/]+)$/);
+  if (req.method === 'GET' && detail) {
+    if (!requireAdmin(req, res)) return;
+    const db = await readDb();
+    const sub = db.submissions.find(s => s.id === detail[1]);
+    if (!sub) return sendJson(res, 404, { ok: false, error: 'Soumission introuvable' });
+    return sendJson(res, 200, { ok: true, submission: fullSubmission(sub) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/submissions') {
