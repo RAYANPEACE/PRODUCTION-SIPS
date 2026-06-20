@@ -3,4 +3,5 @@ server/data/*.tmp
 server/data/backups/
 server/data/.jwt-secret
 server/certs/
+server/*.log
 !server/data/.gitkeep
