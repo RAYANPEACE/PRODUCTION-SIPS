@@ -389,6 +389,29 @@ function srvFragContributionPayload(){
   });
   return {agent:ST.agent||'',sessionId:ST.serverFragmentSessionId||'',baseInventoryId:ST.serverFragmentBaseId||null,offlineStartedAt:ST.offlineFragmentStartedAt||null,freshCodes:codes,counts:counts,cfg:cfg};
 }
+function srvFragPayloadRows(payload){
+  return (payload.freshCodes||[]).map(code=>{
+    const r=REFS.find(x=>x.code===code);
+    return {code:code,des:r?r.des:'Article',q:srvFragEntryTotal(code,{entry:payload.counts[code],cfg:payload.cfg&&payload.cfg[code]})};
+  });
+}
+function srvFragPreviewMine(){
+  const payload=srvFragContributionPayload();
+  const rows=srvFragPayloadRows(payload);
+  const mode=payload.sessionId?'Base session serveur':(payload.offlineStartedAt?'Part demarree hors serveur':'Comptage courant non lie a une session');
+  const dlg=document.createElement('dialog');
+  dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:94vw;width:620px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+  const body=rows.length?rows.map(r=>'<div class="srv-prev-row"><b>'+esc(r.code)+'</b><span>'+esc(r.des)+'</span><small>'+esc(r.q)+'</small></div>').join('')
+    :'<p style="color:#6a7280;font-size:13px;margin:0">Aucun article modifie depuis le demarrage de cette part.</p>';
+  dlg.innerHTML='<div class="dlg-h"><b>Apercu de ma part</b><button data-close>×</button></div><div class="dlg-b">'
+    +'<div class="srv-prev-meta"><b>'+esc(mode)+'</b><span>'+rows.length+' article(s) seront envoyes</span></div>'
+    +'<div class="srv-prev-list">'+body+'</div>'
+    +'<div class="dlg-actions"><button class="b-go" data-close2>Fermer</button></div></div>';
+  document.body.appendChild(dlg);dlg.showModal();
+  const close=()=>{dlg.close();dlg.remove();};
+  dlg.querySelector('[data-close]').onclick=close;
+  dlg.querySelector('[data-close2]').onclick=close;
+}
 async function srvFragCreateSession(){
   const date=($('#srvFragDate')&&$('#srvFragDate').value)||todayStr();
   const title=($('#srvFragTitle')&&$('#srvFragTitle').value.trim())||('Inventaire '+frDate(date));
@@ -526,6 +549,7 @@ if($('#srvFragCreate'))$('#srvFragCreate').onclick=srvFragCreateSession;
 if($('#srvFragLoad'))$('#srvFragLoad').onclick=srvFragLoadBase;
 if($('#srvFragOffline'))$('#srvFragOffline').onclick=srvFragStartOfflinePart;
 if($('#srvFragReload'))$('#srvFragReload').onclick=srvFragLoadSessions;
+if($('#srvFragPreview'))$('#srvFragPreview').onclick=srvFragPreviewMine;
 if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSendMine;
 
 async function fragMergeFiles(){

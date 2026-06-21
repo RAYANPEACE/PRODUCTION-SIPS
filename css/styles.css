@@ -224,6 +224,13 @@
   .srv-conf-choice span{display:flex;justify-content:space-between;gap:10px;align-items:center;width:100%;min-width:0}
   .srv-conf-choice b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .srv-conf-choice small{font:700 12px ui-monospace,monospace;color:var(--steel-d);white-space:nowrap}
+  .srv-prev-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;background:#eef8f1;border:1px solid #c5e4d2;border-radius:10px;padding:9px 10px;margin-bottom:9px;font-size:12.5px}
+  .srv-prev-meta span{font-weight:800;color:var(--green);white-space:nowrap}
+  .srv-prev-list{display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow:auto}
+  .srv-prev-row{display:grid;grid-template-columns:74px 1fr auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:9px;background:#fff;padding:8px;font-size:12.5px}
+  .srv-prev-row b{font:800 12px ui-monospace,monospace;color:var(--steel-d)}
+  .srv-prev-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srv-prev-row small{font:800 12px ui-monospace,monospace;color:var(--green);white-space:nowrap}
   .etat-date{border:1px solid #d4e3f3;background:#f6f9fd;border-radius:10px;padding:10px;margin:0 0 12px}
   .etat-date label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
   .etat-date input{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px}
