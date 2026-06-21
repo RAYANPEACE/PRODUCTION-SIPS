@@ -48,7 +48,17 @@ function sipsActor(){
 async function sipsFetch(path,opt){
   opt=opt||{};
   const headers=Object.assign({'content-type':'application/json'},authHeader(),opt.headers||{});
-  const res=await fetch(sipsServerUrl()+path,Object.assign({cache:'no-store'},opt,{headers}));
+  const fetchOpt=Object.assign({cache:'no-store'},opt,{headers});
+  delete fetchOpt.timeoutMs;
+  let timer=null;
+  if(opt.timeoutMs&&typeof AbortController!=='undefined'){
+    const ctl=new AbortController();
+    fetchOpt.signal=ctl.signal;
+    timer=setTimeout(()=>ctl.abort(),opt.timeoutMs);
+  }
+  let res;
+  try{res=await fetch(sipsServerUrl()+path,fetchOpt);}
+  finally{if(timer)clearTimeout(timer);}
   let data=null;try{data=await res.json();}catch(e){}
   if(!res.ok||!data||data.ok===false){
     const err=new Error((data&&data.error)||('HTTP '+res.status));

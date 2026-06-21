@@ -106,12 +106,13 @@ function showSetupDialog(){
   return authDialog({title:'Première configuration',intro:'Aucun compte n’existe encore. Créez le compte administrateur (chef d’usine).',withNom:true,endpoint:'/api/auth/setup',okLabel:'Créer l’administrateur',allowSkip:false});
 }
 function authBlockedOfflineDialog(){
-  return new Promise(function(){
+  return new Promise(function(resolve){
     var dlg=document.createElement('dialog');
     dlg.style.cssText='border:none;border-radius:14px;padding:0;max-width:92vw;width:380px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
-    dlg.innerHTML='<div class="dlg-h"><b>Connexion requise</b></div><div class="dlg-b"><p style="margin:0 0 12px;font-size:13px;color:#5a6472;line-height:1.5">Le serveur est indisponible et aucun compte n est deja connecte sur cet appareil. Connecte le serveur, puis recharge l application.</p><button class="b-go" id="authReload" style="width:100%;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Recharger</button></div>';
+    dlg.innerHTML='<div class="dlg-h"><b>Serveur indisponible</b></div><div class="dlg-b"><p style="margin:0 0 12px;font-size:13px;color:#5a6472;line-height:1.5">Le serveur ne repond pas. Tu peux continuer en mode local hors serveur : comptage, historique local, fragments de secours et pre-comptage restent utilisables. Les actions officielles serveur attendront que le serveur revienne.</p><div class="dlg-actions" style="gap:8px"><button class="b-sec" id="authLocal" style="flex:1;padding:12px;border-radius:9px;border:1px solid var(--line);font-weight:700;font-size:14px;background:#fff">Continuer local</button><button class="b-go" id="authReload" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">Recharger</button></div></div>';
     document.body.appendChild(dlg);dlg.showModal();
     dlg.addEventListener('cancel',function(e){e.preventDefault();});
+    dlg.querySelector('#authLocal').onclick=function(){dlg.close();dlg.remove();resolve(false);};
     dlg.querySelector('#authReload').onclick=function(){location.reload();};
   });
 }
@@ -167,11 +168,11 @@ function authConfirmPassword(label){
 async function authBootstrap(){
   applySession();
   var setupInfo=null;
-  try{setupInfo=await sipsFetch('/api/auth/setup');}catch(e){setupInfo=null;}
+  try{setupInfo=await sipsFetch('/api/auth/setup',{timeoutMs:2500});}catch(e){setupInfo=null;}
   if(!setupInfo){if(SESSION_TOKEN&&SESSION)return;await authBlockedOfflineDialog();return;}
   if(setupInfo.needsSetup){await showSetupDialog();return;}
   if(SESSION_TOKEN){
-    try{var me=await sipsFetch('/api/auth/me');SESSION=me.user;authStore();applySession();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
+    try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
     catch(e){authClear();}
   }
   await showLoginDialog(false);
