@@ -348,20 +348,30 @@ function sipsRecordHTML(r){
   const extra=cancelled&&r.cancelledAt?(' - annulé le '+new Date(r.cancelledAt).toLocaleString('fr-FR')):'';
   return '<div class="hist-item'+(cancelled?'':' locked')+'" data-rec="'+esc(r.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(r.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+date+extra+'</span></div>'+(cancelled?'':'<button class="del" data-act="cancel">Annuler</button>')+'</div>';
 }
+function sipsPendingStats(rows){
+  rows=rows||sipsPending();
+  const blocked=rows.filter(r=>r&&r.lastStatus).length;
+  return {total:rows.length,blocked:blocked,waiting:rows.length-blocked};
+}
 function sipsPendingHTML(){
   const rows=sipsPending();
   if(!rows.length)return '<p style="color:#6a7280;font-size:13px;margin:0">Aucune donnee locale en attente serveur.</p>';
   return rows.map((r,i)=>{
     const d=r.createdAt?new Date(r.createdAt).toLocaleString('fr-FR'):'date inconnue';
-    return '<div class="sync-row" data-pend="'+i+'"><div class="sync-main"><b>'+esc(sipsTypeLabel(r.type))+'</b><span>'+esc(sipsPayloadSummary(r.type,r.payload))+'</span><small>'+esc(d)+' - '+esc((r.author&&r.author.name)||'')+'</small></div><button class="del" data-pdel="'+i+'">Retirer</button></div>';
+    const tried=r.lastTriedAt?(' - dernier essai '+new Date(r.lastTriedAt).toLocaleString('fr-FR')):'';
+    const state=r.lastStatus?('Bloque serveur '+r.lastStatus):'Attente connexion';
+    const cls=r.lastStatus?' blocked':' waiting';
+    const err=r.lastError?'<small class="sync-error">'+esc(r.lastError+tried)+'</small>':'';
+    return '<div class="sync-row'+cls+'" data-pend="'+i+'"><div class="sync-main"><b>'+esc(sipsTypeLabel(r.type))+' <em>'+esc(state)+'</em></b><span>'+esc(sipsPayloadSummary(r.type,r.payload))+'</span><small>'+esc(d)+' - '+esc((r.author&&r.author.name)||'')+'</small>'+err+'</div><button class="del" data-pdel="'+i+'">Retirer</button></div>';
   }).join('');
 }
 function renderSyncBox(statusText,statusOk){
   const rows=sipsPending();
+  const stats=sipsPendingStats(rows);
   const cls=statusOk===true?' ok':(statusOk===false?' ko':'');
   return '<div class="pf-sec"><div class="pf-h">Synchronisation serveur</div>'
-    +'<div class="sync-state'+cls+'"><b>'+(statusText||'Etat non teste')+'</b><span>'+rows.length+' element(s) en attente locale</span></div>'
-    +'<p class="ref-hint" style="margin:8px 0">Quand le serveur redevient joignable, l app essaie d envoyer cette file a la reouverture. Tu peux aussi forcer avec le bouton ci-dessous.</p>'
+    +'<div class="sync-state'+cls+'"><b>'+(statusText||'Etat non teste')+'</b><span>'+stats.waiting+' attente / '+stats.blocked+' bloquee(s)</span></div>'
+    +'<p class="ref-hint" style="margin:8px 0">Quand le serveur redevient joignable, l app essaie d envoyer cette file a la reouverture. Si une ligne est bloquee, le serveur a repondu mais a refuse la donnee : il faut lire la raison affichee.</p>'
     +'<div class="pf-actions"><button id="srvSyncTest" class="b-sec">Tester connexion</button><button id="srvSyncFlush" class="b-go">Envoyer attente ('+rows.length+')</button></div>'
     +'<div id="srvPendingList">'+sipsPendingHTML()+'</div></div>';
 }

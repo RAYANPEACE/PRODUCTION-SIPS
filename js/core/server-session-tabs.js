@@ -70,6 +70,14 @@ async function sipsFetch(path,opt){
 async function sipsPing(){try{return {ok:true,data:await sipsFetch('/api/health')};}catch(e){return {ok:false,error:e.message};}}
 function sipsPending(){return lsGet('lep_server_pending',[]);}
 function sipsSetPending(rows){lsSet('lep_server_pending',rows||[]);}
+function sipsPendingFailure(row,hash,e){
+  return Object.assign({},row,{
+    hash:hash,
+    lastError:(e&&e.message)||'Erreur inconnue',
+    lastStatus:(e&&e.status)||null,
+    lastTriedAt:new Date().toISOString()
+  });
+}
 function sipsQualityLot(payload){return String(payload&&payload.informations&&payload.informations.numeroLot||'').trim().toUpperCase();}
 function sipsQueue(type,payload,note){
   const rows=sipsPending();
@@ -106,9 +114,13 @@ async function sipsFlushPending(){
       if(lot)seenQualityLot[lot]=1;
     }
     try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}
-    catch(e){keep.push(Object.assign({},row,{hash:hash}));}
+    catch(e){keep.push(sipsPendingFailure(row,hash,e));}
   }
-  sipsSetPending(keep);toast(sent+' envoyÃ©e(s), '+keep.length+' en attente');return {sent,failed:keep.length};
+  sipsSetPending(keep);
+  const blocked=keep.filter(r=>r&&r.lastStatus).length;
+  const waiting=keep.length-blocked;
+  toast(sent+' envoyee(s), '+waiting+' en attente connexion, '+blocked+' bloquee(s)');
+  return {sent,failed:keep.length,blocked,waiting};
 }
 // Met a jour la carte "Serveur local" de l'accueil avec l'etat REEL (re-teste a chaque appel).
 async function updSrvDash(){
