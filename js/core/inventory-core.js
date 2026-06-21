@@ -993,12 +993,12 @@ bindClick('#resumeValidated',async()=>{
   saveCounts();render();window.scrollTo(0,0);
   toast('Repris du dernier inventaire validé');
 });
-$('#export').onclick=()=>{
+bindClick('#export',()=>{
   const nc=nonComptes();
   if(nc.length){const ul=$('#ncList');ul.innerHTML='';nc.forEach(r=>{const li=document.createElement('li');li.textContent=r.des;ul.append(li);});$('#warn').showModal();}
   else showSummary();
-};
-$('#confirmExport').onclick=()=>{$('#warn').close();showSummary();};
+});
+bindClick('#confirmExport',()=>{$('#warn').close();showSummary();});
 function showSummary(){$('#out').innerHTML=buildSummaryHTML();$('#dlg').showModal();}
 function inventoryServerPayload(){
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
@@ -1026,10 +1026,10 @@ async function shareJSON(){
   }catch(err){if(err&&err.name==='AbortError')return;}
   download(name,content,'text/plain');toast('Partage indisponible ici \u2014 fichier enregistré');
 }
-$('#submitInvBtn').onclick=submitInventoryServer;
-$('#shareBtn').onclick=shareJSON;
+bindClick('#submitInvBtn',submitInventoryServer);
+bindClick('#shareBtn',shareJSON);
 $('#dlBtn').onclick=()=>{archiveCurrent();download(exportName(),buildJSON(),'text/plain');toast('Fichier enregistré');};
-$('#validBtn').onclick=validateCurrent;
+bindClick('#validBtn',validateCurrent);
 /* Valide et verrouille l'inventaire EN COURS (l'archive + locked), puis ouvre un comptage vierge */
 async function validateCurrent(){
   if(RO){toast('Mode consultation — non modifiable');return;}
