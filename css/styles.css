@@ -213,7 +213,14 @@
   .frag-modes button{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:9px;padding:10px 8px;font-size:13px;font-weight:700;color:var(--mute)}
   .frag-modes button.active{border-color:var(--green);background:#eef8f1;color:var(--green)}
   .frag-step{border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:10px;background:#fcfdfc}
+  .frag-step.frag-official{border-color:#c5e4d2;background:#f4fbf6}
   .frag-step .fst-h{font-size:13px;font-weight:700;margin-bottom:8px}
+  .frag-local-rescue{border:1px dashed #cfd8d2;border-radius:10px;background:#fff;padding:0;margin-top:10px}
+  .frag-local-rescue summary{display:flex;justify-content:space-between;gap:10px;align-items:center;cursor:pointer;padding:11px;font-weight:800;color:var(--steel-d);list-style:none}
+  .frag-local-rescue summary::-webkit-details-marker{display:none}
+  .frag-local-rescue summary small{font-weight:600;color:var(--mute);font-size:11.5px;text-align:right;line-height:1.3}
+  .frag-local-rescue[open]{padding:0 10px 10px}
+  .frag-local-rescue[open] summary{padding-left:1px;padding-right:1px;border-bottom:1px solid var(--line);margin-bottom:8px}
   .fst-btn{width:100%;padding:11px;border-radius:9px;border:none;font-weight:700;font-size:14px}
   .fst-btn.b-prim{background:var(--steel);color:#fff}.fst-btn.b-sec{background:#eef0ee;color:var(--ink)}.fst-btn.b-go{background:var(--green);color:#fff}
   .srv-conf{border:1px solid var(--line);border-radius:10px;background:#fff;margin:8px 0;padding:10px}

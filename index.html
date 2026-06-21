@@ -87,43 +87,44 @@
 </dialog>
 
 <dialog id="fragDlg">
-  <div class="dlg-h"><b>Comptage fragmenté</b><button onclick="fragDlg.close()">×</button></div>
+  <div class="dlg-h"><b>Comptage fragmente</b><button onclick="fragDlg.close()">x</button></div>
   <div class="dlg-b">
-    <div class="frag-step">
-      <div class="fst-h">Serveur central</div>
-      <p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Session officielle avec base commune serveur. Chaque téléphone envoie seulement les articles réellement recomptés.</p>
+    <div class="frag-step frag-official">
+      <div class="fst-h">Flux officiel serveur</div>
+      <p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Session officielle avec base commune serveur. Chaque telephone envoie seulement les articles reellement recomptes.</p>
       <div class="pf-id">
         <label>Date session<input type="date" id="srvFragDate"></label>
-        <label>Libellé<input id="srvFragTitle" placeholder="ex. Inventaire juin"></label>
+        <label>Libelle<input id="srvFragTitle" placeholder="ex. Inventaire juin"></label>
       </div>
       <div class="pf-actions">
-        <button id="srvFragCreate" class="b-go">Créer session serveur</button>
+        <button id="srvFragCreate" class="b-go">Creer session serveur</button>
         <button id="srvFragLoad" class="b-sec">Charger base session</button>
-        <button id="srvFragOffline" class="b-sec">Démarrer part hors serveur</button>
+        <button id="srvFragOffline" class="b-sec">Demarrer part hors serveur</button>
         <button id="srvFragReload" class="b-sec">Actualiser</button>
-        <button id="srvFragPreview" class="b-sec">AperÃ§u ma part</button>
+        <button id="srvFragPreview" class="b-sec">Apercu ma part</button>
         <button id="srvFragSend" class="b-sec">Envoyer ma part</button>
       </div>
       <div id="srvFragList" style="margin-top:8px"></div>
     </div>
-    <div id="fragModeFiles">
-      <p style="margin:0 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Chaque compteur compte sa partie sur <b>son</b> téléphone, puis exporte sa part et te l'envoie (WhatsApp, mail…). Toi, tu ajoutes toutes les parts reçues et l'app fusionne.</p>
+    <details id="fragModeFiles" class="frag-local-rescue">
+      <summary><span>Secours local fichiers</span><small>Ancien flux export/import, a utiliser seulement si le serveur n'est pas disponible.</small></summary>
+      <p style="margin:10px 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Chaque compteur compte sa partie sur son telephone, puis exporte sa part et te l'envoie. Toi, tu ajoutes toutes les parts recues et l'app fusionne localement.</p>
       <div class="frag-step">
-        <div class="fst-h">① Toi : envoyer ta propre part</div>
-        <button id="fragExportMine" class="fst-btn b-prim">📤 Exporter mon comptage (à envoyer)</button>
+        <div class="fst-h">1. Toi : envoyer ta propre part de secours</div>
+        <button id="fragExportMine" class="fst-btn b-prim">Exporter ma part secours local</button>
       </div>
       <div class="frag-step">
-        <div class="fst-h">② Ajouter les parts reçues des autres</div>
-        <button id="fragImportFiles" class="fst-btn b-sec">📥 Ajouter un fichier reçu</button>
+        <div class="fst-h">2. Ajouter les parts recues des autres</div>
+        <button id="fragImportFiles" class="fst-btn b-sec">Ajouter un fichier recu</button>
         <input id="fragFileIn" type="file" accept=".txt,.json,text/plain" multiple style="display:none">
         <div id="fragFileList" style="margin-top:8px"></div>
       </div>
       <div class="frag-step">
-        <div class="fst-h">③ Fusionner</div>
-        <input id="fragMergeTitle" placeholder="Libellé (facultatif) — ex. Inventaire juin" autocomplete="off" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;margin-bottom:8px">
-        <button id="fragMergeFiles" class="fst-btn b-go" disabled style="opacity:.5">⚙ Fusionner & archiver</button>
+        <div class="fst-h">3. Fusionner localement</div>
+        <input id="fragMergeTitle" placeholder="Libelle (facultatif) - ex. Inventaire juin" autocomplete="off" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;margin-bottom:8px">
+        <button id="fragMergeFiles" class="fst-btn b-go" disabled style="opacity:.5">Fusionner secours local & archiver</button>
       </div>
-    </div>
+    </details>
   </div>
 </dialog>
 

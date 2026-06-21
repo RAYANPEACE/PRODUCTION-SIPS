@@ -178,6 +178,7 @@ function fragAgentRow(val){
 }
 function openFragDlg(){
   FRAGFILES=[];$('#fragMergeTitle').value='';
+  const rescue=$('#fragModeFiles');if(rescue)rescue.open=false;
   const d=$('#srvFragDate');if(d&&!d.value)d.value=todayStr();
   fragRenderFileList();srvFragLoadSessions();
   $('#fragDlg').showModal();
@@ -288,7 +289,7 @@ function fragRenderFileList(){
     const del=document.createElement('button');del.className='del';del.textContent='Retirer';del.onclick=()=>{FRAGFILES.splice(i,1);fragRenderFileList();};
     acts.append(del);el.append(acts);wrap.append(el);
   });
-  const mb=$('#fragMergeFiles');mb.disabled=false;mb.style.opacity=1;mb.textContent='⚙ Fusionner '+FRAGFILES.length+' part'+(FRAGFILES.length>1?'s':'')+' & archiver';
+  const mb=$('#fragMergeFiles');mb.disabled=false;mb.style.opacity=1;mb.textContent='Fusionner '+FRAGFILES.length+' part'+(FRAGFILES.length>1?'s':'')+' secours & archiver';
 }
 /* ====== MODE SERVEUR : session officielle base + freshCodes ====== */
 let SRV_FRAG_SESSIONS=[];
