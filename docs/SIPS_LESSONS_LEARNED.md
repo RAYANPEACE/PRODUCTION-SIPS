@@ -31,10 +31,12 @@ Probleme rencontre :
 - les handlers etaient attaches en chaine avec `$('#id').onclick = ...` ;
 - si un element HTML disparaissait ou changeait, une erreur JS pouvait arreter le reste des attaches ;
 - symptome : un bouton marche, les boutons suivants semblent morts.
+- autre piege rencontre : `inventory-core.js` etait charge avant `fragments.js`, donc `bindClick('#fragBtn', openFragDlg)` reference immediatement une fonction pas encore definie. `Historique` marchait car attache avant, puis tout ce qui suivait etait bloque.
 
 Regle :
 
 - utiliser des helpers defensifs pour les boutons optionnels ou les dialogues qui evoluent.
+- quand une fonction vient d'un script charge plus tard, ne pas la passer directement au moment de l'attache ; utiliser une fonction wrapper.
 
 Pattern :
 
@@ -47,6 +49,9 @@ function bindChange(sel, fn) {
   const el = $(sel);
   if (el) el.onchange = fn;
 }
+
+// Fonction definie dans un script charge plus tard :
+bindClick('#fragBtn', () => openFragDlg());
 ```
 
 ## 3. Ne jamais fusionner un snapshot complet comme fragment
