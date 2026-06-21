@@ -348,11 +348,29 @@ function sipsRecordHTML(r){
   const extra=cancelled&&r.cancelledAt?(' - annulé le '+new Date(r.cancelledAt).toLocaleString('fr-FR')):'';
   return '<div class="hist-item'+(cancelled?'':' locked')+'" data-rec="'+esc(r.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(r.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+date+extra+'</span></div>'+(cancelled?'':'<button class="del" data-act="cancel">Annuler</button>')+'</div>';
 }
+function sipsPendingHTML(){
+  const rows=sipsPending();
+  if(!rows.length)return '<p style="color:#6a7280;font-size:13px;margin:0">Aucune donnee locale en attente serveur.</p>';
+  return rows.map((r,i)=>{
+    const d=r.createdAt?new Date(r.createdAt).toLocaleString('fr-FR'):'date inconnue';
+    return '<div class="sync-row" data-pend="'+i+'"><div class="sync-main"><b>'+esc(sipsTypeLabel(r.type))+'</b><span>'+esc(sipsPayloadSummary(r.type,r.payload))+'</span><small>'+esc(d)+' - '+esc((r.author&&r.author.name)||'')+'</small></div><button class="del" data-pdel="'+i+'">Retirer</button></div>';
+  }).join('');
+}
+function renderSyncBox(statusText,statusOk){
+  const rows=sipsPending();
+  const cls=statusOk===true?' ok':(statusOk===false?' ko':'');
+  return '<div class="pf-sec"><div class="pf-h">Synchronisation serveur</div>'
+    +'<div class="sync-state'+cls+'"><b>'+(statusText||'Etat non teste')+'</b><span>'+rows.length+' element(s) en attente locale</span></div>'
+    +'<p class="ref-hint" style="margin:8px 0">Quand le serveur redevient joignable, l app essaie d envoyer cette file a la reouverture. Tu peux aussi forcer avec le bouton ci-dessous.</p>'
+    +'<div class="pf-actions"><button id="srvSyncTest" class="b-sec">Tester connexion</button><button id="srvSyncFlush" class="b-go">Envoyer attente ('+rows.length+')</button></div>'
+    +'<div id="srvPendingList">'+sipsPendingHTML()+'</div></div>';
+}
 async function renderServeur(){
   const app=$('#app');const pending=sipsPending();
   app.innerHTML='<div class="prod-wrap"><h2 class="prod-title">Serveur local SIPS</h2>'
     +'<div class="pf-sec"><div class="pf-h">Connexion</div><div class="pf-id"><label>Adresse serveur<input id="srvUrl" placeholder="http://192.168.x.x:3000" value="'+esc((SIPS_SERVER&&SIPS_SERVER.url)||'')+'"></label><label>PIN serveur<input id="srvPin" type="password" value="'+esc((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')+'"></label></div>'
     +'<div class="pf-actions"><button id="srvSave" class="b-sec">Enregistrer</button><button id="srvTest" class="b-go">Tester</button><button id="srvRefresh" class="b-sec">Actualiser liste</button><button id="srvFlush" class="b-sec">Envoyer attente ('+pending.length+')</button><button id="srvBackup" class="b-sec">Sauvegarde serveur</button></div><p id="srvStatus" class="ref-hint">URL active : '+esc(sipsServerUrl())+'</p></div>'
+    +'<div id="srvSyncBox">'+renderSyncBox('Etat non teste',null)+'</div>'
     +'<div class="pf-sec"><div class="pf-h">Utilisateurs</div><div class="pf-actions"><button id="srvUserNew" class="b-go">+ Nouvel utilisateur</button><button id="srvUserReload" class="b-sec">Actualiser utilisateurs</button></div><div id="srvUsers">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Soumissions en attente de validation</div><div id="srvSubs">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div></div>';
@@ -361,10 +379,29 @@ async function renderServeur(){
   $('#srvRefresh').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsLoadServeur();toast('Liste serveur actualisee');};
   $('#srvFlush').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsFlushPending();renderServeur();};
   $('#srvBackup').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsCreateBackup();};
+  bindSyncBox();
   $('#srvUserNew').onclick=function(){sipsUserDialog(null,sipsUserRoles||[]);};
   $('#srvUserReload').onclick=function(){sipsLoadUsers();};
   await sipsLoadServeur();
   await sipsLoadUsers();
+}
+function bindSyncBox(){
+  const tst=$('#srvSyncTest');if(tst)tst.onclick=async function(){
+    SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);
+    const r=await sipsPing();
+    const box=$('#srvSyncBox');if(box){box.innerHTML=renderSyncBox(r.ok?'Serveur connecte':'Serveur hors ligne : '+r.error,!!r.ok);bindSyncBox();}
+  };
+  const fl=$('#srvSyncFlush');if(fl)fl.onclick=async function(){
+    SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);
+    await sipsFlushPending();renderServeur();
+  };
+  document.querySelectorAll('[data-pdel]').forEach(b=>b.onclick=function(){
+    const i=Number(b.dataset.pdel),rows=sipsPending();
+    if(!rows[i])return;
+    if(!confirm('Retirer cet element de la file locale ?\n\nIl ne sera pas envoye au serveur.'))return;
+    rows.splice(i,1);sipsSetPending(rows);
+    const box=$('#srvSyncBox');if(box){box.innerHTML=renderSyncBox('Element retire',null);bindSyncBox();}
+  });
 }
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
