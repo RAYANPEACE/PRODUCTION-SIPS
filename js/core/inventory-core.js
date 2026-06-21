@@ -952,25 +952,27 @@ document.addEventListener('focusin',e=>{const t=e.target;if(!t)return;
   if(t.tagName==='INPUT'&&t.type!=='date'){try{t.select();}catch(_){}}
   if(t.tagName==='INPUT'||t.tagName==='SELECT'){
   setTimeout(()=>{try{t.scrollIntoView({block:'center',behavior:'smooth'});}catch(_){}},250);}});
-$('#histBtn').onclick=openHistory;
-$('#roClose').onclick=closeArchive;
-$('#fragBtn').onclick=openFragDlg;
-$('#fragExportMine').onclick=shareFragment;
-$('#fragImportFiles').onclick=()=>$('#fragFileIn').click();
-$('#fragFileIn').onchange=e=>{const fs=[...e.target.files];fs.forEach(f=>{const rd=new FileReader();rd.onload=()=>fragAddFile(rd.result);rd.readAsText(f);});e.target.value='';};
-$('#fragMergeFiles').onclick=fragMergeFiles;
-$('#newInv').onclick=async()=>{
+function bindClick(sel,fn){const el=$(sel);if(el)el.onclick=fn;}
+function bindChange(sel,fn){const el=$(sel);if(el)el.onchange=fn;}
+bindClick('#histBtn',openHistory);
+bindClick('#roClose',closeArchive);
+bindClick('#fragBtn',openFragDlg);
+bindClick('#fragExportMine',shareFragment);
+bindClick('#fragImportFiles',()=>{const f=$('#fragFileIn');if(f)f.click();});
+bindChange('#fragFileIn',e=>{const fs=[...e.target.files];fs.forEach(f=>{const rd=new FileReader();rd.onload=()=>fragAddFile(rd.result);rd.readAsText(f);});e.target.value='';});
+bindClick('#fragMergeFiles',fragMergeFiles);
+bindClick('#newInv',async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
   if(!keep){REFS.forEach(r=>ST.c[r.code]=blankEntry(r));ST.agent=(typeof USR!=='undefined'&&USR.nom)||'';}
   ST.id='inv_'+Date.now();ST.sessionStart=Date.now();   // nouvelle session de comptage
   ST.date=new Date().toISOString().slice(0,10);$('#date').value=ST.date;$('#agent').value=ST.agent;
   saveCounts();render();toast(keep?'Inventaire archivé · base conservée':'Inventaire archivé · comptages vidés');
-};
+});
 /* Repartir du DERNIER inventaire validé sans passer par l'Historique :
    copie ses chiffres dans un comptage modifiable daté d'aujourd'hui,
    l'inventaire validé d'origine reste intact et verrouillé. */
-$('#resumeValidated').onclick=async()=>{
+bindClick('#resumeValidated',async()=>{
   if(RO){toast('Mode consultation — non modifiable');return;}
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   let all=[];try{all=await idbAll();}catch(e){}
@@ -990,7 +992,7 @@ $('#resumeValidated').onclick=async()=>{
   $('#agent').value=ST.agent||'';$('#date').value=ST.date;
   saveCounts();render();window.scrollTo(0,0);
   toast('Repris du dernier inventaire validé');
-};
+});
 $('#export').onclick=()=>{
   const nc=nonComptes();
   if(nc.length){const ul=$('#ncList');ul.innerHTML='';nc.forEach(r=>{const li=document.createElement('li');li.textContent=r.des;ul.append(li);});$('#warn').showModal();}

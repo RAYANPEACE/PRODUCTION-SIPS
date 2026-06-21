@@ -1,6 +1,6 @@
 # SIPS - Relais developpement serveur local
 
-Derniere mise a jour : 2026-06-20
+Derniere mise a jour : 2026-06-21
 
 Ce document sert de relais entre Codex, Claude Code et tout autre agent. Il decrit l'etat actuel, les choix d'architecture, les commandes, les tests deja faits et les prochaines taches.
 
@@ -10,7 +10,8 @@ Avant de reprendre le projet, lire dans cet ordre :
 
 1. `CLAUDE.md` pour les regles de travail et les pieges du fichier `index.html`.
 2. `docs/SIPS_LOCAL_SERVER_HANDOFF.md` pour l'etat du serveur local et le plan courant.
-3. `docs/code-review-2026-06-19.md` pour les 5 bugs identifies par revue high effort.
+3. `docs/SIPS_LESSONS_LEARNED.md` pour les pieges rencontres et les regles a reutiliser.
+4. `docs/code-review-2026-06-19.md` pour les 5 bugs identifies par revue high effort.
 
 Apres chaque intervention, l'agent doit mettre a jour ce document :
 
@@ -176,6 +177,7 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 - 2026-06-20 : **Phase 7 - chargement guide de base session.** Le dialogue `Comptage fragmente` a maintenant `Charger base session` : le telephone archive le comptage courant, charge `baseSnapshot` de la session serveur, remet `sessionStart` a maintenant et efface les timestamps herites pour que seuls les articles modifies ensuite deviennent `freshCodes`. La part envoyee porte `sessionId/baseInventoryId`; le client avertit si la session selectionnee ne correspond pas, et le serveur refuse une contribution dont `baseInventoryId` ne correspond pas a la session. Cache SW v98. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-20 : **Phase 7 - pre-comptage local hors serveur.** Ajout du bouton `Demarrer part hors serveur` dans `Comptage fragmente`. Il conserve les chiffres visibles comme base locale, efface les timestamps herites, remet `sessionStart` a maintenant, et marque la part `offlineFragmentStartedAt`. Quand le serveur revient, `Envoyer ma part` n'envoie que les articles modifies depuis ce demarrage (`freshCodes + counts`) ; les autres articles restent pris depuis la base de la session serveur lors de la fusion. Cache SW v99. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK.
 - 2026-06-21 : **fix demarrage hors serveur apres fermeture de la fenetre commande.** Le dialogue auth offline ne bloque plus indefiniment l'initialisation : si le serveur est indisponible et qu'aucune session serveur n'est utilisable, l'app propose `Continuer local`, termine `buildTabbar()` / `switchTab()` et garde disponibles comptage, historique local, fragments de secours et pre-comptage. Les verifications auth au demarrage utilisent un timeout court (`timeoutMs:2500`) pour eviter une attente longue vers une IP serveur morte. Cache SW v100. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, `git diff --check` OK.
+- 2026-06-21 : **fix robustesse boutons Comptage + memoire projet.** Les handlers des boutons `Comptage` sont attaches avec des helpers defensifs (`bindClick` / `bindChange`) pour qu'un element manquant dans un dialogue ne bloque plus les boutons suivants (`Fragmenté`, `Nouvel inventaire`, `Dernier validé`, etc.). Creation de `docs/SIPS_LESSONS_LEARNED.md` pour capitaliser les pieges rencontres et les regles a reutiliser dans les prochaines apps terrain. Cache SW v101. Tests : `npm run check:js` OK, `node --check server/app.mjs` OK, `git diff --check` OK.
 
 ## Comportement actuel important
 

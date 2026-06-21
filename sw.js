@@ -1,4 +1,4 @@
-const C='inv-lep-v100';
+const C='inv-lep-v101';
 const LIBC='inv-lib-v1';
 const APP=['./','./index.html','./css/styles.css','./domain/inventory.js','./js/core/inventory-core.js','./js/core/server-session-tabs.js','./js/core/auth-init.js','./js/features/production-movements-server.js','./js/features/analysis-bilan-feuillet.js','./js/features/capacity-plan.js','./js/features/fragments.js','./js/features/quality.js','./js/sw-register.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const LIBS=['./xlsx.full.min.js','./pdf-lib.min.js','./pdf.min.js','./pdf.worker.min.js'];
