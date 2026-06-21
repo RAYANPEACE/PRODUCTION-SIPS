@@ -17,8 +17,11 @@ function freshQS(){
 var QS=freshQS();
 var QS_SERVER_VIEW=false;
 var QS_SERVER_PENDING_ID='';
+var QS_CORRECTION_OF=null;
+var QS_CORRECTION_NOTE='';
 var QSERVER_RECORDS=[];
 var QSERVER_PENDING=[];
+var QSERVER_CORRECTIONS=[];
 var _qSigPads={};
 
 function qIsMP(code){
@@ -140,6 +143,12 @@ function qMyPendingSignRole(){
     return qCanSignRole(role)&&(!QS.visas[role]||!QS.visas[role].signature);
   })||'';
 }
+function qClearServerQualityState(){
+  QS_SERVER_VIEW=false;
+  QS_SERVER_PENDING_ID='';
+  QS_CORRECTION_OF=null;
+  QS_CORRECTION_NOTE='';
+}
 function qSignerName(){
   return SESSION?(SESSION.nom||''):(USR&&USR.nom)||'';
 }
@@ -215,6 +224,7 @@ async function renderQualite(){
   var h='<div class="q-wrap">';
   h+='<h2 class="q-title">Suivi Qualité — Fiche de Lot</h2>';
   if(QS_SERVER_VIEW)h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Consultation officielle serveur : lecture seule. Utilisez PDF pour exporter, ou Nouvelle fiche pour reprendre la saisie locale.</p>';
+  if(QS_CORRECTION_OF)h+='<p class="ref-hint" style="background:#fff3f0;border:1px solid #efc9c0;border-radius:8px;padding:8px 10px"><b>Correction demandee</b> : '+esc(QS_CORRECTION_NOTE||'Motif non renseigne')+'<br><small>Ancienne soumission : '+esc(QS_CORRECTION_OF.id||'')+'. Corrigez la fiche puis signez operateur avant resoumission.</small></p>';
 
   if(QS_SERVER_PENDING_ID)h+='<p class="ref-hint" style="background:#fff8e8;border:1px solid #f1d79a;border-radius:8px;padding:8px 10px">Fiche serveur en attente : les donnees sont verrouillees. Seule la signature autorisee par votre compte peut etre ajoutee.</p>';
 
@@ -510,7 +520,16 @@ async function qSubmitServer(){
   if(bErr){toast(bErr);return;}
   qComputeTimes();
   const payload={id:QS.id||'batch_draft_'+Date.now(),date:QS.informations.dateProduction||todayStr(),informations:clone(QS.informations),matieresPremieres:clone(QS.matieresPremieres),melanges:clone(QS.melanges),visas:clone(QS.visas),submittedAt:new Date().toISOString()};
-  await sipsSubmit('quality',payload,'Fiche qualite '+(QS.informations.numeroLot||''));
+  if(QS_CORRECTION_OF){
+    payload.correctionOf=clone(QS_CORRECTION_OF);
+    payload.correctionNote=QS_CORRECTION_NOTE||'';
+  }
+  const res=await sipsSubmit('quality',payload,(QS_CORRECTION_OF?'Correction fiche qualite ':'Fiche qualite ')+(QS.informations.numeroLot||''));
+  if(res&&res.ok&&QS_CORRECTION_OF){
+    qClearServerQualityState();
+    QS=freshQS();
+    renderQualite();
+  }
 }
 
 /* --- History --- */
@@ -518,13 +537,20 @@ async function qLoadHist(){
   var list=$('#qHistList');if(!list)return;
   try{
     QSERVER_PENDING=[];
+    QSERVER_CORRECTIONS=[];
     try{
       if(SESSION&&qRequiredQualityRoles().some(function(role){return qCanSignRole(role);})){
         var pdata=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload');
         QSERVER_PENDING=pdata.submissions||[];
+        var cdata=await sipsFetch('/api/submissions?status=rejected&type=quality&include=payload');
+        QSERVER_CORRECTIONS=(cdata.submissions||[]).filter(function(s){return s&&s.correctionRequested;});
       }
     }catch(pErr){}
     QSERVER_RECORDS=(await sipsRecords('quality')).sort(function(a,b){return String(b.validatedAt||'').localeCompare(String(a.validatedAt||''));});
+    var resumedCorrections={};
+    QSERVER_PENDING.forEach(function(s){var id=s&&s.payload&&s.payload.correctionOf&&s.payload.correctionOf.id;if(id)resumedCorrections[id]=1;});
+    QSERVER_RECORDS.forEach(function(r){var id=r&&r.payload&&r.payload.correctionOf&&r.payload.correctionOf.id;if(id)resumedCorrections[id]=1;});
+    QSERVER_CORRECTIONS=QSERVER_CORRECTIONS.filter(function(s){return !resumedCorrections[s.id];});
     var all=await idbAll();
     var batches=all.filter(function(r){return String(r.id).indexOf('batch_')===0;}).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
     var htm='';
@@ -538,6 +564,17 @@ async function qLoadHist(){
         htm+='<div class="info"><b>'+esc(info.refProduit||'---')+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+sigs+'/2 signature(s) obligatoires - '+(mine?'votre signature est attendue':'en attente admin/autre signature')+'</span></div>';
         htm+='<button onclick="qLoadPendingBatch('+idx+')">'+(mine?'Signer':'Voir')+'</button>';
+        htm+='</div>';
+      });
+    }
+    if(QSERVER_CORRECTIONS.length){
+      htm+='<div style="font-size:12px;font-weight:800;color:var(--red);margin:10px 0 6px;text-transform:uppercase">Corrections demandees</div>';
+      QSERVER_CORRECTIONS.forEach(function(s,idx){
+        var b=s.payload||{},info=b.informations||{};
+        htm+='<div class="q-hist-item">';
+        htm+='<div class="info"><b>'+esc(info.refProduit||'---')+'</b>';
+        htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+esc(s.decisionNote||'Correction demandee')+'</span></div>';
+        htm+='<button onclick="qLoadCorrectionBatch('+idx+')">Reprendre correction</button>';
         htm+='</div>';
       });
     }
@@ -575,8 +612,7 @@ async function qLoadBatch(id){
   try{
     var rec=await idbGet(id);
     if(!rec){toast('Fiche introuvable');return;}
-    QS_SERVER_VIEW=false;
-    QS_SERVER_PENDING_ID='';
+    qClearServerQualityState();
     QS.id=rec.id;
     QS.informations=rec.informations||freshQS().informations;
     QS.matieresPremieres=rec.matieresPremieres||[];
@@ -594,6 +630,8 @@ async function qLoadPendingBatch(idx){
   var rec=row.payload;
   QS_SERVER_VIEW=false;
   QS_SERVER_PENDING_ID=row.id;
+  QS_CORRECTION_OF=null;
+  QS_CORRECTION_NOTE='';
   QS.id=rec.id||'';
   QS.informations=rec.informations||freshQS().informations;
   QS.matieresPremieres=rec.matieresPremieres||[];
@@ -601,6 +639,23 @@ async function qLoadPendingBatch(idx){
   QS.visas=rec.visas||freshQS().visas;
   renderQualite();
   toast('Fiche serveur en attente chargee');
+  window.scrollTo(0,0);
+}
+
+async function qLoadCorrectionBatch(idx){
+  var row=QSERVER_CORRECTIONS[idx];
+  if(!row||!row.payload){toast('Correction introuvable');return;}
+  var rec=row.payload;
+  qClearServerQualityState();
+  QS.id='batch_correction_'+Date.now();
+  QS.informations=clone(rec.informations||freshQS().informations);
+  QS.matieresPremieres=clone(rec.matieresPremieres||[]);
+  QS.melanges=clone(rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}]);
+  QS.visas=freshQS().visas;
+  QS_CORRECTION_OF={id:row.id,lot:(QS.informations&&QS.informations.numeroLot)||'',decidedAt:row.decidedAt||'',decidedBy:row.decidedBy||''};
+  QS_CORRECTION_NOTE=row.decisionNote||'Correction demandee';
+  renderQualite();
+  toast('Correction chargee');
   window.scrollTo(0,0);
 }
 
@@ -617,7 +672,7 @@ async function qSignServerPending(){
     });
     QS.visas=(data.submission&&data.submission.payload&&data.submission.payload.visas)||QS.visas;
     toast(data.missing&&data.missing.length?'Signature enregistree - reste : '+data.missing.join(', '):'Signature enregistree - fiche prete pour validation admin');
-    QS_SERVER_PENDING_ID='';
+    qClearServerQualityState();
     QS=freshQS();
     renderQualite();
   }catch(e){toast('Erreur signature serveur : '+e.message);}
@@ -627,8 +682,8 @@ async function qLoadServerBatch(idx){
   var row=QSERVER_RECORDS[idx];
   if(!row||!row.payload){toast('Fiche serveur introuvable');return;}
   var rec=row.payload;
+  qClearServerQualityState();
   QS_SERVER_VIEW=true;
-  QS_SERVER_PENDING_ID='';
   QS.id='';
   QS.informations=rec.informations||freshQS().informations;
   QS.matieresPremieres=rec.matieresPremieres||[];
@@ -675,8 +730,7 @@ async function qLoadLastBatch(){
 async function qNew(){
   var qHasData=QS.id||QS.informations.refProduit||QS.informations.quantiteProduite||QS.matieresPremieres.length>0||QS.informations.heureDebut;
   if(qHasData&&!confirm('Creer une nouvelle fiche ? Les modifications non enregistrees seront perdues.'))return;
-  QS_SERVER_VIEW=false;
-  QS_SERVER_PENDING_ID='';
+  qClearServerQualityState();
   QS=freshQS();
   QS.informations.numeroLot=await qNextLotNum();
   renderQualite();
@@ -722,8 +776,7 @@ function qImportJSON(text){
   try{obj=JSON.parse(text);}catch(e){toast('Fichier non reconnu (pas un JSON valide)');return;}
   if(!obj.informations&&!obj.type){toast('Ce fichier ne contient pas une fiche qualite');return;}
   if(obj.type==='lep-backup'){toast('Ceci est une sauvegarde complete, pas une fiche qualite. Utilisez Importer dans Accueil.');return;}
-  QS_SERVER_VIEW=false;
-  QS_SERVER_PENDING_ID='';
+  qClearServerQualityState();
   QS.id=obj.id||'';
   QS.informations=obj.informations||freshQS().informations;
   QS.matieresPremieres=obj.matieresPremieres||[];

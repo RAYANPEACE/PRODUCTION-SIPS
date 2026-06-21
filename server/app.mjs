@@ -359,7 +359,9 @@ function publicSubmission(s) {
     createdAt: s.createdAt,
     decidedAt: s.decidedAt || null,
     decidedBy: s.decidedBy || null,
-    note: s.note || ''
+    note: s.note || '',
+    correctionRequested: !!s.correctionRequested,
+    correctionOf: s.correctionOf || null
   };
 }
 
@@ -803,7 +805,7 @@ async function handleApi(req, res, url) {
     const includePayload = url.searchParams.get('include') === 'payload';
     if (includePayload) {
       const user = await authUser(req);
-      const qualitySignerRead = type === 'quality' && status === 'submitted' && canSignQuality(user);
+      const qualitySignerRead = type === 'quality' && ['submitted', 'rejected'].indexOf(status) >= 0 && canSignQuality(user);
       if (!qualitySignerRead && !(await isAdminRequest(req))) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
@@ -861,6 +863,7 @@ async function handleApi(req, res, url) {
       author: body.author || null,
       payload: body.payload,
       note: body.note || '',
+      correctionOf: body.payload && body.payload.correctionOf || null,
       createdAt: new Date().toISOString()
     };
     db.submissions.push(rec);
@@ -928,6 +931,7 @@ async function handleApi(req, res, url) {
     sub.decidedAt = new Date().toISOString();
     sub.decidedBy = body.actor || 'admin';
     sub.decisionNote = body.note || '';
+    sub.correctionRequested = sub.status === 'rejected' && sub.type === 'quality' && !!body.correction;
     if (sub.status === 'validated') {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),

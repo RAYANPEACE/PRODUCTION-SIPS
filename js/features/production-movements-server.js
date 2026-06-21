@@ -316,7 +316,7 @@ function sipsSubmissionDetailHTML(s){
   if(s.type==='quality'){
     const i=p.informations||{},v=p.visas||{};
     const visaRows=['operateur','responsableProd','responsableQualite'].map(k=>{const x=v[k]||{};return {role:k==='operateur'?'Operateur':(k==='responsableProd'?'Resp. production':'Resp. qualite'),nom:x.nom||'',date:x.date||'',signature:x.signature?'oui':'non'};});
-    return sipsKV([['Produit',i.refProduit],['Lot',i.numeroLot],['Date production',frDate(i.dateProduction||p.date)],['Heure debut',i.heureDebut],['Heure fin',i.heureFin],['Quantite produite',i.quantiteProduite?i.quantiteProduite+' kg':''],['Taille batch',i.tailleBatch?i.tailleBatch+' kg':'']])
+    return sipsKV([['Produit',i.refProduit],['Lot',i.numeroLot],['Date production',frDate(i.dateProduction||p.date)],['Heure debut',i.heureDebut],['Heure fin',i.heureFin],['Quantite produite',i.quantiteProduite?i.quantiteProduite+' kg':''],['Taille batch',i.tailleBatch?i.tailleBatch+' kg':''],['Correction de',p.correctionOf&&p.correctionOf.id],['Motif correction',p.correctionNote]])
       +sipsLines('Matieres premieres',p.matieresPremieres,[['designation','Designation'],['code','Code'],['refFournisseur','Ref fournisseur'],['dateProd','Date prod'],['dateExp','Date exp']])
       +sipsLines('Batches / melanges',p.melanges,[['batchNum','Batch'],['heureDebut','Debut'],['heureFin','Fin']])
       +sipsLines('Visas',visaRows,[['role','Role'],['nom','Nom'],['date','Date'],['signature','Signature']]);
@@ -336,7 +336,8 @@ function sipsSubmissionHTML(s){
   const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
   const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
   const summary=sipsPayloadSummary(s.type,s.payload);
-  return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+(s.status==='submitted'?'<button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>':'')+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
+  const actions=s.status==='submitted'?'<button data-act="validate">Valider</button>'+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>':'';
+  return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+actions+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
 }
 function sipsRecordHTML(r){
   const rec=r.payload||{};
@@ -421,13 +422,16 @@ async function sipsLoadServeur(){
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
 }
 async function sipsDecide(id,act){
-  const label=act==='validate'?'valider':'rejeter';if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
-  const note=act==='reject'?prompt('Motif du rejet / correction demandee ?','Correction demandee'):null;
-  if(act==='reject'&&note===null)return;
+  const isCorrection=act==='correction';
+  const apiAct=isCorrection?'reject':act;
+  const label=apiAct==='validate'?'valider':(isCorrection?'demander correction sur':'rejeter');
+  if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
+  const note=apiAct==='reject'?prompt(isCorrection?'Correction demandee ?':'Motif du rejet ?','Correction demandee'):null;
+  if(apiAct==='reject'&&note===null)return;
   if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return;
   const row=document.querySelector('[data-sub="'+id+'"]');
   if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
-  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||''})});toast(act==='validate'?'Soumission validee':'Soumission rejetee');}
+  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+apiAct,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||'',correction:isCorrection})});toast(apiAct==='validate'?'Soumission validee':(isCorrection?'Correction demandee':'Soumission rejetee'));}
   catch(e){
     if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();}
     else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}
