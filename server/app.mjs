@@ -8,7 +8,11 @@ import crypto from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '..');
-const dataDir = resolve(__dirname, 'data');
+// dataDir configurable (SIPS_DATA_DIR) pour permettre des tests isoles sans
+// ecraser les vraies donnees ; defaut historique = server/data.
+const dataDir = process.env.SIPS_DATA_DIR
+  ? resolve(process.env.SIPS_DATA_DIR)
+  : resolve(__dirname, 'data');
 const dbPath = resolve(dataDir, 'sips-data.json');
 const backupDir = resolve(dataDir, 'backups');
 const port = Number(process.env.SIPS_PORT || 3000);
