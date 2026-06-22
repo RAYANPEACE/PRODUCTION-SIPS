@@ -210,6 +210,14 @@ function safeBackupName(file) {
   return file === basename(file) && /^sips-data-(daily|manual)-[\w.-]+\.json$/.test(file);
 }
 
+function pathInside(parent, target) {
+  const root = resolve(parent);
+  const child = resolve(target);
+  const a = process.platform === 'win32' ? root.toLowerCase() : root;
+  const b = process.platform === 'win32' ? child.toLowerCase() : child;
+  return b === a || b.startsWith(a + '/') || b.startsWith(a + '\\');
+}
+
 async function pruneDailyBackups() {
   const files = await listBackupFiles('sips-data-daily-');
   const keep = new Set(files.slice(0, 7));
@@ -568,6 +576,121 @@ function publicInventorySession(s) {
   };
 }
 
+function cloneJson(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function objectMap(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function countInventoryEntries(st) {
+  const counts = objectMap(st && st.c);
+  return Object.keys(counts).filter(code => counts[code] && counts[code].counted).length;
+}
+
+function normalizeResolutionMap(value) {
+  const out = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const code of Object.keys(value)) {
+    const n = Number(value[code]);
+    if (Number.isInteger(n) && n >= 0) out[String(code)] = n;
+  }
+  return out;
+}
+
+function buildInventoryPayloadFromSession(sess, resolutionInput) {
+  const contributions = Array.isArray(sess.contributions) ? sess.contributions : [];
+  if (!contributions.length) {
+    return { ok: false, status: 400, error: 'Aucune contribution inventaire a fusionner' };
+  }
+  const resolutions = normalizeResolutionMap(resolutionInput);
+  const base = sess.baseSnapshot ? cloneJson(sess.baseSnapshot) : { c: {}, cfg: {} };
+  base.id = 'inv_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+  base.date = sess.date || base.date || new Date().toISOString().slice(0, 10);
+  base.agent = 'Fusion serveur - ' + (sess.title || sess.id);
+  base.sessionStart = Date.now();
+  base.c = objectMap(base.c);
+  base.cfg = objectMap(base.cfg);
+
+  const byCode = {};
+  for (const contribution of contributions) {
+    const payload = objectMap(contribution.payload);
+    const counts = objectMap(payload.counts);
+    const cfg = objectMap(payload.cfg);
+    for (const code of Object.keys(counts)) {
+      const entry = counts[code];
+      if (!entry || typeof entry !== 'object' || !entry.counted) continue;
+      byCode[code] = byCode[code] || [];
+      byCode[code].push({
+        agent: contribution.agent || payload.agent || contribution.username || 'Compteur',
+        entry,
+        cfg: cfg[code] && typeof cfg[code] === 'object' ? cfg[code] : null
+      });
+    }
+  }
+
+  const conflicts = [];
+  const applied = [];
+  for (const code of Object.keys(byCode).sort()) {
+    const rows = byCode[code];
+    const hasResolution = Object.prototype.hasOwnProperty.call(resolutions, code);
+    if (rows.length > 1 && !hasResolution) {
+      conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent) });
+      continue;
+    }
+    const idx = hasResolution ? resolutions[code] : 0;
+    if (!rows[idx]) {
+      conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent), invalidResolution: idx });
+      continue;
+    }
+    base.c[code] = cloneJson(rows[idx].entry);
+    if (rows[idx].cfg) base.cfg[code] = cloneJson(rows[idx].cfg);
+    if (rows.length > 1) applied.push({ code, agent: rows[idx].agent, choices: rows.map(r => r.agent) });
+  }
+
+  if (conflicts.length) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'Conflits inventaire non resolus',
+      conflicts
+    };
+  }
+
+  const changed = Object.keys(byCode).length;
+  const filled = countInventoryEntries(base);
+  const payload = {
+    kind: 'inventory',
+    date: base.date,
+    agent: base.agent,
+    filled,
+    bilan: null,
+    detail: null,
+    st: base,
+    frag: {
+      source: 'server',
+      sessionId: sess.id,
+      title: sess.title || '',
+      baseInventoryId: sess.baseInventoryId || null,
+      baseDate: sess.baseDate || '',
+      agents: contributions.map(c => c.agent || c.username || 'Compteur'),
+      resolutions: applied
+    },
+    submittedAt: new Date().toISOString()
+  };
+  return {
+    ok: true,
+    payload,
+    summary: {
+      conflicts: 0,
+      resolvedConflicts: applied.length,
+      changed,
+      contributions: contributions.length
+    }
+  };
+}
+
 function fullInventorySession(s) {
   return {
     ...publicInventorySession(s),
@@ -896,19 +1019,21 @@ async function handleApiRoutes(req, res, url) {
     if (!(await requireAdmin(req, res))) return;
     const actor = await authUser(req);
     const body = await readBody(req);
-    const payload = body.payload || {};
-    if (!payload.st || !payload.st.c) {
-      return sendJson(res, 400, { ok: false, error: 'Inventaire fusionne manquant' });
-    }
-    if (body.summary && Number(body.summary.conflicts || 0) > 0) {
-      return sendJson(res, 409, { ok: false, error: 'Conflits inventaire non resolus' });
-    }
     const db = await readDb();
     const sess = db.inventorySessions.find(s => s.id === inventoryFinalize[1]);
     if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
     if ((sess.status || 'open') !== 'open') {
       return sendJson(res, 409, { ok: false, error: 'Session inventaire deja finalisee' });
     }
+    const merge = buildInventoryPayloadFromSession(sess, body.resolutions || {});
+    if (!merge.ok) {
+      return sendJson(res, merge.status || 400, {
+        ok: false,
+        error: merge.error || 'Inventaire fusionne invalide',
+        conflicts: merge.conflicts || undefined
+      });
+    }
+    const payload = merge.payload;
     const finalizedAt = new Date().toISOString();
     const hash = submissionHash('inventory', payload);
     const sub = {
@@ -927,12 +1052,13 @@ async function handleApiRoutes(req, res, url) {
     sess.finalizedAt = finalizedAt;
     sess.finalizedBy = body.actor || (actor ? actor.nom : 'admin');
     sess.submissionId = sub.id;
-    sess.finalSummary = body.summary || {};
+    sess.finalSummary = merge.summary;
     audit(db, 'inventory_session.finalized', sess.finalizedBy, {
       id: sess.id,
       submissionId: sub.id,
       contributions: (sess.contributions || []).length,
-      conflicts: body.summary && body.summary.conflicts
+      conflicts: merge.summary.conflicts,
+      resolvedConflicts: merge.summary.resolvedConflicts
     });
     await writeDb(db);
     return sendJson(res, 200, { ok: true, session: publicInventorySession(sess), submission: publicSubmission(sub) });
@@ -1167,7 +1293,7 @@ async function handleApiRoutes(req, res, url) {
     const file = decodeURIComponent(backupDownload[1]);
     if (!safeBackupName(file)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
     const target = resolve(backupDir, file);
-    if (!target.startsWith(backupDir)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
+    if (!pathInside(backupDir, target)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
     try {
       await stat(target);
     } catch {
@@ -1185,12 +1311,40 @@ async function handleApiRoutes(req, res, url) {
   return sendJson(res, 404, { ok: false, error: 'Route API inconnue' });
 }
 
+const STATIC_ROOT_FILES = new Set([
+  'index.html',
+  'sw.js',
+  'manifest.webmanifest',
+  'icon-192.png',
+  'icon-512.png',
+  'xlsx.full.min.js',
+  'pdf-lib.min.js',
+  'pdf.min.js',
+  'pdf.worker.min.js'
+]);
+const STATIC_ROOT_DIRS = new Set(['css', 'domain', 'js']);
+
 async function serveStatic(req, res, url) {
-  let pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('Bad request');
+  }
   if (pathname === '/') pathname = '/index.html';
+  const parts = pathname.split('/').filter(Boolean);
+  const rootPart = parts[0] || '';
+  const allowed = parts.length === 1
+    ? STATIC_ROOT_FILES.has(rootPart)
+    : STATIC_ROOT_DIRS.has(rootPart);
+  if (!allowed || parts.some(part => part === '..' || part.startsWith('.'))) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('Forbidden');
+  }
   const target = normalize(resolve(rootDir, '.' + pathname));
-  if (!target.startsWith(rootDir)) {
-    res.writeHead(403);
+  if (!pathInside(rootDir, target)) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
     return res.end('Forbidden');
   }
   try {

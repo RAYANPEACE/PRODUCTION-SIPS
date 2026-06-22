@@ -114,6 +114,17 @@ function qualityPayload(lot, visas) {
   };
 }
 
+function inventoryContribution(agent, code, qty) {
+  return {
+    payload: {
+      agent,
+      freshCodes: [code],
+      counts: { [code]: { counted: true, blocks: [{ qty }] } },
+      cfg: { [code]: { unit: 'test' } }
+    }
+  };
+}
+
 async function main() {
   const dataDir = await mkdtemp(join(tmpdir(), 'sips-sectest-'));
   const proc = spawn(process.execPath, [APP], {
@@ -236,6 +247,65 @@ async function main() {
     const detail = await api('GET', '/api/inventory-sessions/' + sessId, { token: adminToken });
     const got = detail.json && detail.json.session && (detail.json.session.contributions || []).length;
     check('[B] ' + N + ' contributions concurrentes (users distincts) doivent toutes survivre, got=' + got, got === N);
+
+    // ---- [G/H] finalize inventaire : fusion autoritaire cote serveur ----
+    const invA = await makeUser(adminToken, 'magasinier', 'inva');
+    const invB = await makeUser(adminToken, 'magasinier', 'invb');
+    const sessAuth = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-22', title: 'Autoritaire' } });
+    const authId = sessAuth.json && sessAuth.json.session && sessAuth.json.session.id;
+    await api('POST', '/api/inventory-sessions/' + authId + '/contributions', { token: invA, body: inventoryContribution('Inventaire A', 'AUTH-CODE', 7) });
+    const forgedFinalize = await api('POST', '/api/inventory-sessions/' + authId + '/finalize', {
+      token: adminToken,
+      body: {
+        payload: {
+          kind: 'inventory',
+          date: '2099-01-01',
+          agent: 'Payload forge',
+          filled: 1,
+          st: { c: { 'EVIL-CODE': { counted: true, val: '999' } } }
+        },
+        summary: { conflicts: 0 }
+      }
+    });
+    const forgedSubId = forgedFinalize.json && forgedFinalize.json.submission && forgedFinalize.json.submission.id;
+    const forgedSub = forgedSubId ? await api('GET', '/api/submissions/' + forgedSubId, { token: adminToken }) : { json: null };
+    const forgedPayload = forgedSub.json && forgedSub.json.submission && forgedSub.json.submission.payload;
+    check('[G/H] finalize ignore le payload client forge et reconstruit depuis les contributions serveur',
+      forgedFinalize.status === 200
+      && forgedPayload
+      && forgedPayload.st
+      && forgedPayload.st.c
+      && forgedPayload.st.c['AUTH-CODE']
+      && !forgedPayload.st.c['EVIL-CODE']
+      && forgedPayload.agent !== 'Payload forge');
+
+    const sessConflict = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-22', title: 'Conflit' } });
+    const conflictId = sessConflict.json && sessConflict.json.session && sessConflict.json.session.id;
+    await api('POST', '/api/inventory-sessions/' + conflictId + '/contributions', { token: invA, body: inventoryContribution('Inventaire A', 'CONFLICT-CODE', 1) });
+    await api('POST', '/api/inventory-sessions/' + conflictId + '/contributions', { token: invB, body: inventoryContribution('Inventaire B', 'CONFLICT-CODE', 2) });
+    const conflictNoResolution = await api('POST', '/api/inventory-sessions/' + conflictId + '/finalize', {
+      token: adminToken,
+      body: { payload: { st: { c: { 'CONFLICT-CODE': { counted: true, val: 'fake' } } } }, summary: { conflicts: 0 } }
+    });
+    const conflictResolved = await api('POST', '/api/inventory-sessions/' + conflictId + '/finalize', {
+      token: adminToken,
+      body: { resolutions: { 'CONFLICT-CODE': 1 }, summary: { conflicts: 0 } }
+    });
+    const conflictSubId = conflictResolved.json && conflictResolved.json.submission && conflictResolved.json.submission.id;
+    const conflictSub = conflictSubId ? await api('GET', '/api/submissions/' + conflictSubId, { token: adminToken }) : { json: null };
+    const conflictEntry = conflictSub.json && conflictSub.json.submission && conflictSub.json.submission.payload
+      && conflictSub.json.submission.payload.st && conflictSub.json.submission.payload.st.c['CONFLICT-CODE'];
+    check('[G/H] finalize refuse les conflits recalcules sans resolution serveur', conflictNoResolution.status === 409);
+    check('[G/H] finalize applique une resolution explicite sur les contributions serveur',
+      conflictResolved.status === 200 && conflictEntry && conflictEntry.blocks && conflictEntry.blocks[0].qty === 2);
+
+    // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
+    const staticDb = await fetch(BASE + '/server/data/sips-data.json');
+    const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');
+    const malformedStatic = await fetch(BASE + '/%E0%A4%A');
+    check('[K] serveStatic bloque server/data/sips-data.json', staticDb.status === 403);
+    check('[K] serveStatic bloque les fichiers caches/sensibles', staticSecret.status === 403);
+    check('[K] serveStatic rejette les URLs mal encodees sans 500', malformedStatic.status === 400);
 
   } finally {
     proc.kill();

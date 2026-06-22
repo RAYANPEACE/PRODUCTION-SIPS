@@ -580,6 +580,12 @@ function idb(){return new Promise((res,rej)=>{if(_db)return res(_db);
   rq.onsuccess=()=>{_db=rq.result;res(_db);};rq.onerror=()=>rej(rq.error);});}
 function idbPut(rec,countChange){if(countChange===undefined)countChange=true;return idb().then(db=>new Promise((res,rej)=>{
   const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=function(){if(countChange)try{var c=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;localStorage.setItem('lep_changes_since_backup',String(c+1));}catch(e){}res();};t.onerror=()=>rej(t.error);}));}
+function idbPutMany(recs){return idb().then(db=>new Promise((res,rej)=>{
+  const t=db.transaction('inv','readwrite'),store=t.objectStore('inv');
+  recs.forEach(rec=>store.put(rec));
+  t.oncomplete=()=>res();
+  t.onabort=t.onerror=()=>rej(t.error||new Error('Transaction import annulee'));
+}));}
 function idbGet(id){return idb().then(db=>new Promise((res,rej)=>{
   const rq=db.transaction('inv','readonly').objectStore('inv').get(id);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);}));}
 function idbAll(){return idb().then(db=>new Promise((res,rej)=>{
@@ -794,29 +800,38 @@ async function importAll(text){
   const lockedIds=new Set();
   localRecs.forEach(r=>{if(r&&r.locked)lockedIds.add(r.id);});
   const nLocked=lockedIds.size;
-  let toAdd=0, skippedExisting=0, skippedLocked=0;
+  let toAdd=0, skippedExisting=0, skippedLocked=0, skippedDuplicate=0;
+  const toImport=[], importIds=new Set();
   if(Array.isArray(data.idb))for(const rec of data.idb){
     if(!rec||!rec.id)continue;
     if(lockedIds.has(rec.id)){skippedLocked++;continue;}
     if(localIds.has(rec.id)){skippedExisting++;continue;}
+    if(importIds.has(rec.id)){skippedDuplicate++;continue;}
+    importIds.add(rec.id);toImport.push(rec);
     toAdd++;
   }
-  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"");
+  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"")+(skippedDuplicate?("\nDoublons dans le fichier : "+skippedDuplicate):"");
   if(!confirm(msg))return;
+  const protectedKeys=new Set(['lep_usr','lep_changes_since_backup','lep_backup_count','lep_last_backup_ts']);
+  const lsUpdates=[];
+  if(data.ls)Object.keys(data.ls).forEach(k=>{if(!protectedKeys.has(k))lsUpdates.push([k,data.ls[k]]);});
+  const allLsUpdates=lsUpdates.concat([['lep_changes_since_backup','0']]);
+  const oldLs=new Map();
+  allLsUpdates.forEach(pair=>{
+    const k=pair[0];
+    if(!oldLs.has(k))oldLs.set(k,localStorage.getItem(k));
+  });
+  function rollbackLS(){
+    oldLs.forEach((v,k)=>{try{if(v==null)localStorage.removeItem(k);else localStorage.setItem(k,v);}catch(e){}});
+  }
   try{
-    const protectedKeys=new Set(['lep_usr','lep_changes_since_backup','lep_backup_count','lep_last_backup_ts']);
-    if(data.ls)Object.keys(data.ls).forEach(k=>{if(protectedKeys.has(k))return;try{localStorage.setItem(k,data.ls[k]);}catch(e){}});
-    let imported=0;
-    if(Array.isArray(data.idb))for(const rec of data.idb){
-      if(!rec||!rec.id)continue;
-      if(lockedIds.has(rec.id)||localIds.has(rec.id))continue;
-      try{await idbPut(rec);imported++;}catch(e){}
-    }
-    localStorage.setItem('lep_changes_since_backup','0');
-    alert("Import : "+imported+" ajoutee(s).\nRechargement en cours...");location.reload();
-  }catch(e){alert("Echec de l’import.");}
+    allLsUpdates.forEach(pair=>localStorage.setItem(pair[0],pair[1]));
+    await idbPutMany(toImport);
+    alert("Import : "+toImport.length+" ajoutee(s).\nRechargement en cours...");location.reload();
+  }catch(e){rollbackLS();alert("Echec de l’import : aucune donnee n'a ete modifiee.");}
 }
 async function openHistory(){
+  const dlg=$('#histDlg');
   const list=$('#histList');list.innerHTML='Chargement…';
   let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('batch_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
   list.innerHTML='';
@@ -827,20 +842,24 @@ async function openHistory(){
   const fiB=document.createElement('input');fiB.type='file';fiB.accept='.txt,.json,text/plain';fiB.style.display='none';fiB.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
   const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde locale';impB.onclick=function(){fiB.click();};
   bk.append(expB,expLB,fiB,impB);list.append(bk);
-  const serverRows=await sipsRecords('inventory');
-  if(serverRows.length){
-    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
-    h.textContent='Valides serveur';list.append(h);
-    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
-      const rec=row.payload||{};
-      const it=document.createElement('div');it.className='hist-item locked';
-      const when=row.validatedAt||row.createdAt||rec.submittedAt||'';
-      const bilan=rec.bilan||{};
-      it.innerHTML='<div class="info"><b>'+esc(rec.date||'—')+'</b><span>OFFICIEL serveur - '+esc(rec.agent||'—')+' - '+(rec.filled||0)+' art. - '+(bilan.nbAlertes||0)+' alerte(s) - '+(when?new Date(when).toLocaleDateString('fr-FR'):'')+'</span></div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{if(!rec.st){toast('Inventaire serveur sans detail consultable');return;}histDlg.close();openArchive({st:rec.st,date:rec.date,agent:rec.agent,filled:rec.filled,savedAt:Date.parse(when)||Date.now(),locked:true,server:true});};
-      it.append(open);list.append(it);
-    });
-  }
+  if(dlg&&!dlg.open)dlg.showModal();
+  const serverHost=document.createElement('div');list.append(serverHost);
+  sipsRecords('inventory',{timeoutMs:1200}).then(serverRows=>{
+    if(dlg&&!dlg.open)return;
+    if(serverRows.length){
+      const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
+      h.textContent='Valides serveur';serverHost.append(h);
+      serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+        const rec=row.payload||{};
+        const it=document.createElement('div');it.className='hist-item locked';
+        const when=row.validatedAt||row.createdAt||rec.submittedAt||'';
+        const bilan=rec.bilan||{};
+        it.innerHTML='<div class="info"><b>'+esc(rec.date||'—')+'</b><span>OFFICIEL serveur - '+esc(rec.agent||'—')+' - '+(rec.filled||0)+' art. - '+(bilan.nbAlertes||0)+' alerte(s) - '+(when?new Date(when).toLocaleDateString('fr-FR'):'')+'</span></div>';
+        const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{if(!rec.st){toast('Inventaire serveur sans detail consultable');return;}histDlg.close();openArchive({st:rec.st,date:rec.date,agent:rec.agent,filled:rec.filled,savedAt:Date.parse(when)||Date.now(),locked:true,server:true});};
+        it.append(open);serverHost.append(it);
+      });
+    }
+  });
   const fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
   fi.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importInventory(rd.result);};rd.readAsText(f);};
   const imp=document.createElement('button');imp.style.cssText='width:100%;margin-bottom:10px;padding:10px;border-radius:8px;border:1.5px solid #c5e4d2;color:var(--green);background:#e7f3ec;font-weight:700;font-size:14px';
@@ -852,7 +871,7 @@ async function openHistory(){
     list.append(p);
   }
   else{
-    const localH=document.createElement('div');localH.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(serverRows.length?'10px':'0')+' 0 6px;text-transform:uppercase';
+    const localH=document.createElement('div');localH.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:0 0 6px;text-transform:uppercase';
     localH.textContent='Historique local';list.append(localH);
     const clear=document.createElement('button');clear.className='del';clear.style.cssText='width:100%;margin-bottom:10px;padding:9px;border-radius:8px';
     clear.textContent='Vider tout l\'historique';
@@ -890,7 +909,6 @@ async function openHistory(){
       it.append(del);list.append(it);
     });
   }
-  $('#histDlg').showModal();
 }
 function reprendreArchive(rec){
   if(rec&&rec.locked){toast('Inventaire validé (verrouillé) — déverrouille-le d’abord pour le modifier.');return;}

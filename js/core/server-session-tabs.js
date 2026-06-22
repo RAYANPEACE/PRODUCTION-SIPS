@@ -142,10 +142,13 @@ document.addEventListener('visibilitychange',sipsAutoSyncOnVisible);
 setInterval(function(){if(!document.hidden)updSrvDash();},15000);
 setInterval(function(){if(!document.hidden)sipsRefreshNotifications();},20000);
 function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
-async function sipsRecords(type){
+async function sipsRecords(type,opt){
   try{
+    opt=opt||{};
     const q=[];if(type)q.push('type='+encodeURIComponent(type));q.push('status=validated');
-    const data=await sipsFetch('/api/records'+(q.length?'?'+q.join('&'):''),{headers:sipsAdminHeaders()});
+    const fetchOpt={headers:sipsAdminHeaders()};
+    if(opt.timeoutMs)fetchOpt.timeoutMs=opt.timeoutMs;
+    const data=await sipsFetch('/api/records'+(q.length?'?'+q.join('&'):''),fetchOpt);
     const rows=data.records||[];
     return rows;
   }catch(e){return [];}

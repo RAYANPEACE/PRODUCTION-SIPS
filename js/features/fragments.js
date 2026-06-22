@@ -219,6 +219,9 @@ function freshCodes(){
 function buildFragmentFile(){
   const o=JSON.parse(buildJSON());           // {meta,articles,etat,cfg?}
   o.type='lep-fragment';o.v=2;o.ts=Date.now();
+  ST.fragmentPartId=ST.fragmentPartId||('part_'+Date.now()+'_'+Math.random().toString(36).slice(2,8));
+  o.partId=ST.fragmentPartId;
+  if(o.etat)o.etat.fragmentPartId=ST.fragmentPartId;
   o.sessionStart=ST.sessionStart||0;
   o.freshCodes=freshCodes();                 // articles recomptés cette session (les seuls « frais » à la fusion)
   return JSON.stringify(o,null,2);
@@ -248,6 +251,7 @@ function fragIngestFile(o){
   const etat=(o&&o.etat)?o.etat:o;
   if(!etat||!etat.c)return null;
   const agent=(etat.agent||(o.meta&&o.meta.agent)||'Compteur').trim()||'Compteur';
+  const partId=String(o.partId||etat.fragmentPartId||'').trim();
   const ts=Date.parse((o.meta&&o.meta.exporte)||'')||o.ts||etat.savedAt||Date.now();
   const sessionStart=(o.sessionStart!=null?o.sessionStart:(etat.sessionStart!=null?etat.sessionStart:0));
   // Valeurs calculées par le compteur = autoritaires (évite tout recalcul avec d'autres réglages)
@@ -263,7 +267,7 @@ function fragIngestFile(o){
   }
   const cnt=Object.values(etat.c).filter(e=>e&&e.counted).length;
   const freshCnt=fresh?fresh.size:cnt;
-  return {agent,date:etat.date||'',ts,sessionStart,fresh,count:cnt,freshCount:freshCnt,st:{c:etat.c,cfg:(o.cfg||etat.cfg||{})}};
+  return {partId,agent,date:etat.date||'',ts,sessionStart,fresh,count:cnt,freshCount:freshCnt,st:{c:etat.c,cfg:(o.cfg||etat.cfg||{})}};
 }
 
 let FRAGFILES=[];   // parts chargées dans le dialogue, en attente de fusion
@@ -271,8 +275,10 @@ function fragAddFile(text){
   let o;try{o=JSON.parse(text);}catch(e){toast('Fichier illisible');return;}
   const fr=fragIngestFile(o);
   if(!fr){toast('Format non reconnu (ce n’est pas une part / un inventaire)');return;}
-  // Même compteur renvoyé plusieurs fois : on garde la part la plus récente
-  const i=FRAGFILES.findIndex(x=>x.agent.toLowerCase()===fr.agent.toLowerCase());
+  // Même part renvoyée plusieurs fois : on garde la version la plus récente.
+  // Les vieux fichiers sans partId restent dédupliqués par nom de compteur.
+  const key=fr.partId?('id:'+fr.partId):('agent:'+fr.agent.toLowerCase());
+  const i=FRAGFILES.findIndex(x=>(x.partId?('id:'+x.partId):('agent:'+x.agent.toLowerCase()))===key);
   if(i>=0){if(fr.ts>=FRAGFILES[i].ts){FRAGFILES[i]=fr;toast('Part de '+fr.agent+' mise à jour (plus récente)');}else toast('Part de '+fr.agent+' ignorée (une plus récente est déjà chargée)');}
   else{FRAGFILES.push(fr);toast('Part de '+fr.agent+' ajoutée');}
   fragRenderFileList();
@@ -526,10 +532,12 @@ async function srvFragAnalyze(id){
     const data=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id));
     const sess=data.session;
     let merged=srvFragBuildMerged(sess);
+    let resolutionMap={};
     let msg='Session '+(sess.title||sess.id)+'\n\nParts : '+(sess.contributions||[]).length+'\nArticles recomptees : '+merged.changed;
     if(merged.conflicts.length){
       const resolutions=await srvFragResolveConflicts(sess,merged.conflicts);
       if(!resolutions)return;
+      resolutionMap=resolutions;
       merged=srvFragBuildMerged(sess,resolutions);
       if(merged.conflicts.length){toast('Conflits non resolus');return;}
       msg+='\n\nConflits resolus explicitement : '+merged.resolutions.length+'.';
@@ -540,7 +548,7 @@ async function srvFragAnalyze(id){
     const payload=srvFragInventoryPayload(sess,merged);
     await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
       method:'POST',headers:sipsAdminHeaders(),
-      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,summary:{conflicts:0,resolvedConflicts:(merged.resolutions||[]).length,changed:merged.changed,contributions:(sess.contributions||[]).length}})
+      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,resolutions:resolutionMap,summary:{conflicts:0,resolvedConflicts:(merged.resolutions||[]).length,changed:merged.changed,contributions:(sess.contributions||[]).length}})
     });
     toast('Fusion creee en soumission inventaire - validation admin requise');
     await srvFragLoadSessions();
