@@ -1,6 +1,6 @@
 # SIPS - Relais developpement serveur local
 
-Derniere mise a jour : 2026-06-21
+Derniere mise a jour : 2026-06-22
 
 Ce document sert de relais entre Codex, Claude Code et tout autre agent. Il decrit l'etat actuel, les choix d'architecture, les commandes, les tests deja faits et les prochaines taches.
 
@@ -142,6 +142,9 @@ Statut actuel : **les 5 bugs ont ete corriges** le 2026-06-20. Validation syntax
 
 ## Fait depuis le relais
 
+- 2026-06-22 : **durcissement securite Phase 1 (auth serveur).** Suite a l'audit cross-model (6 adversarial-reviews Codex, voir memoire `project_server-security-audit`). `POST /api/submissions` exige desormais une authentification et derive l'auteur du compte (jamais du corps). PIN admin retire de l'auth (`requireAdmin` = JWT role admin seul ; le PIN court-circuitait JWT/TTL/role, defaut '1234'). `mustChangePassword` applique cote serveur (403) sauf sur me/change-password/verify-password. `tokenVersion` ajoute au JWT pour invalidation atomique au changement/reset de mot de passe (remplace le check `passwordChangedAt` a la seconde). `dataDir` configurable via `SIPS_DATA_DIR`. Migration : tokens et comptes existants restent valides (tv absent => 0). Non-breaking client (l'admin est toujours connecte, `sipsFetch` envoie deja le JWT). Commits `dc478df` (Phase 0) + `a9522eb` (Phase 1) sur branche `security-hardening`. Tests : nouveau harnais `npm run test:server` (boite-noire, sous-processus, SIPS_DATA_DIR isole) = 5/8 verts, `node --check server/app.mjs` OK.
+- 2026-06-22 : **Phase 0 — harnais de tests securite** (`tests/server-security.test.js`) ajoute comme filet de regression avant durcissement. Affirme le comportement securise attendu ; les echecs documentent les failles. Tag de securite `backup-before-security-hardening`.
+- Restant durcissement (rouge, dans l'ordre) : **Phase 2** serialisation des ecritures db.json (lost update concurrent, faille B). **Phase 3** visas qualite serveur-only + append-once + recalcul hash (failles A reste/I/J, couple a une migration client vers /quality-sign). **Phase 4** finalize inventaire autoritatif (G/H). **Phase 5** restore `importAll` transactionnel + import secours + serveStatic (M/L/K). Gate cross-model a relancer sur les fixes avant de finir la branche.
 - 2026-06-20 : serveur local Node.js ajoute.
 - 2026-06-20 : app connectee au serveur local.
 - 2026-06-20 : validations serveur fiabilisees.
