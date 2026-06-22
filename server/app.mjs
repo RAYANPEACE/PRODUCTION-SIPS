@@ -16,7 +16,6 @@ const dataDir = process.env.SIPS_DATA_DIR
 const dbPath = resolve(dataDir, 'sips-data.json');
 const backupDir = resolve(dataDir, 'backups');
 const port = Number(process.env.SIPS_PORT || 3000);
-const adminPin = process.env.SIPS_ADMIN_PIN || '1234';
 
 // ====== AUTH / ROLES ======
 // Source de verite des droits. Le client recoit `tabs` et `canSign` a la connexion.
@@ -226,7 +225,7 @@ function sendJson(res, status, body) {
     'cache-control': 'no-store',
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-sips-admin-pin,authorization'
+    'access-control-allow-headers': 'content-type,authorization'
   });
   res.end(data);
 }
@@ -265,31 +264,48 @@ async function authUser(req) {
   const db = await readDb();
   const user = db.users.find(u => u.id === payload.sub);
   if (!user || user.enabled === false) return null;
-  if ((user.passwordChangedAt || 0) > (payload.iat || 0)) return null;
+  // Invalidation atomique par tokenVersion (remplace le check passwordChangedAt
+  // a la seconde, qui ratait les changements survenus dans la meme seconde).
+  if ((user.tokenVersion || 0) !== (payload.tv || 0)) return null;
   return user;
 }
 
-async function requireAuth(req, res) {
+// opts.allowMustChange : true uniquement pour les routes du parcours de
+// changement de mot de passe (me / change-password / verify-password). Partout
+// ailleurs un compte mustChangePassword est bloque cote serveur (403), pas
+// seulement par l'UI.
+async function requireAuth(req, res, opts) {
   const user = await authUser(req);
   if (!user) {
     sendJson(res, 401, { ok: false, error: 'Authentification requise' });
+    return null;
+  }
+  if (user.mustChangePassword && !(opts && opts.allowMustChange)) {
+    sendJson(res, 403, { ok: false, error: 'Changement de mot de passe requis', mustChangePassword: true });
     return null;
   }
   return user;
 }
 
 async function isAdminRequest(req) {
-  const pin = req.headers['x-sips-admin-pin'];
-  if (pin && pin === adminPin) return true;
   const user = await authUser(req);
   return !!(user && user.role === 'admin');
 }
 
-// Accepte l'ancien PIN (compatibilite transitoire) OU un JWT de role admin.
+// Admin = JWT de role admin uniquement (le PIN de secours a ete retire : il
+// court-circuitait JWT/TTL/role/invalidation). Un admin mustChangePassword est
+// aussi bloque tant qu'il n'a pas choisi son mot de passe personnel.
 async function requireAdmin(req, res) {
-  if (await isAdminRequest(req)) return true;
-  sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
-  return false;
+  const user = await authUser(req);
+  if (!user || user.role !== 'admin') {
+    sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
+    return false;
+  }
+  if (user.mustChangePassword) {
+    sendJson(res, 403, { ok: false, error: 'Changement de mot de passe requis', mustChangePassword: true });
+    return false;
+  }
+  return true;
 }
 
 function publicUser(u) {
@@ -317,7 +333,10 @@ function sessionUser(u) {
 }
 async function issueToken(user) {
   const iat = Math.floor(Date.now() / 1000);
-  return jwtSign({ sub: user.id, role: user.role, nom: user.nom, iat, exp: iat + TOKEN_TTL_SEC });
+  // tv = tokenVersion : permet d'invalider tous les tokens d'un compte de facon
+  // atomique (changement/reset de mot de passe) sans dependre de la granularite
+  // seconde de iat/passwordChangedAt (cf. faille same-second race).
+  return jwtSign({ sub: user.id, role: user.role, nom: user.nom, tv: user.tokenVersion || 0, iat, exp: iat + TOKEN_TTL_SEC });
 }
 
 function audit(db, action, actor, details) {
@@ -491,6 +510,7 @@ async function handleApi(req, res, url) {
       passwordHash: await hashPassword(password),
       enabled: true,
       passwordChangedAt: Math.floor(Date.now() / 1000),
+      tokenVersion: 0,
       mustChangePassword: false,
       createdAt: new Date().toISOString(),
       createdBy: 'setup',
@@ -519,13 +539,13 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/auth/me') {
-    const user = await requireAuth(req, res);
+    const user = await requireAuth(req, res, { allowMustChange: true });
     if (!user) return;
     return sendJson(res, 200, { ok: true, user: sessionUser(user) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/verify-password') {
-    const user = await requireAuth(req, res);
+    const user = await requireAuth(req, res, { allowMustChange: true });
     if (!user) return;
     const body = await readBody(req);
     const ok = await verifyPassword(String(body.password || ''), user.passwordHash);
@@ -533,7 +553,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
-    const user = await requireAuth(req, res);
+    const user = await requireAuth(req, res, { allowMustChange: true });
     if (!user) return;
     const body = await readBody(req);
     const currentPassword = String(body.currentPassword || '');
@@ -553,6 +573,7 @@ async function handleApi(req, res, url) {
       dbUser.passwordHash = user.passwordHash;
       dbUser.passwordChangedAt = user.passwordChangedAt;
       dbUser.mustChangePassword = false;
+      dbUser.tokenVersion = (dbUser.tokenVersion || 0) + 1;
       audit(db, 'user.password_changed', user.nom, { id: user.id });
       await writeDb(db);
       return sendJson(res, 200, { ok: true, token: await issueToken(dbUser), user: sessionUser(dbUser) });
@@ -591,6 +612,7 @@ async function handleApi(req, res, url) {
       passwordHash: await hashPassword(password),
       enabled: true,
       passwordChangedAt: Math.floor(Date.now() / 1000),
+      tokenVersion: 0,
       mustChangePassword: true,
       createdAt: new Date().toISOString(),
       createdBy: actor ? actor.nom : 'admin',
@@ -632,6 +654,7 @@ async function handleApi(req, res, url) {
       if (String(body.password).length < 4) return sendJson(res, 400, { ok: false, error: 'Mot de passe trop court (4 caracteres minimum)' });
       user.passwordHash = await hashPassword(String(body.password));
       user.passwordChangedAt = Math.floor(Date.now() / 1000);
+      user.tokenVersion = (user.tokenVersion || 0) + 1;
       user.mustChangePassword = true;
     }
     if (body.nom !== undefined) {
@@ -831,10 +854,14 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/submissions') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
     const body = await readBody(req);
     if (!body.type || !body.payload) {
       return sendJson(res, 400, { ok: false, error: 'type et payload requis' });
     }
+    // L'auteur est derive du compte authentifie, jamais du corps de la requete.
+    const author = { id: user.id, name: user.nom, role: user.role };
     const db = await readDb();
     const type = String(body.type);
     const hash = submissionHash(type, body.payload);
@@ -842,7 +869,7 @@ async function handleApi(req, res, url) {
     const existing = db.submissions.find(s => s.hash === hash && s.status === 'submitted')
       || (activeRecord && db.submissions.find(s => s.id === activeRecord.sourceSubmissionId));
     if (existing) {
-      audit(db, 'submission.duplicate', body.author, { id: existing.id, type });
+      audit(db, 'submission.duplicate', user.nom, { id: existing.id, type });
       await writeDb(db);
       return sendJson(res, 200, { ok: true, duplicate: true, submission: publicSubmission(existing) });
     }
@@ -850,7 +877,7 @@ async function handleApi(req, res, url) {
       const lot = qualityLot(body.payload);
       const lotConflict = activeQualityLotConflict(db, lot);
       if (lotConflict) {
-        audit(db, 'submission.duplicate_lot', body.author, { id: lotConflict.row.id, type, lot });
+        audit(db, 'submission.duplicate_lot', user.nom, { id: lotConflict.row.id, type, lot });
         await writeDb(db);
         return sendJson(res, 409, {
           ok: false,
@@ -864,14 +891,14 @@ async function handleApi(req, res, url) {
       type,
       hash,
       status: 'submitted',
-      author: body.author || null,
+      author,
       payload: body.payload,
       note: body.note || '',
       correctionOf: body.payload && body.payload.correctionOf || null,
       createdAt: new Date().toISOString()
     };
     db.submissions.push(rec);
-    audit(db, 'submission.created', body.author, { id: rec.id, type: rec.type });
+    audit(db, 'submission.created', user.nom, { id: rec.id, type: rec.type });
     await writeDb(db);
     return sendJson(res, 201, { ok: true, submission: publicSubmission(rec) });
   }
@@ -1109,8 +1136,4 @@ if (tls) {
   });
 } else {
   console.log('HTTPS desactive : aucun certificat dans server/certs/ (mode hors-ligne PWA indisponible). Voir SERVER_HTTPS.md.');
-}
-
-if (!process.env.SIPS_ADMIN_PIN) {
-  console.log('  PIN admin par defaut: 1234 (changer avec SIPS_ADMIN_PIN)');
 }
