@@ -16,7 +16,8 @@
    ESM (package.json type=module).
 */
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import crypto from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,34 @@ function check(label, cond) {
 }
 
 const SIG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+function stableForHash(value) {
+  if (Array.isArray(value)) return value.map(stableForHash);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      if (key === 'id' || key === 'submittedAt') continue;
+      out[key] = stableForHash(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function submissionHash(type, payload) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ type, payload: stableForHash(payload) }))
+    .digest('hex');
+}
+
+async function readTestDb(dataDir) {
+  return JSON.parse(await readFile(join(dataDir, 'sips-data.json'), 'utf8'));
+}
+
+async function writeTestDb(dataDir, db) {
+  await writeFile(join(dataDir, 'sips-data.json'), JSON.stringify(db, null, 2), 'utf8');
+}
 
 async function api(method, path, { token, pin, body } = {}) {
   const headers = {};
@@ -146,6 +175,47 @@ async function main() {
     const sign2 = await api('POST', '/api/submissions/' + subIid + '/quality-sign', { token: op2, body: { role: 'operateur', visa: { signature: SIG } } });
     check('[I] 1re signature operateur acceptee', sign1.status === 200);
     check('[I] 2e signature du meme role doit etre refusee (409 append-once)', sign2.status === 409);
+
+    // ---- [A] visas qualite legacy/corrompus : image seule != visa serveur ----
+    const rq1 = await makeUser(adminToken, 'responsableQualite', 'rqone');
+    const subLegacy = await api('POST', '/api/submissions', { token: adminToken, body: qualityPayload('LOT-LEGACY') });
+    const legacyId = subLegacy.json && subLegacy.json.submission && subLegacy.json.submission.id;
+    let db = await readTestDb(dataDir);
+    const legacy = db.submissions.find(s => s.id === legacyId);
+    legacy.payload.visas = {
+      operateur: { nom: 'Legacy Op', signature: SIG, userId: 'fake-op', username: 'fake-op' },
+      responsableQualite: { nom: 'Legacy RQ', signature: SIG, userId: 'fake-rq', username: 'fake-rq' }
+    };
+    legacy.hash = submissionHash(legacy.type, legacy.payload);
+    await writeTestDb(dataDir, db);
+    const validateLegacy = await api('POST', '/api/submissions/' + legacyId + '/validate', { token: adminToken, body: {} });
+    const replaceLegacyOp = await api('POST', '/api/submissions/' + legacyId + '/quality-sign', { token: op1, body: { role: 'operateur', visa: { signature: SIG } } });
+    const replaceLegacyRq = await api('POST', '/api/submissions/' + legacyId + '/quality-sign', { token: rq1, body: { role: 'responsableQualite', visa: { signature: SIG } } });
+    const validateRepaired = await api('POST', '/api/submissions/' + legacyId + '/validate', { token: adminToken, body: {} });
+    check('[A] un visa legacy image sans estampille serveur ne doit pas valider', validateLegacy.status === 400);
+    check('[A] un visa legacy image doit rester remplacable par /quality-sign', replaceLegacyOp.status === 200 && replaceLegacyRq.status === 200);
+    check('[A] une fiche legacy reparee par signatures serveur devient validable', validateRepaired.status === 200);
+
+    // ---- [J] validation qualite : le record ne doit jamais promouvoir un hash perime ----
+    const rq2 = await makeUser(adminToken, 'responsableQualite', 'rqtwo');
+    const subHash = await api('POST', '/api/submissions', { token: adminToken, body: qualityPayload('LOT-HASH') });
+    const hashId = subHash.json && subHash.json.submission && subHash.json.submission.id;
+    db = await readTestDb(dataDir);
+    const staleBeforeSign = db.submissions.find(s => s.id === hashId).hash;
+    await api('POST', '/api/submissions/' + hashId + '/quality-sign', { token: op1, body: { role: 'operateur', visa: { signature: SIG } } });
+    await api('POST', '/api/submissions/' + hashId + '/quality-sign', { token: rq2, body: { role: 'responsableQualite', visa: { signature: SIG } } });
+    db = await readTestDb(dataDir);
+    const signed = db.submissions.find(s => s.id === hashId);
+    signed.hash = staleBeforeSign;
+    await writeTestDb(dataDir, db);
+    const validateHash = await api('POST', '/api/submissions/' + hashId + '/validate', { token: adminToken, body: {} });
+    db = await readTestDb(dataDir);
+    const hashSub = db.submissions.find(s => s.id === hashId);
+    const hashRecord = db.records.find(r => r.sourceSubmissionId === hashId);
+    const expectedFinalHash = submissionHash('quality', hashSub.payload);
+    check('[J] validation qualite accepte une soumission legacy a hash perime apres recalcul', validateHash.status === 200);
+    check('[J] le hash du record qualite couvre le payload final signe',
+      !!hashRecord && hashRecord.hash === expectedFinalHash && hashRecord.hash !== staleBeforeSign && hashSub.hash === expectedFinalHash);
 
     // ---- [B] ecritures concurrentes : aucune contribution perdue ----
     const sess = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-21', title: 'Concurrence' } });

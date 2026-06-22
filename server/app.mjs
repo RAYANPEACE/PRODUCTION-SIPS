@@ -448,15 +448,74 @@ function activeQualityLotConflict(db, lot) {
   return null;
 }
 
-function missingQualitySignatures(payload) {
-  const labels = {
-    operateur: 'operateur',
-    responsableQualite: 'responsable qualite'
+const QUALITY_VISA_LABELS = {
+  operateur: 'operateur',
+  responsableQualite: 'responsable qualite'
+};
+const QUALITY_VISA_ROLES = Object.keys(QUALITY_VISA_LABELS);
+
+function isImageSignature(value) {
+  return typeof value === 'string' && value.indexOf('data:image/') === 0;
+}
+
+function qualityVisaStampMaterial(role, visa) {
+  return {
+    v: 1,
+    role,
+    nom: String(visa && visa.nom || ''),
+    signature: String(visa && visa.signature || ''),
+    date: String(visa && visa.date || ''),
+    userId: String(visa && visa.userId || ''),
+    username: String(visa && visa.username || '')
   };
-  const visas = (payload && payload.visas) || {};
-  return Object.keys(labels)
-    .filter(key => !visas[key] || !visas[key].signature)
-    .map(key => labels[key]);
+}
+
+async function qualityVisaMac(role, visa) {
+  const secret = await jwtSecret();
+  return crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(qualityVisaStampMaterial(role, visa)))
+    .digest('hex');
+}
+
+async function stampQualityVisa(role, visa, user) {
+  const stamped = {
+    nom: user.nom,
+    signature: String(visa.signature),
+    date: String(visa.date || new Date().toISOString()),
+    userId: user.id,
+    username: user.username,
+    role
+  };
+  stamped.serverStamp = {
+    v: 1,
+    alg: 'HMAC-SHA256',
+    by: 'sips-server',
+    sig: await qualityVisaMac(role, stamped)
+  };
+  return stamped;
+}
+
+async function validServerQualityVisa(payload, role) {
+  const visas = (payload && payload.visas && typeof payload.visas === 'object') ? payload.visas : {};
+  const visa = visas[role];
+  if (!visa || typeof visa !== 'object' || visa.role !== role || !isImageSignature(visa.signature)) return false;
+  const stamp = visa.serverStamp;
+  if (!stamp || stamp.v !== 1 || stamp.alg !== 'HMAC-SHA256' || stamp.by !== 'sips-server' || typeof stamp.sig !== 'string') {
+    return false;
+  }
+  const expected = await qualityVisaMac(role, visa);
+  const got = Buffer.from(stamp.sig, 'hex');
+  const want = Buffer.from(expected, 'hex');
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
+async function missingQualitySignatures(payload) {
+  const missing = [];
+  for (const role of QUALITY_VISA_ROLES) {
+    if (!(await validServerQualityVisa(payload, role))) missing.push(QUALITY_VISA_LABELS[role]);
+  }
+  return missing;
 }
 
 function canSignQuality(user) {
@@ -469,22 +528,14 @@ function canSignQuality(user) {
 // (ex. responsableQualite forge par un operateur) sont supprimes ; ils devront
 // passer par /quality-sign. Mode offline preserve : le visa operateur legitime
 // voyage dans le payload et est estampille a l'arrivee.
-function sanitizeQualityVisas(payload, user) {
+async function sanitizeQualityVisas(payload, user) {
   if (!payload || typeof payload !== 'object') return;
-  const allowed = roleCanSign(user.role).filter(r => r === 'operateur' || r === 'responsableQualite');
+  const allowed = roleCanSign(user.role).filter(r => QUALITY_VISA_ROLES.indexOf(r) >= 0);
   const incoming = (payload.visas && typeof payload.visas === 'object') ? payload.visas : {};
   const clean = {};
   for (const role of allowed) {
     const v = incoming[role];
-    if (v && typeof v === 'object' && typeof v.signature === 'string' && v.signature.indexOf('data:image/') === 0) {
-      clean[role] = {
-        nom: user.nom,
-        signature: v.signature,
-        date: String(v.date || new Date().toISOString()),
-        userId: user.id,
-        username: user.username
-      };
-    }
+    if (v && typeof v === 'object' && isImageSignature(v.signature)) clean[role] = await stampQualityVisa(role, v, user);
   }
   if (Object.keys(clean).length) payload.visas = clean;
   else delete payload.visas;
@@ -927,7 +978,7 @@ async function handleApiRoutes(req, res, url) {
     const db = await readDb();
     const type = String(body.type);
     // Faille A : normaliser/estampiller les visas qualite avant tout (hash inclus).
-    if (type === 'quality') sanitizeQualityVisas(body.payload, user);
+    if (type === 'quality') await sanitizeQualityVisas(body.payload, user);
     const hash = submissionHash(type, body.payload);
     const activeRecord = db.records.find(r => r.hash === hash && recordStatus(r) !== 'cancelled');
     const existing = db.submissions.find(s => s.hash === hash && s.status === 'submitted')
@@ -973,11 +1024,11 @@ async function handleApiRoutes(req, res, url) {
     if (!user) return;
     const body = await readBody(req);
     const role = String(body.role || '');
-    if (roleCanSign(user.role).indexOf(role) < 0 || ['operateur', 'responsableQualite'].indexOf(role) < 0) {
+    if (roleCanSign(user.role).indexOf(role) < 0 || QUALITY_VISA_ROLES.indexOf(role) < 0) {
       return sendJson(res, 403, { ok: false, error: 'Ce compte ne peut pas signer ce visa qualite' });
     }
     const signature = String((body.visa && body.visa.signature) || '');
-    if (!signature || signature.indexOf('data:image/') !== 0) {
+    if (!isImageSignature(signature)) {
       return sendJson(res, 400, { ok: false, error: 'Signature manquante' });
     }
     const db = await readDb();
@@ -987,19 +1038,13 @@ async function handleApiRoutes(req, res, url) {
     if (sub.status !== 'submitted') return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
     sub.payload = sub.payload || {};
     sub.payload.visas = sub.payload.visas || {};
-    // Faille I : append-once. Un visa deja signe (vraie image) n'est jamais
-    // ecrase. Une entree vide/corrompue (sans image) peut etre (re)signee.
+    // Faille I : append-once. Un visa serveur valide n'est jamais ecrase.
+    // Une entree legacy/corrompue peut etre remplacee par un visa estampille.
     const prior = sub.payload.visas[role];
-    if (prior && typeof prior.signature === 'string' && prior.signature.indexOf('data:image/') === 0) {
+    if (prior && await validServerQualityVisa(sub.payload, role)) {
       return sendJson(res, 409, { ok: false, error: 'Visa ' + role + ' deja signe' });
     }
-    sub.payload.visas[role] = {
-      nom: user.nom,
-      signature,
-      date: String((body.visa && body.visa.date) || new Date().toISOString()),
-      userId: user.id,
-      username: user.username
-    };
+    sub.payload.visas[role] = await stampQualityVisa(role, { signature, date: body.visa && body.visa.date }, user);
     // Faille J : le hash d'integrite doit couvrir les visas signes cote serveur.
     sub.hash = submissionHash(sub.type, sub.payload);
     sub.qualitySignedAt = new Date().toISOString();
@@ -1009,7 +1054,7 @@ async function handleApiRoutes(req, res, url) {
     return sendJson(res, 200, {
       ok: true,
       submission: fullSubmission(sub),
-      missing: missingQualitySignatures(sub.payload)
+      missing: await missingQualitySignatures(sub.payload)
     });
   }
 
@@ -1025,10 +1070,11 @@ async function handleApiRoutes(req, res, url) {
       return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
     }
     if (action === 'validate' && sub.type === 'quality') {
-      const missing = missingQualitySignatures(sub.payload);
+      const missing = await missingQualitySignatures(sub.payload);
       if (missing.length) {
         return sendJson(res, 400, { ok: false, error: 'Validation qualite impossible : signature(s) manquante(s) ' + missing.join(', ') });
       }
+      sub.hash = submissionHash(sub.type, sub.payload);
     }
     sub.status = action === 'validate' ? 'validated' : 'rejected';
     sub.decidedAt = new Date().toISOString();
@@ -1039,7 +1085,7 @@ async function handleApiRoutes(req, res, url) {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
         sourceSubmissionId: sub.id,
-        hash: sub.hash || submissionHash(sub.type, sub.payload),
+        hash: sub.type === 'quality' ? submissionHash(sub.type, sub.payload) : (sub.hash || submissionHash(sub.type, sub.payload)),
         type: sub.type,
         status: 'validated',
         payload: sub.payload,
