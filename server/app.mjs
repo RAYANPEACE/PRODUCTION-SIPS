@@ -463,6 +463,33 @@ function canSignQuality(user) {
   return user && roleCanSign(user.role).some(role => role === 'operateur' || role === 'responsableQualite');
 }
 
+// Securite (faille A) : a la soumission, on ne fait JAMAIS confiance aux visas
+// fournis par le client. On ne conserve que les visas dont le ROLE est signable
+// par le compte authentifie, et on ecrase l'identite depuis le token. Les autres
+// (ex. responsableQualite forge par un operateur) sont supprimes ; ils devront
+// passer par /quality-sign. Mode offline preserve : le visa operateur legitime
+// voyage dans le payload et est estampille a l'arrivee.
+function sanitizeQualityVisas(payload, user) {
+  if (!payload || typeof payload !== 'object') return;
+  const allowed = roleCanSign(user.role).filter(r => r === 'operateur' || r === 'responsableQualite');
+  const incoming = (payload.visas && typeof payload.visas === 'object') ? payload.visas : {};
+  const clean = {};
+  for (const role of allowed) {
+    const v = incoming[role];
+    if (v && typeof v === 'object' && typeof v.signature === 'string' && v.signature.indexOf('data:image/') === 0) {
+      clean[role] = {
+        nom: user.nom,
+        signature: v.signature,
+        date: String(v.date || new Date().toISOString()),
+        userId: user.id,
+        username: user.username
+      };
+    }
+  }
+  if (Object.keys(clean).length) payload.visas = clean;
+  else delete payload.visas;
+}
+
 function publicInventorySession(s) {
   const contributions = (s.contributions || []).map(c => ({
     id: c.id,
@@ -899,6 +926,8 @@ async function handleApiRoutes(req, res, url) {
     const author = { id: user.id, name: user.nom, role: user.role };
     const db = await readDb();
     const type = String(body.type);
+    // Faille A : normaliser/estampiller les visas qualite avant tout (hash inclus).
+    if (type === 'quality') sanitizeQualityVisas(body.payload, user);
     const hash = submissionHash(type, body.payload);
     const activeRecord = db.records.find(r => r.hash === hash && recordStatus(r) !== 'cancelled');
     const existing = db.submissions.find(s => s.hash === hash && s.status === 'submitted')
