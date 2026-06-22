@@ -987,6 +987,12 @@ async function handleApiRoutes(req, res, url) {
     if (sub.status !== 'submitted') return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
     sub.payload = sub.payload || {};
     sub.payload.visas = sub.payload.visas || {};
+    // Faille I : append-once. Un visa deja signe (vraie image) n'est jamais
+    // ecrase. Une entree vide/corrompue (sans image) peut etre (re)signee.
+    const prior = sub.payload.visas[role];
+    if (prior && typeof prior.signature === 'string' && prior.signature.indexOf('data:image/') === 0) {
+      return sendJson(res, 409, { ok: false, error: 'Visa ' + role + ' deja signe' });
+    }
     sub.payload.visas[role] = {
       nom: user.nom,
       signature,
@@ -994,6 +1000,8 @@ async function handleApiRoutes(req, res, url) {
       userId: user.id,
       username: user.username
     };
+    // Faille J : le hash d'integrite doit couvrir les visas signes cote serveur.
+    sub.hash = submissionHash(sub.type, sub.payload);
     sub.qualitySignedAt = new Date().toISOString();
     sub.qualitySignedBy = user.nom;
     audit(db, 'quality.signature', user.nom, { id: sub.id, role });
