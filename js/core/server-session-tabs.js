@@ -34,6 +34,19 @@ let SIPS_SERVER=lsGet('lep_server_cfg',{url:'',adminPin:''});
    pour que tous les usages existants de USR.nom / USR.poste / ADMIN continuent de marcher. */
 let SESSION=lsGet('sips_session',null);
 let SESSION_TOKEN=lsGet('sips_token','');
+let SESSION_OFFLINE=false;
+let SESSION_LAST_VERIFIED=lsGet('sips_session_verified_at','');
+function setSessionOffline(v){
+  SESSION_OFFLINE=!!v;
+  try{document.body.classList.toggle('session-offline',SESSION_OFFLINE);}catch(e){}
+}
+// Marque la session comme verifiee par le serveur (en ligne) et memorise l'heure.
+// Appele apres login/setup, apres /auth/me, et a la reconnexion.
+function authMarkVerified(){
+  SESSION_LAST_VERIFIED=new Date().toISOString();
+  try{lsSet('sips_session_verified_at',SESSION_LAST_VERIFIED);}catch(e){}
+  setSessionOffline(false);
+}
 function authHeader(){return SESSION_TOKEN?{'authorization':'Bearer '+SESSION_TOKEN}:{};}
 function sipsServerUrl(){
   const u=String((SIPS_SERVER&&SIPS_SERVER.url)||'').trim().replace(/\/+$/,'');
@@ -133,7 +146,16 @@ async function updSrvDash(){
 // envoie les soumissions en attente si joignable, et rafraichit le statut.
 async function sipsAutoSyncOnVisible(){
   if(document.hidden)return;
-  try{var r=await sipsPing();if(r.ok&&sipsPending().length)await sipsFlushPending();}catch(e){}
+  try{
+    var r=await sipsPing();
+    if(r.ok){
+      // Serveur revenu : revalider une session reprise du cache (Phase 5).
+      if(SESSION_TOKEN&&SESSION&&SESSION_OFFLINE){
+        try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();authMarkVerified();if(typeof updateAuthUI==='function')updateAuthUI();}catch(e){}
+      }
+      if(sipsPending().length)await sipsFlushPending();
+    }
+  }catch(e){}
   updSrvDash();
   sipsRefreshNotifications();
 }

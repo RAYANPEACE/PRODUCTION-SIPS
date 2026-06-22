@@ -10,7 +10,7 @@ function usrUpdateBar(){
   var lbl=$('#usrLabel');if(lbl)lbl.textContent=name;
   var rl=$('#usrRole');
   if(rl){
-    if(SESSION)rl.textContent=roleLabel(SESSION.role);
+    if(SESSION)rl.textContent=roleLabel(SESSION.role)+(SESSION_OFFLINE?' · hors ligne':'');
     else{var r=USR_ROLES.find(function(x){return x[0]===USR.poste;});rl.textContent=r?r[1]:'—';}
   }
   var ed=$('#usrEdit');
@@ -90,7 +90,7 @@ function authDialog(cfg){
       try{
         var body=cfg.withNom?{nom:nom,username:username,password:password}:{username:username,password:password};
         var r=await sipsFetch(cfg.endpoint,{method:'POST',body:JSON.stringify(body)});
-        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();
+        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();authMarkVerified();
         dlg.close();dlg.remove();
         if(SESSION&&SESSION.mustChangePassword){await authChangePasswordDialog(true);}
         resolve(true);
@@ -138,7 +138,7 @@ function authChangePasswordDialog(force){
       if(n1!==n2){show('Les deux nouveaux mots de passe ne correspondent pas.');return;}
       try{
         var r=await sipsFetch('/api/auth/change-password',{method:'POST',body:JSON.stringify({currentPassword:cur,newPassword:n1})});
-        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();updateAuthUI();
+        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();authMarkVerified();updateAuthUI();
         dlg.close();dlg.remove();toast('Mot de passe modifie');resolve(true);
       }catch(e){show(e.message||'Erreur serveur');}
     };
@@ -169,10 +169,14 @@ async function authBootstrap(){
   applySession();
   var setupInfo=null;
   try{setupInfo=await sipsFetch('/api/auth/setup',{timeoutMs:2500});}catch(e){setupInfo=null;}
-  if(!setupInfo){if(SESSION_TOKEN&&SESSION)return;await authBlockedOfflineDialog();return;}
+  if(!setupInfo){
+    // Serveur injoignable : on garde la session en cache pour travailler hors ligne (Phase 5).
+    if(SESSION_TOKEN&&SESSION){setSessionOffline(true);return;}
+    await authBlockedOfflineDialog();return;
+  }
   if(setupInfo.needsSetup){await showSetupDialog();return;}
   if(SESSION_TOKEN){
-    try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
+    try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();authMarkVerified();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
     catch(e){authClear();}
   }
   await showLoginDialog(false);
