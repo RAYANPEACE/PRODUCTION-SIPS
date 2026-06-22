@@ -1,6 +1,6 @@
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { readFile, writeFile, mkdir, stat, rename, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, rename, readdir, unlink, open } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -133,10 +133,35 @@ async function readDb() {
   return db;
 }
 
+// Ecriture atomique et durable : fichier temporaire UNIQUE (jamais partage
+// entre deux ecritures concurrentes, cf. ancien `*.tmp` unique qui se corrompait),
+// fsync du contenu, rename atomique, puis fsync best-effort du repertoire.
 async function writeJson(path, value) {
-  const tmp = path + '.tmp';
-  await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  const tmp = path + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+  const data = JSON.stringify(value, null, 2);
+  const fh = await open(tmp, 'w');
+  try {
+    await fh.writeFile(data, 'utf8');
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
   await rename(tmp, path);
+  try {
+    const dir = await open(dirname(path), 'r');
+    try { await dir.sync(); } finally { await dir.close(); }
+  } catch { /* certains systemes de fichiers / Windows ne fsync pas un repertoire */ }
+}
+
+// Mutex global serialisant les transactions read-modify-write sur la base JSON.
+// Toutes les requetes mutantes (POST) passent par ce verrou : impossible que
+// deux requetes lisent le meme etat puis s'ecrasent (lost update). L'echelle du
+// serveur (LAN d'usine, quelques utilisateurs) rend cette serialisation indolore.
+let _dbLock = Promise.resolve();
+function withDbLock(fn) {
+  const run = _dbLock.then(fn, fn);
+  _dbLock = run.then(() => {}, () => {});
+  return run;
 }
 
 async function writeDb(db) {
@@ -474,6 +499,16 @@ function fullInventorySession(s) {
 }
 
 async function handleApi(req, res, url) {
+  // Les requetes mutantes (POST) sont serialisees pour garantir des transactions
+  // read-modify-write atomiques sur db.json. Les lectures (GET/OPTIONS) restent
+  // concurrentes : readDb lit un fichier coherent ecrit par rename atomique.
+  if (req.method === 'POST') {
+    return withDbLock(() => handleApiRoutes(req, res, url));
+  }
+  return handleApiRoutes(req, res, url);
+}
+
+async function handleApiRoutes(req, res, url) {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 204, { ok: true });
   }
