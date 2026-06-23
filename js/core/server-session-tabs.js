@@ -399,13 +399,15 @@ function renderRef(){
     +'<button data-rt="recf">Recettes</button>'
     +'<button data-rt="mach">Machines</button>'
     +'</div><div id="refBody"></div>'
-    +'<div class="ref-foot"><button id="adminOut">Quitter le mode admin</button></div>'
+    // Bouton de sortie admin : seulement en mode legacy PIN (sans session serveur).
+    // En session serveur, la deconnexion se fait via la pastille compte en haut a droite -> redondant.
+    +(SESSION?'':'<div class="ref-foot"><button id="adminOut">Quitter le mode admin</button></div>')
     +'</div>';
   app.querySelectorAll('.ref-nav button').forEach(b=>{
     b.classList.toggle('active',b.dataset.rt===REFTAB);
     b.onclick=()=>{REFTAB=b.dataset.rt;renderRef();};
   });
-  $('#adminOut').onclick=toggleAdmin;
+  {const ao=$('#adminOut');if(ao)ao.onclick=toggleAdmin;}
   const body=$('#refBody');
   if(REFTAB==='articles')renderArticles(body);
   else if(REFTAB==='etat')renderEtat(body);

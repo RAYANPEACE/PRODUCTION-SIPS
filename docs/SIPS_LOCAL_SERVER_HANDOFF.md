@@ -336,6 +336,16 @@ ATTENTION COORDINATION : Phases 0-1 etaient serveur-only (frontiere de deploieme
 
 ## Prochaines taches recommandees
 
+### Lot "nettoyage referentiel 100% serveur + refonte UI" (apres gate Codex Spec B)
+
+Decide avec l'utilisateur (Rayan) le 2026-06-23, a faire APRES la review cross-model Codex de la branche `inventaire-serveur`. Voir aussi `docs/ux/README.md` (maquettes Stitch + design tokens).
+
+1. **Retirer "Quitter le mode admin"** (pied onglet Referentiel) quand une session serveur existe. **FAIT le 2026-06-23** (SW v120) : bouton masque si `SESSION` (redondant avec la pastille "Deconnexion" en haut a droite), conserve en mode legacy PIN local (sinon on bloque un admin local).
+2. **Etat de stock : import fichier seul, retrait du collage.** Plus de coller-donnees ; uniquement import d'un fichier (export Excel -> probablement `.csv`, ou `.xlsx` avec lib de parsing a evaluer). A preciser/brainstormer.
+3. **Comptage "Dernier valide" -> dernier inventaire valide SERVEUR + repli local.** `reprendreValidated` lit aujourd'hui le pool des inventaires verrouilles LOCAUX, qui ne se remplira plus depuis le retrait du "Valider" local (Spec B Task 6). Le faire lire `sipsRecords('inventory')` avec repli local — meme pattern que `findBilanPair`. **Trou cree par Spec B, a corriger.**
+4. **Retrait "Secours WhatsApp" sur Sortie/Entree/Production.** Redondant avec la file d'attente hors-ligne (auto-envoi a la reconnexion). Garder la Sauvegarde complete (Accueil) comme filet ultime. Favorable, a confirmer.
+5. **Refonte UX/UI** inspiree des maquettes Stitch (`docs/ux/`), **incrementale** : brainstorming design tokens -> ecrans pilotes (Accueil + Production) -> extension ecran par ecran. CSS centralise (`css/styles.css`), ne pas toucher la logique des 12 onglets. Maquettes = inspiration, pas spec litterale.
+
 ### Vue detail des soumissions avant validation - fait
 
 L'admin voit maintenant le detail d'une soumission en attente directement dans l'onglet `Serveur` avant les boutons `Valider` / `Rejeter` :
