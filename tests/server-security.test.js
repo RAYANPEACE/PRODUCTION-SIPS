@@ -332,6 +332,28 @@ async function main() {
     check('[B1] reject inventaire pose recountRequested', !!keptB1 && keptB1.recountRequested === true);
     check('[B1] recountRequested est expose par l API', recountReject.status === 200 && recountReject.json.submission && recountReject.json.submission.recountRequested === true);
 
+    // ---- [B2] l auteur liste SES inventaires rejetes, pas ceux des autres ----
+    const otherCounter = await makeUser(adminToken, 'magasinier', 'recb2');
+    const ownList = await api('GET', '/api/submissions?status=rejected&type=inventory&include=payload', { token: invCounter });
+    const otherList = await api('GET', '/api/submissions?status=rejected&type=inventory&include=payload', { token: otherCounter });
+    const adminList = await api('GET', '/api/submissions?status=rejected&type=inventory&include=payload', { token: adminToken });
+    check('[B2] l auteur voit sa soumission inventaire rejetee', ownList.status === 200 && (ownList.json.submissions || []).some(s => s.id === invSubId));
+    check('[B2] un autre compte ne voit PAS la soumission rejetee d autrui', otherList.status === 200 && !(otherList.json.submissions || []).some(s => s.id === invSubId));
+    check('[B2] l admin voit toutes les soumissions inventaire rejetees', adminList.status === 200 && (adminList.json.submissions || []).some(s => s.id === invSubId));
+
+    // ---- [B3] validate d un inventaire cree un record valide lisible (st present) ----
+    const invSub3 = await api('POST', '/api/submissions', {
+      token: invCounter,
+      body: { type: 'inventory', payload: { kind: 'inventory', date: '2026-06-23', agent: 'Compteur B3', filled: 1, st: { c: { 'B3-CODE': { counted: true, blocks: [{ qty: 9 }] } } } } }
+    });
+    const invSub3Id = invSub3.json && invSub3.json.submission && invSub3.json.submission.id;
+    const validateInv = await api('POST', '/api/submissions/' + invSub3Id + '/validate', { token: adminToken, body: {} });
+    const recRead = await api('GET', '/api/records?type=inventory&status=validated', { token: invCounter });
+    const invRecord = recRead.json && (recRead.json.records || []).find(r => r.sourceSubmissionId === invSub3Id);
+    check('[B3] validate inventaire renvoie 200', validateInv.status === 200);
+    check('[B3] le record inventaire valide est lisible avec son snapshot st',
+      !!invRecord && invRecord.payload && invRecord.payload.st && invRecord.payload.st.c && !!invRecord.payload.st.c['B3-CODE']);
+
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');
     const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');

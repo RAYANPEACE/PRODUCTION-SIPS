@@ -1070,16 +1070,23 @@ async function handleApiRoutes(req, res, url) {
     const status = url.searchParams.get('status');
     const type = url.searchParams.get('type');
     const includePayload = url.searchParams.get('include') === 'payload';
+    const admin = await isAdminRequest(req);
+    const user = await authUser(req);
     if (includePayload) {
-      const user = await authUser(req);
       const qualitySignerRead = type === 'quality' && ['submitted', 'rejected'].indexOf(status) >= 0 && canSignQuality(user);
-      if (!qualitySignerRead && !(await isAdminRequest(req))) {
+      // Recomptage : un compte connecte peut lire SES PROPRES inventaires rejetes (avec payload.st).
+      const invOwnerRead = type === 'inventory' && status === 'rejected' && !!user;
+      if (!qualitySignerRead && !invOwnerRead && !admin) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
     }
     let rows = db.submissions;
     if (status) rows = rows.filter(s => s.status === status);
     if (type) rows = rows.filter(s => s.type === type);
+    // Un non-admin ne voit QUE ses propres soumissions inventaire rejetees.
+    if (type === 'inventory' && status === 'rejected' && !admin) {
+      rows = user ? rows.filter(s => s.author && s.author.id === user.id) : [];
+    }
     rows = rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return sendJson(res, 200, { ok: true, submissions: rows.map(includePayload ? fullSubmission : publicSubmission) });
   }
