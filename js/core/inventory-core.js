@@ -1028,15 +1028,21 @@ async function submitInventoryServer(){
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à soumettre');return;}
-  await archiveCurrent();
-  const r=await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
-  // Ferme la feuille de resume apres un envoi parti/mis en file : sinon on reste
-  // bloque sur le resume et le message de confirmation passe DERRIERE ce dialog
-  // modal (couche superieure). On re-affiche un message clair une fois ferme.
-  if(r&&(r.ok||r.queued)){
-    const dlg=$('#dlg');if(dlg&&dlg.open)dlg.close();
-    toast(r.ok?'Inventaire soumis au serveur':'Inventaire ajouté en attente (hors ligne)');
-  }
+  // Retour immediat sur le bouton (comme les mouvements) : "Envoi..." + desactive
+  // pendant les ~3s, pour que l'utilisateur voie qu'une action est en cours.
+  const b=$('#submitInvBtn');const bt=b?b.textContent:'';
+  if(b){if(b.disabled)return;b.disabled=true;b.textContent='Envoi…';}
+  try{
+    await archiveCurrent();
+    const r=await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
+    // Ferme la feuille de resume apres un envoi parti/mis en file : sinon on reste
+    // bloque sur le resume et le message de confirmation passe DERRIERE ce dialog
+    // modal (couche superieure). On re-affiche un message clair une fois ferme.
+    if(r&&(r.ok||r.queued)){
+      const dlg=$('#dlg');if(dlg&&dlg.open)dlg.close();
+      toast(r.ok?'Inventaire soumis au serveur':'Inventaire ajouté en attente (hors ligne)');
+    }
+  }finally{if(b){b.disabled=false;b.textContent=bt;}}
 }
 async function shareJSON(){
   archiveCurrent();
