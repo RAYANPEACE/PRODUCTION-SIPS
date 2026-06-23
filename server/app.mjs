@@ -1230,7 +1230,15 @@ async function handleApiRoutes(req, res, url) {
     const status = url.searchParams.get('status');
     if (!(await isAdminRequest(req))) {
       const user = await authUser(req);
-      if (!(type === 'quality' && canSignQuality(user))) {
+      if (!user) return sendJson(res, 401, { ok: false, error: 'Connexion requise' });
+      // Comptes non-admin connectes : lecture seule des records VALIDES d'un type
+      // precis (mouvements officiels sortie/entree/production/inventory), pour que
+      // le personnel voie les mouvements valides. La qualite garde sa regle dediee
+      // (signataires qualite). L'admin reste requis pour tout le reste (annules,
+      // dump sans type, etc.).
+      const okQuality = type === 'quality' && canSignQuality(user);
+      const okValidatedRead = status === 'validated' && !!type && type !== 'quality';
+      if (!(okQuality || okValidatedRead)) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
     }

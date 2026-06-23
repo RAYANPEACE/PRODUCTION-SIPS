@@ -299,6 +299,25 @@ async function main() {
     check('[G/H] finalize applique une resolution explicite sur les contributions serveur',
       conflictResolved.status === 200 && conflictEntry && conflictEntry.blocks && conflictEntry.blocks[0].qty === 2);
 
+    // ---- [N] lecture des records valides par un compte non-admin (mouvements officiels) ----
+    const opRead = await makeUser(adminToken, 'operateur', 'recread');
+    const magRead = await makeUser(adminToken, 'magasinier', 'recq');
+    const subSortie = await api('POST', '/api/submissions', {
+      token: adminToken,
+      body: { type: 'sortie', payload: { kind: 'sortie', date: '2026-06-23', ref: 'CAMION-1', finis: [{ a: 'DIAMO', q: '5' }], mp: [] } }
+    });
+    const sortieId = subSortie.json && subSortie.json.submission && subSortie.json.submission.id;
+    await api('POST', '/api/submissions/' + sortieId + '/validate', { token: adminToken, body: {} });
+    const opSeesValidated = await api('GET', '/api/records?type=sortie&status=validated', { token: opRead });
+    const opNoStatus = await api('GET', '/api/records?type=sortie', { token: opRead });
+    const anonRecords = await api('GET', '/api/records?type=sortie&status=validated', {});
+    const magQuality = await api('GET', '/api/records?type=quality&status=validated', { token: magRead });
+    check('[N] un compte non-admin connecte lit les records sortie VALIDES',
+      opSeesValidated.status === 200 && Array.isArray(opSeesValidated.json.records) && opSeesValidated.json.records.some(r => r.type === 'sortie'));
+    check('[N] un compte non-admin ne peut PAS lister les records sans filtre de statut (admin requis)', opNoStatus.status === 401);
+    check('[N] lecture des records refusee sans authentification', anonRecords.status === 401);
+    check('[N] la qualite reste reservee aux signataires qualite (magasinier refuse)', magQuality.status === 401);
+
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');
     const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');
