@@ -40,7 +40,7 @@ let SESSION_LAST_VERIFIED=lsGet('sips_session_verified_at','');
 // quand le PC serveur est injoignable (serveur eteint mais Wi-Fi encore actif) :
 // statut "Verification..." sans fin, historique local qui ne s'affiche pas,
 // soumissions hors-ligne sans retour (l'utilisateur re-clique -> doublons).
-const SIPS_FETCH_TIMEOUT=10000;
+const SIPS_FETCH_TIMEOUT=3000;
 // ----- Verrou strict hors-ligne (securite auth) -----
 // Cet appareil sait-il que le serveur utilise des comptes ? Persistant : une fois
 // vrai, reste vrai. Marque quand on confirme un serveur configure ou apres login.

@@ -117,7 +117,7 @@ function renderProduction(focusBi){
     photoArrayUI(card.querySelector('.pb-photos'),b.photos,re);
   });
   $('#pfAddBlock').onclick=()=>{PF.blocks.push(freshBlock());renderProduction(PF.blocks.length-1);};
-  $('#pfSubmit').onclick=()=>prodSubmit(PF);
+  $('#pfSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await prodSubmit(PF);}finally{b.disabled=false;b.textContent=t;}};
   $('#pfShare').onclick=()=>prodShare(PF);
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
@@ -134,11 +134,8 @@ function migrateProdRec(rec){
   const blocks=[b];pr.slice(1).forEach(x=>{const nb=freshBlock();nb.p=x.p;nb.n=x.n;blocks.push(nb);});
   return blocks;
 }
-async function loadProdHist(){
-  const host=$('#pfHist');if(!host)return;
-  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf('prod_')===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+function renderProdHist(host,recs,serverRows){
   host.innerHTML='';
-  const serverRows=await sipsRecords('production');
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
@@ -168,6 +165,13 @@ async function loadProdHist(){
     it.append(open,del);host.append(it);
   });
   if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune production enregistree.</p>';}
+}
+// Local tout de suite, serveur en arriere-plan (voir renderMovHist/loadMovHist).
+async function loadProdHist(){
+  const host=$('#pfHist');if(!host)return;
+  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf('prod_')===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+  renderProdHist(host,recs,[]);
+  try{const serverRows=await sipsRecords('production');if($('#pfHist')===host)renderProdHist(host,recs,serverRows);}catch(e){}
 }
 const MOVCFG={
  sortie:{title:'Sorties',word:'SORTIE',icon:'🚚',refLabel:'Véhicule / plaque / destinataire',refPlace:'ex. camion 1234-AB / labo',pfx:'sortie_',saved:'Sortie enregistrée',hint:'Enregistre une sortie : produits finis expédiés et/ou matières & échantillons (les deux possibles). Date vide = aujourd\u2019hui. Photo véhicule/plaque depuis la galerie.'},
@@ -250,17 +254,15 @@ function renderMov(kind,focusSel){
   app.querySelectorAll('.mv-add').forEach(btn=>{const sec=btn.dataset.addsec;btn.onclick=()=>{mf[sec].push({a:'',q:''});renderMov(kind,sec+'-'+(mf[sec].length-1));};});
   photoArrayUI($('#mvPhotos'),mf.photos,re);
   $('#mvSave').onclick=async()=>{if(await movSave(kind,mf))loadMovHist(kind);};
-  $('#mvSubmit').onclick=()=>movSubmit(kind,mf);
+  $('#mvSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await movSubmit(kind,mf);}finally{b.disabled=false;b.textContent=t;}};
   $('#mvShare').onclick=()=>movShare(kind,mf);
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
 }
-async function loadMovHist(kind){
-  const c=MOVCFG[kind];const host=$('#mvHist');if(!host)return;
-  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf(c.pfx)===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+function renderMovHist(host,kind,recs,serverRows){
+  const c=MOVCFG[kind];
   host.innerHTML='';
-  const serverRows=await sipsRecords(kind);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
@@ -286,6 +288,15 @@ async function loadMovHist(kind){
     it.append(open,del);host.append(it);
   });
   if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune '+(kind==='entree'?'entree':'sortie')+' enregistree.</p>';}
+}
+// Affiche l'historique LOCAL tout de suite (sans attendre le serveur), puis ajoute
+// les records serveur quand ils arrivent. Evite l'ecran vide de plusieurs secondes
+// a chaque changement d'onglet quand le serveur est lent ou injoignable.
+async function loadMovHist(kind){
+  const c=MOVCFG[kind];const host=$('#mvHist');if(!host)return;
+  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf(c.pfx)===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+  renderMovHist(host,kind,recs,[]);
+  try{const serverRows=await sipsRecords(kind);if($('#mvHist')===host)renderMovHist(host,kind,recs,serverRows);}catch(e){}
 }
 function renderSorties(f){renderMov('sortie',f);}
 function renderEntrees(f){renderMov('entree',f);}

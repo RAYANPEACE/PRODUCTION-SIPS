@@ -1029,7 +1029,14 @@ async function submitInventoryServer(){
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à soumettre');return;}
   await archiveCurrent();
-  await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
+  const r=await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
+  // Ferme la feuille de resume apres un envoi parti/mis en file : sinon on reste
+  // bloque sur le resume et le message de confirmation passe DERRIERE ce dialog
+  // modal (couche superieure). On re-affiche un message clair une fois ferme.
+  if(r&&(r.ok||r.queued)){
+    const dlg=$('#dlg');if(dlg&&dlg.open)dlg.close();
+    toast(r.ok?'Inventaire soumis au serveur':'Inventaire ajouté en attente (hors ligne)');
+  }
 }
 async function shareJSON(){
   archiveCurrent();
