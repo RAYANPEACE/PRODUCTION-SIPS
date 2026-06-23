@@ -285,6 +285,19 @@ function buildBilan(){
   return {rows:rows,alertes:alertes,total:totEc,reco:alertes.length?'RECOMPTER':'VALIDER'};
 }
 
+/* Bilan calcule sur un snapshot physique fourni (soumission/record serveur, inventaire valide)
+   au lieu du comptage courant. Reutilise buildBilan en echangeant temporairement ST puis le
+   restaure. Decision 9 (non compte = ecart nul) est heritee de buildBilan : un article non
+   compte reste phys=null -> ecart null, neutralise (aligne au theorique), exclu de l ecart total. */
+function buildBilanFrom(snapshot){
+  const prevST=ST,prevRO=RO;
+  try{
+    ST=snapshot?JSON.parse(JSON.stringify(snapshot)):freshCounts();
+    mergeAndMigrate();
+    return buildBilan();
+  }finally{ST=prevST;RO=prevRO;}
+}
+
 function ecartHTML(a,withCond){
   if(a.ecart==null)return '<span class="bc-nc">report état (= théorique)</span>';
   const arrow=a.ecart>0?'\u25BC':(a.ecart<0?'\u25B2':'');
