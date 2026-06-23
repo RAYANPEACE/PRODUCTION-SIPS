@@ -417,6 +417,7 @@ function publicSubmission(s) {
     decidedBy: s.decidedBy || null,
     note: s.note || '',
     correctionRequested: !!s.correctionRequested,
+    recountRequested: !!s.recountRequested,
     correctionOf: s.correctionOf || null
   };
 }
@@ -1207,6 +1208,7 @@ async function handleApiRoutes(req, res, url) {
     sub.decidedBy = body.actor || 'admin';
     sub.decisionNote = body.note || '';
     sub.correctionRequested = sub.status === 'rejected' && sub.type === 'quality' && !!body.correction;
+    sub.recountRequested = sub.status === 'rejected' && sub.type === 'inventory' && !!body.recountRequested;
     if (sub.status === 'validated') {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),

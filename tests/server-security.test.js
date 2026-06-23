@@ -318,6 +318,20 @@ async function main() {
     check('[N] lecture des records refusee sans authentification', anonRecords.status === 401);
     check('[N] la qualite reste reservee aux signataires qualite (magasinier refuse)', magQuality.status === 401);
 
+    // ---- [B1] reject inventaire avec recountRequested conserve la soumission + pose le flag ----
+    const invCounter = await makeUser(adminToken, 'magasinier', 'recb1');
+    const invSub = await api('POST', '/api/submissions', {
+      token: invCounter,
+      body: { type: 'inventory', payload: { kind: 'inventory', date: '2026-06-23', agent: 'Compteur B1', filled: 1, st: { c: { 'B1-CODE': { counted: true, blocks: [{ qty: 3 }] } } } } }
+    });
+    const invSubId = invSub.json && invSub.json.submission && invSub.json.submission.id;
+    const recountReject = await api('POST', '/api/submissions/' + invSubId + '/reject', { token: adminToken, body: { recountRequested: true, note: 'Recompter B1-CODE' } });
+    const dbB1 = await readTestDb(dataDir);
+    const keptB1 = dbB1.submissions.find(s => s.id === invSubId);
+    check('[B1] reject inventaire conserve la soumission', !!keptB1 && keptB1.status === 'rejected');
+    check('[B1] reject inventaire pose recountRequested', !!keptB1 && keptB1.recountRequested === true);
+    check('[B1] recountRequested est expose par l API', recountReject.status === 200 && recountReject.json.submission && recountReject.json.submission.recountRequested === true);
+
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');
     const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');
