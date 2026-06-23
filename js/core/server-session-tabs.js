@@ -468,8 +468,7 @@ function renderEtat(body){
   body.innerHTML='<p class="ref-hint">Stock théorique de référence — <b>seule base du Bilan et des écarts</b>. Une valeur par article ; vide = 0.</p>'
     +'<div class="etat-date"><label for="etatDate">📅 Date de cet état de stock</label><input id="etatDate" type="date" value="'+esc(ETAT_DATE||'')+'"><div class="etat-date-h">Le Bilan le comparera automatiquement à l’inventaire du même jour ou juste avant (jamais postérieur).</div></div>'
     +'<button class="ref-add" id="etatXlsx">Importer le fichier Excel (.xlsx)</button>'
-    +'<div class="ref-list">'+rows+'</div>'
-    +'<button class="ref-sec" id="etatReset">Recharger l\u2019exemple de test</button>';
+    +'<div class="ref-list">'+rows+'</div>';
   const ed=$('#etatDate');if(ed)ed.addEventListener('input',e=>{ETAT_DATE=e.target.value||'';lsSet('lep_etat_date',ETAT_DATE);});
   body.querySelectorAll('.eval').forEach(inp=>{
     const code=inp.closest('.ref-row').dataset.code;
@@ -503,7 +502,6 @@ function renderEtat(body){
     };
     fi.click();
   };
-  $('#etatReset').onclick=()=>{if(confirm('Remplacer l\u2019état de stock par l\u2019exemple de test ?')){ETAT={...SEED_ETAT};lsSet('lep_etat',ETAT);renderRef();}};
 }
 
 function renderCond(body){
