@@ -1027,16 +1027,25 @@ bindClick('#newInv',async()=>{
 bindClick('#resumeValidated',async()=>{
   if(RO){toast('Mode consultation — non modifiable');return;}
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
+  // Pool = inventaires VALIDES SERVEUR (officiels, payload.st) + verrouilles LOCAUX (repli transition).
+  // Meme logique d'appariement que findBilanPair : a date egale, le serveur l'emporte.
   let all=[];try{all=await idbAll();}catch(e){}
-  const validated=all.filter(r=>r&&r.locked&&r.st);
+  const localV=all.filter(r=>r&&r.locked&&r.st).map(r=>({date:r.date||'',agent:r.agent||'',st:r.st,validatedAt:r.validatedAt||0,server:false}));
+  let serverV=[];
+  try{
+    const rows=await sipsRecords('inventory',{timeoutMs:1200});
+    serverV=(rows||[]).filter(r=>r&&r.payload&&r.payload.st&&r.payload.st.c)
+      .map(r=>({date:(r.payload.date||''),agent:(r.payload.agent||''),st:r.payload.st,validatedAt:Date.parse(r.validatedAt||r.createdAt||'')||0,server:true}));
+  }catch(e){serverV=[];}
+  const validated=serverV.concat(localV);
   if(!validated.length){toast('Aucun inventaire validé à reprendre');return;}
   // Dernier validé à la date du comptage en cours (ou avant) ; sinon le plus récent.
   const ref=ST.date||'';
   let pool=ref?validated.filter(r=>(r.date||'')<=ref):[];
   if(!pool.length)pool=validated;
-  pool.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.validatedAt||0)-(a.validatedAt||0)));
+  pool.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.server?1:0)-(a.server?1:0))||((b.validatedAt||0)-(a.validatedAt||0)));
   const rec=pool[0];
-  if(!confirm('Reprendre le dernier inventaire validé ('+(rec.date||'—')+(rec.agent?(' · '+rec.agent):'')+') ?\n\nSes chiffres sont copiés dans un nouveau comptage modifiable daté d’aujourd’hui. L’inventaire validé d’origine reste intact et verrouillé.'))return;
+  if(!confirm('Reprendre le dernier inventaire validé ('+(rec.date||'—')+(rec.agent?(' · '+rec.agent):'')+(rec.server?' · serveur':'')+') ?\n\nSes chiffres sont copiés dans un nouveau comptage modifiable daté d’aujourd’hui. L’inventaire validé d’origine reste intact et verrouillé.'))return;
   await archiveCurrent();
   RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
   ST=InventoryDomain.createInventoryFromLastValidated(rec.st);

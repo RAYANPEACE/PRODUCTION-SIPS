@@ -468,7 +468,6 @@ function renderEtat(body){
   body.innerHTML='<p class="ref-hint">Stock théorique de référence — <b>seule base du Bilan et des écarts</b>. Une valeur par article ; vide = 0.</p>'
     +'<div class="etat-date"><label for="etatDate">📅 Date de cet état de stock</label><input id="etatDate" type="date" value="'+esc(ETAT_DATE||'')+'"><div class="etat-date-h">Le Bilan le comparera automatiquement à l’inventaire du même jour ou juste avant (jamais postérieur).</div></div>'
     +'<button class="ref-add" id="etatXlsx">Importer le fichier Excel (.xlsx)</button>'
-    +'<div class="ref-paste"><textarea id="etatPaste" placeholder="Ou coller depuis Excel : une ligne par article&#10;code[tab ou ;]valeur"></textarea><button id="etatPasteBtn">Importer le collage</button></div>'
     +'<div class="ref-list">'+rows+'</div>'
     +'<button class="ref-sec" id="etatReset">Recharger l\u2019exemple de test</button>';
   const ed=$('#etatDate');if(ed)ed.addEventListener('input',e=>{ETAT_DATE=e.target.value||'';lsSet('lep_etat_date',ETAT_DATE);});
@@ -476,15 +475,6 @@ function renderEtat(body){
     const code=inp.closest('.ref-row').dataset.code;
     inp.addEventListener('input',e=>{const v=e.target.value.trim();if(v==='')delete ETAT[code];else ETAT[code]=pnum(v);lsSet('lep_etat',ETAT);});
   });
-  $('#etatPasteBtn').onclick=()=>{
-    const txt=$('#etatPaste').value||'';let n=0;
-    txt.split(/\r?\n/).forEach(line=>{
-      const parts=line.split(/[\t;]/);if(parts.length<2)return;
-      const code=parts[0].trim();
-      if(/^\d{6}$/.test(code)){ETAT[code]=pnum(parts[1]);n++;}
-    });
-    lsSet('lep_etat',ETAT);renderRef();toast(n+' ligne(s) importée(s)');
-  };
   $('#etatXlsx').onclick=()=>{
     const fi=document.createElement('input');fi.type='file';fi.accept='.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';fi.style.display='none';
     fi.onchange=async ev=>{const f=ev.target.files[0];if(!f)return;
