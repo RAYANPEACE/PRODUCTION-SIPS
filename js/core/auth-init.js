@@ -90,7 +90,7 @@ function authDialog(cfg){
       try{
         var body=cfg.withNom?{nom:nom,username:username,password:password}:{username:username,password:password};
         var r=await sipsFetch(cfg.endpoint,{method:'POST',body:JSON.stringify(body)});
-        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();authMarkVerified();
+        SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();authMarkVerified();markAuthConfigured();
         dlg.close();dlg.remove();
         if(SESSION&&SESSION.mustChangePassword){await authChangePasswordDialog(true);}
         resolve(true);
@@ -175,6 +175,7 @@ async function authBootstrap(){
     await authBlockedOfflineDialog();return;
   }
   if(setupInfo.needsSetup){await showSetupDialog();return;}
+  markAuthConfigured();   // serveur avec comptes : cet appareil applique le verrou strict hors-ligne
   if(SESSION_TOKEN){
     try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();authMarkVerified();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
     catch(e){

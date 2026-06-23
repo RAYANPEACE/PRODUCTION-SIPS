@@ -41,6 +41,14 @@ let SESSION_LAST_VERIFIED=lsGet('sips_session_verified_at','');
 // statut "Verification..." sans fin, historique local qui ne s'affiche pas,
 // soumissions hors-ligne sans retour (l'utilisateur re-clique -> doublons).
 const SIPS_FETCH_TIMEOUT=10000;
+// ----- Verrou strict hors-ligne (securite auth) -----
+// Cet appareil sait-il que le serveur utilise des comptes ? Persistant : une fois
+// vrai, reste vrai. Marque quand on confirme un serveur configure ou apres login.
+function markAuthConfigured(){try{lsSet('sips_auth_configured',true);}catch(e){}}
+function authConfigured(){return !!(lsGet('sips_auth_configured',false)||SESSION||SESSION_TOKEN||SESSION_LAST_VERIFIED);}
+// Vrai = comptes serveur actifs MAIS aucune session reelle en cache.
+// Dans ce cas : pas d'admin par PIN, pas de soumission serveur sous identite libre.
+function sipsRequiresLogin(){return authConfigured()&&!(SESSION&&SESSION_TOKEN);}
 function setSessionOffline(v){
   SESSION_OFFLINE=!!v;
   try{document.body.classList.toggle('session-offline',SESSION_OFFLINE);}catch(e){}
@@ -113,6 +121,9 @@ function sipsQueue(type,payload,note){
   return true;
 }
 async function sipsSubmit(type,payload,note){
+  // Verrou strict : des comptes serveur existent mais aucune session reelle en
+  // cache -> on refuse de soumettre (et de mettre en file) sous une identite libre.
+  if(sipsRequiresLogin()){toast('Connexion requise : reconnecte-toi (serveur disponible) pour soumettre au serveur.');return {ok:false,queued:false,error:'login-required',loginRequired:true};}
   const body={type,payload,author:sipsActor(),note:note||''};
   try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast(r.duplicate?'Deja soumis au serveur':'Soumis au serveur');return {ok:true,duplicate:!!r.duplicate,submission:r.submission};}
   catch(e){
@@ -230,6 +241,8 @@ function askPin(){
 }
 function toggleAdmin(){
   if(ADMIN){ADMIN=false;updateAdminUI();switchTab('accueil');toast('Mode employé');return;}
+  // Verrou strict : comptes serveur actifs mais pas de session -> pas d'admin par PIN.
+  if(sipsRequiresLogin()){toast('Comptes serveur actifs : connecte-toi pour les droits admin.');return;}
   if(askPin()){ADMIN=true;updateAdminUI();toast('Mode admin déverrouillé');}
 }
 function updateAdminUI(){
@@ -255,6 +268,8 @@ function applySession(){
 function hasTab(id){
   if(SESSION&&Array.isArray(SESSION.tabs))return SESSION.tabs.indexOf(id)>=0;
   var t=TABS.find(function(x){return x[0]===id;});if(!t)return false;
+  // Verrou strict : sans vrai compte, le PIN ne donne plus acces aux onglets admin.
+  if(sipsRequiresLogin())return !t[3];
   return !t[3]||ADMIN;
 }
 
