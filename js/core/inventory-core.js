@@ -860,11 +860,6 @@ async function openHistory(){
       });
     }
   });
-  const fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
-  fi.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importInventory(rd.result);};rd.readAsText(f);};
-  const imp=document.createElement('button');imp.style.cssText='width:100%;margin-bottom:10px;padding:10px;border-radius:8px;border:1.5px solid #c5e4d2;color:var(--green);background:#e7f3ec;font-weight:700;font-size:14px';
-  imp.textContent='Importer un inventaire reçu (.txt)';imp.onclick=function(){fi.click();};
-  list.append(fi,imp);
   if(!recs.length){
     const p=document.createElement('p');p.style.cssText='color:#6a7280;font-size:13px;margin:4px 0 0;line-height:1.5';
     p.textContent='Aucun inventaire local archive pour l\u2019instant. Importe un fichier recu avec le bouton ci-dessus, ou une fiche sera creee quand tu soumets / demarres un inventaire.';
@@ -1058,9 +1053,6 @@ async function shareJSON(){
   download(name,content,'text/plain');toast('Partage indisponible ici \u2014 fichier enregistré');
 }
 bindClick('#submitInvBtn',submitInventoryServer);
-bindClick('#shareBtn',shareJSON);
-$('#dlBtn').onclick=()=>{archiveCurrent();download(exportName(),buildJSON(),'text/plain');toast('Fichier enregistré');};
-bindClick('#validBtn',validateCurrent);
 /* Valide et verrouille l'inventaire EN COURS (l'archive + locked), puis ouvre un comptage vierge */
 async function validateCurrent(){
   if(RO){toast('Mode consultation — non modifiable');return;}
