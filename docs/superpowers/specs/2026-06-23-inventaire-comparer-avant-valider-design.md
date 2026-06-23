@@ -21,6 +21,7 @@ Objectif de B : le **flux d'un seul compteur**. Le multi-compteur (fragmenté) e
 6. La **Sauvegarde complète (Accueil)** reste (disaster-recovery, séparée du flux inventaire).
 7. Le **compteur d'origine** reprend le recomptage (pas n'importe qui).
 8. Le mode **100 % local d'origine** (aucun serveur jamais configuré) ne doit pas être cassé.
+9. **Article non compté = écart nul (aligné au théorique).** Un article non compté ce tour ne prend **ni** la valeur du dernier inventaire **ni** zéro : il est traité comme **conforme au stock théorique (ERP `ETAT`)** → écart nul. **Seuls les articles réellement comptés produisent un écart** dans le Bilan. L'inventaire enregistre par article « compté (valeur) » ou « non compté » (on ne remplit pas les non-comptés avec le théorique en douce ; c'est le Bilan qui les neutralise).
 
 ## 3. Périmètre
 
@@ -67,6 +68,7 @@ Compteur d'origine (onglet Comptage, section "À recompter")
 ### 5.1 Bilan de revue (réutilise `buildBilan`)
 - Aujourd'hui `buildBilan` / `findBilanPair` (`js/features/analysis-bilan-feuillet.js`) prennent la référence physique depuis les inventaires verrouillés locaux et la comparent à `ETAT`/`ETAT_DATE`.
 - **Changement** : extraire/paramétrer le calcul pour accepter un **snapshot physique fourni** (`st.c` d'une soumission) au lieu d'aller le chercher. Une fonction type `buildBilanFrom(snapshot)` réutilisée par le Bilan courant ET la revue.
+- **Règle « non compté = écart nul »** (décision 9) : l'écart n'est calculé que sur les articles **comptés** (`st.c[code].counted === true`). Un article non compté est neutralisé (aligné au théorique `ETAT`), il n'apparaît pas comme écart. À implémenter dans `buildBilanFrom`.
 - La revue ouvre une **vue plein écran** (même surface que l'onglet Bilan, plus lisible sur mobile) intitulée « Revue inventaire — <compteur> <date> », rendue par le moteur Bilan, avec en tête les boutons **Valider** / **Demander recomptage** et un retour vers l'onglet Serveur.
 - **Pas d'ajout serveur pour comparer** : l'admin lit déjà le détail de la soumission (avec `st`) via `GET /api/submissions/:id`.
 
