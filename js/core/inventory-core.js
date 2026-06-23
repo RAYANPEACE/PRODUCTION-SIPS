@@ -843,7 +843,7 @@ function sipsReloadRecount(s){
   ST=JSON.parse(JSON.stringify(p.st));mergeAndMigrate();
   ST.id='inv_'+Date.now();           // nouvelle fiche : ne pas ecraser l originale rejetee
   ST.sessionStart=Date.now();
-  INV_RECOUNT_OF={id:s.id,date:p.date||''};
+  INV_RECOUNT_OF={stId:ST.id,id:s.id,date:p.date||''};
   $('#agent').value=ST.agent||'';$('#date').value=ST.date||todayStr();
   saveCounts();
   const dlg=$('#histDlg');if(dlg&&dlg.open)dlg.close();
@@ -1056,7 +1056,7 @@ function inventoryServerPayload(){
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
   const out={kind:'inventory',date:ST.date||todayStr(),agent:ST.agent||'',filled:filled,bilan:bilan,detail:detail,st:snapshot(),submittedAt:new Date().toISOString()};
-  if(INV_RECOUNT_OF)out.recountOf=clone(INV_RECOUNT_OF);
+  if(INV_RECOUNT_OF&&INV_RECOUNT_OF.stId===ST.id)out.recountOf={id:INV_RECOUNT_OF.id,date:INV_RECOUNT_OF.date};
   return out;
 }
 async function submitInventoryServer(){
