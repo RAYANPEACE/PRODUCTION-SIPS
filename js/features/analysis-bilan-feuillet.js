@@ -367,20 +367,30 @@ function bilPairBanner(swapped,pair,posterior){
     return '<div class="bil-pair warn">⚠ Aucun inventaire <b>validé 🔒</b> daté du <b>'+esc(ETAT_DATE)+'</b> ou avant. Valide l’inventaire de référence (Historique → 🔒 Valider).'+(posterior?(' '+posterior+' inventaire(s) validé(s) postérieur(s) existent mais ne servent pas de référence.'):'')+'</div>';
   return '<div class="bil-pair warn">⚠ Aucun inventaire <b>validé 🔒</b>. Valide un inventaire (Historique → 🔒 Valider) pour comparer l’état de stock à un comptage. (Le brouillon en cours n’est pas utilisé comme référence.)</div>';
 }
-/* Trouve l'inventaire à apparier à l'état de stock : date ≤ ETAT_DATE, le plus proche (jamais postérieur) */
+/* Trouve l'inventaire de reference a apparier a l'etat de stock (ERP). Pool = inventaires VALIDES
+   SERVEUR (officiels, payload.st) + inventaires verrouilles LOCAUX (repli transition). Selection :
+   le plus recent (<= ETAT_DATE si renseignee, jamais posterieur). A date egale, le serveur l'emporte. */
 async function findBilanPair(){
   let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
-  // Seuls les inventaires VALIDÉS (verrouillés) servent de référence
-  const invs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'
+  const localInvs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'
     &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
     &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
-    .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
-  if(!invs.length)return {pair:null,posterior:0};
+    .map(r=>({date:r.date||'',agent:r.agent||'',st:r.st,savedAt:r.savedAt||0,server:false}));
+  let serverInvs=[];
+  try{
+    const rows=await sipsRecords('inventory',{timeoutMs:1200});
+    serverInvs=(rows||[]).filter(r=>r&&r.payload&&r.payload.st&&r.payload.st.c)
+      .map(r=>({date:(r.payload.date||''),agent:(r.payload.agent||''),st:r.payload.st,savedAt:Date.parse(r.validatedAt||r.createdAt||'')||0,server:true}));
+  }catch(e){serverInvs=[];}
+  const pool=serverInvs.concat(localInvs);
+  if(!pool.length)return {pair:null,posterior:0};
+  // tri : date desc ; a date egale, serveur (officiel) d'abord ; puis savedAt desc
+  pool.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.server?1:0)-(a.server?1:0))||((b.savedAt||0)-(a.savedAt||0)));
   if(ETAT_DATE){
-    const le=invs.filter(r=>String(r.date||'')<=ETAT_DATE);
-    return {pair:le[0]||null,posterior:invs.length-le.length};
+    const le=pool.filter(r=>String(r.date||'')<=ETAT_DATE);
+    return {pair:le[0]||null,posterior:pool.length-le.length};
   }
-  return {pair:invs[0],posterior:0};   // sans date d'état : dernier inventaire validé
+  return {pair:pool[0],posterior:0};
 }
 async function renderBilan(){
   const app=$('#app');
