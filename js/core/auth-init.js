@@ -177,7 +177,14 @@ async function authBootstrap(){
   if(setupInfo.needsSetup){await showSetupDialog();return;}
   if(SESSION_TOKEN){
     try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();authMarkVerified();if(SESSION.mustChangePassword)await authChangePasswordDialog(true);return;}
-    catch(e){authClear();}
+    catch(e){
+      // 401/403 = session reellement invalidee par le serveur -> deconnexion + login.
+      // Tout le reste (reseau coupe, timeout, 5xx) = serveur indisponible : on NE vide PAS
+      // la session, on travaille hors ligne avec la session en cache (Phase 5).
+      if(e&&(e.status===401||e.status===403)){authClear();}
+      else if(SESSION_TOKEN&&SESSION){setSessionOffline(true);return;}
+      else{authClear();}
+    }
   }
   await showLoginDialog(false);
 }
