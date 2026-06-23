@@ -338,16 +338,60 @@ function sipsSubmissionDetailHTML(s){
   }
   if(s.type==='inventory'){
     const detail=Object.keys(p.detail||{}).map(code=>Object.assign({code:code},p.detail[code]));
-    return sipsKV([['Date',frDate(p.date)],['Compteur',p.agent],['Articles comptes',p.filled],['Alertes bilan',p.bilan&&p.bilan.nbAlertes],['Ecart total',p.bilan&&p.bilan.total]])
+    return sipsKV([['Date',frDate(p.date)],['Compteur',p.agent],['Articles comptes',p.filled],['Recomptage de',p.recountOf&&p.recountOf.id],['Alertes bilan',p.bilan&&p.bilan.nbAlertes],['Ecart total',p.bilan&&p.bilan.total]])
+      +(s.recountRequested?'<p style="color:var(--red);font-size:12px;margin:6px 0 0">Recomptage demande</p>':'')
       +sipsLines('Articles comptes',detail.slice(0,80),[['code','Code'],['n','Article'],['p','Physique'],['t','Theorique'],['e','Ecart']]);
   }
   return '<pre style="white-space:pre-wrap;font-size:12px;background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0 0">'+esc(JSON.stringify(p,null,2).slice(0,2000))+'</pre>';
+}
+/* Vue de revue plein ecran : compare le snapshot d une soumission inventaire a l ERP admin (ETAT),
+   reutilise le moteur Bilan (buildBilanFrom), puis offre Valider / Demander recomptage. */
+function sipsOpenInventoryReview(s){
+  if(!s){toast('Soumission introuvable');return;}
+  const p=s.payload||{};
+  if(!p.st||!p.st.c){toast('Soumission sans detail de comptage');return;}
+  let r;try{r=buildBilanFrom(p.st);}catch(e){toast('Bilan indisponible : '+e.message);return;}
+  const counted=r.rows.filter(x=>x.counted).length;
+  const who=p.agent||(s.author&&s.author.name)||'—';
+  const app=$('#app');
+  app.innerHTML='<div class="bilan-wrap">'
+    +'<div class="bil-ctrl"><button id="revBack" class="b-sec">← Retour serveur</button>'
+    +'<button id="revValidate" class="b-go">✅ Valider</button>'
+    +'<button id="revRecount" class="del">↩ Demander recomptage</button></div>'
+    +'<h2 class="prod-title">Revue inventaire — '+esc(who)+' '+esc(frDate(p.date)||'')+'</h2>'
+    +'<div class="bil-pair '+(r.alertes.length?'warn':'ok')+'">'
+      +(r.alertes.length?('⚠ '+r.alertes.length+' ecart(s) a verifier'):'✓ Aucun ecart bloquant')
+      +' · ecart total <b>'+fmtq(Math.round(r.total*1000)/1000)+'</b> · '+counted+' article(s) comptes vs etat de stock du <b>'+esc(ETAT_DATE||'—')+'</b></div>'
+    +fullTablesHTML(r)+'</div>';
+  $('#revBack').onclick=()=>{switchTab('serveur');};
+  $('#revValidate').onclick=()=>sipsReviewDecide(s.id,'validate');
+  $('#revRecount').onclick=()=>sipsReviewDecide(s.id,'recount');
+}
+async function sipsReviewDecide(id,kind){
+  const actor=(typeof USR!=='undefined'&&USR.nom)||'admin';
+  if(kind==='validate'){
+    if(!confirm('Valider cet inventaire ?\n\nIl deviendra la base officielle du Bilan.'))return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('valider cet inventaire')))return;
+    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/validate',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:actor})});toast('Inventaire valide');}
+    catch(e){toast('Erreur serveur : '+e.message);return;}
+  }else{
+    const note=prompt('Motif du recomptage (articles a revoir) ?','Recompter les ecarts signales');
+    if(note===null)return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('demander un recomptage')))return;
+    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/reject',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:actor,note:note||'',recountRequested:true})});toast('Recomptage demande');}
+    catch(e){toast('Erreur serveur : '+e.message);return;}
+  }
+  switchTab('serveur');
 }
 function sipsSubmissionHTML(s){
   const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
   const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
   const summary=sipsPayloadSummary(s.type,s.payload);
-  const actions=s.status==='submitted'?'<button data-act="validate">Valider</button>'+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>':'';
+  const actions=s.status==='submitted'
+    ?(s.type==='inventory'
+       ?'<button data-act="compare">Comparer au stock (Bilan)</button><button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>'
+       :'<button data-act="validate">Valider</button>'+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>')
+    :'';
   return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+actions+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
 }
 function sipsRecordHTML(r){
@@ -427,7 +471,7 @@ function bindSyncBox(){
 }
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
-  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>sipsDecide(id,b.dataset.act));});}
+  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>{if(b.dataset.act==='compare'){const sub=rows.find(x=>x.id===id);b.onclick=()=>sipsOpenInventoryReview(sub);}else{b.onclick=()=>sipsDecide(id,b.dataset.act);}});});}
   catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi avec un compte admin ou renseigne le PIN serveur.':'')+'</p>';}
   try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
