@@ -55,6 +55,7 @@ const STRIPE={carton:'s-cart',sac:'s-sac',cartvide:'s-cv',bobine:'s-bob',vrac:'s
 let CFG=loadCfg();                 // {code:{...params}}
 let ST=freshCounts();              // remplacé au chargement IndexedDB
 let RO=false;                      // mode consultation (lecture seule)
+let INV_RECOUNT_OF=null;           // {id,date} de la soumission rejetee en cours de recomptage (B)
 function mergeAndMigrate(){
   if(!ST.id)ST.id='inv_'+Date.now();
   if(ST.sessionStart==null)ST.sessionStart=Date.now();  // début de la session de comptage en cours
@@ -830,6 +831,25 @@ async function importAll(text){
     alert("Import : "+toImport.length+" ajoutee(s).\nRechargement en cours...");location.reload();
   }catch(e){rollbackLS();alert("Echec de l’import : aucune donnee n'a ete modifiee.");}
 }
+/* Recomptage non destructif (B) : recharge le snapshot d une soumission inventaire rejetee,
+   pre-rempli (jamais zero), dans un NOUVEAU comptage modifiable. La prochaine soumission portera
+   recountOf={id,date} pour lier la chaine de recomptage. */
+function sipsReloadRecount(s){
+  const p=s&&s.payload||{};
+  if(!p.st||!p.st.c){toast('Soumission sans detail de comptage');return;}
+  if(FRAG)fragExitState();
+  archiveCurrent();
+  RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
+  ST=JSON.parse(JSON.stringify(p.st));mergeAndMigrate();
+  ST.id='inv_'+Date.now();           // nouvelle fiche : ne pas ecraser l originale rejetee
+  ST.sessionStart=Date.now();
+  INV_RECOUNT_OF={id:s.id,date:p.date||''};
+  $('#agent').value=ST.agent||'';$('#date').value=ST.date||todayStr();
+  saveCounts();
+  const dlg=$('#histDlg');if(dlg&&dlg.open)dlg.close();
+  render();window.scrollTo(0,0);
+  toast('Recomptage charge — corrige les articles fautifs puis Soumets');
+}
 async function openHistory(){
   const dlg=$('#histDlg');
   const list=$('#histList');list.innerHTML='Chargement…';
@@ -843,6 +863,25 @@ async function openHistory(){
   const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde locale';impB.onclick=function(){fiB.click();};
   bk.append(expB,expLB,fiB,impB);list.append(bk);
   if(dlg&&!dlg.open)dlg.showModal();
+  // Section "A recompter" : recomptages demandes a CE compteur (ses inventaires rejetes recountRequested).
+  const recountHost=document.createElement('div');list.append(recountHost);
+  if(typeof SESSION!=='undefined'&&SESSION){
+    sipsFetch('/api/submissions?status=rejected&type=inventory&include=payload').then(function(data){
+      if(dlg&&!dlg.open)return;
+      const rows=(data&&data.submissions||[]).filter(function(s){return s&&s.recountRequested;});
+      if(!rows.length)return;
+      const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--red);margin:0 0 6px;text-transform:uppercase';
+      h.textContent='↩ A recompter';recountHost.append(h);
+      rows.sort(function(a,b){return String(b.createdAt||'').localeCompare(String(a.createdAt||''));}).forEach(function(s){
+        const p=s.payload||{};
+        const it=document.createElement('div');it.className='hist-item';
+        it.style.cssText='border:1px solid #f0c0c0;background:#fdf3f3';
+        it.innerHTML='<div class="info"><b>'+esc(p.date||'—')+'</b><span>'+esc(p.agent||'—')+' · '+(p.filled||0)+' art. · '+esc(s.decisionNote||'Recomptage demande')+'</span></div>';
+        const open=document.createElement('button');open.textContent='Reprendre';open.onclick=function(){sipsReloadRecount(s);};
+        it.append(open);recountHost.append(it);
+      });
+    }).catch(function(){});
+  }
   const serverHost=document.createElement('div');list.append(serverHost);
   sipsRecords('inventory',{timeoutMs:1200}).then(serverRows=>{
     if(dlg&&!dlg.open)return;
@@ -1016,7 +1055,9 @@ function showSummary(){$('#out').innerHTML=buildSummaryHTML();$('#dlg').showModa
 function inventoryServerPayload(){
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
-  return {kind:'inventory',date:ST.date||todayStr(),agent:ST.agent||'',filled:filled,bilan:bilan,detail:detail,st:snapshot(),submittedAt:new Date().toISOString()};
+  const out={kind:'inventory',date:ST.date||todayStr(),agent:ST.agent||'',filled:filled,bilan:bilan,detail:detail,st:snapshot(),submittedAt:new Date().toISOString()};
+  if(INV_RECOUNT_OF)out.recountOf=clone(INV_RECOUNT_OF);
+  return out;
 }
 async function submitInventoryServer(){
   if(RO){toast('Mode consultation — non modifiable');return;}
@@ -1034,6 +1075,7 @@ async function submitInventoryServer(){
     // bloque sur le resume et le message de confirmation passe DERRIERE ce dialog
     // modal (couche superieure). On re-affiche un message clair une fois ferme.
     if(r&&(r.ok||r.queued)){
+      INV_RECOUNT_OF=null;
       const dlg=$('#dlg');if(dlg&&dlg.open)dlg.close();
       toast(r.ok?'Inventaire soumis au serveur':'Inventaire ajouté en attente (hors ligne)');
     }
