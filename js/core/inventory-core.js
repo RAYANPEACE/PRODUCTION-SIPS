@@ -862,7 +862,7 @@ async function openHistory(){
   });
   if(!recs.length){
     const p=document.createElement('p');p.style.cssText='color:#6a7280;font-size:13px;margin:4px 0 0;line-height:1.5';
-    p.textContent='Aucun inventaire local archive pour l\u2019instant. Importe un fichier recu avec le bouton ci-dessus, ou une fiche sera creee quand tu soumets / demarres un inventaire.';
+    p.textContent='Aucun inventaire local archive pour l\u2019instant. Une fiche sera creee quand tu soumets ou demarres un inventaire.';
     list.append(p);
   }
   else{
