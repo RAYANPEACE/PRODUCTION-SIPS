@@ -439,7 +439,8 @@ async function renderServeur(){
     +'<div id="srvSyncBox">'+renderSyncBox('Etat non teste',null)+'</div>'
     +'<div class="pf-sec"><div class="pf-h">Utilisateurs</div><div class="pf-actions"><button id="srvUserNew" class="b-go">+ Nouvel utilisateur</button><button id="srvUserReload" class="b-sec">Actualiser utilisateurs</button></div><div id="srvUsers">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Soumissions en attente de validation</div><div id="srvSubs">Chargement...</div></div>'
-    +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div></div>';
+    +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div>'
+    +'<div class="pf-sec"><div class="pf-h">Journal (audit)</div><div id="srvJournal">Chargement...</div></div></div>';
   $('#srvSave').onclick=function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);toast('Configuration serveur enregistree');renderServeur();};
   $('#srvTest').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);const r=await sipsPing();$('#srvStatus').textContent=r.ok?'Serveur connecte - '+r.data.time:'Hors ligne - '+r.error;};
   $('#srvRefresh').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsLoadServeur();toast('Liste serveur actualisee');};
@@ -450,6 +451,61 @@ async function renderServeur(){
   $('#srvUserReload').onclick=function(){sipsLoadUsers();};
   await sipsLoadServeur();
   await sipsLoadUsers();
+  await sipsLoadJournal();
+}
+/* ---- Journal (audit) : lecture admin + suppression CIBLEE (entree / periode) ---- */
+let SIPS_AUDIT_FILTER='all';
+function sipsAuditLabel(a){return ({
+  'submission.created':'Soumission creee','submission.validated':'Validee','submission.rejected':'Rejetee',
+  'submission.duplicate':'Doublon ignore','submission.duplicate_lot':'Doublon lot ignore',
+  'quality.signature':'Signature qualite','record.cancelled':'Mouvement annule','audit.pruned':'Journal purge'
+})[a]||a||'Action';}
+function sipsAuditDetail(e){
+  const d=(e&&e.details)||{};const bits=[];
+  if(d.type)bits.push(sipsTypeLabel(d.type));
+  if(d.lot)bits.push('lot '+d.lot);
+  if(d.note)bits.push('motif : '+d.note);
+  if(d.reason)bits.push('motif : '+d.reason);
+  if(typeof d.removed==='number')bits.push(d.removed+' entree(s)'+(d.beforeDate?(' (<= '+d.beforeDate+')'):''));
+  if(d.id)bits.push('#'+String(d.id).slice(0,12));
+  return bits.join(' · ');
+}
+async function sipsLoadJournal(){
+  const host=$('#srvJournal');if(!host)return;
+  let rows=[],total=0;
+  try{const data=await sipsFetch('/api/audit?limit=300',{headers:sipsAdminHeaders()});rows=data.audit||[];total=data.total||rows.length;}
+  catch(e){host.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Journal indisponible : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi en admin ou renseigne le PIN serveur.':'')+'</p>';return;}
+  const cats=[['all','Tout'],['record.cancelled','Annulations'],['submission.rejected','Rejets'],['submission.validated','Validations'],['submission.created','Creations']];
+  const filtered=SIPS_AUDIT_FILTER==='all'?rows:rows.filter(r=>r.action===SIPS_AUDIT_FILTER);
+  let h='<div class="pf-actions" style="flex-wrap:wrap;gap:6px;align-items:center">'
+    +'<select id="audFilter">'+cats.map(c=>'<option value="'+c[0]+'"'+(c[0]===SIPS_AUDIT_FILTER?' selected':'')+'>'+c[1]+'</option>').join('')+'</select>'
+    +'<input id="audBefore" type="date" style="max-width:160px">'
+    +'<button id="audDelBefore" class="b-sec">Supprimer cette periode et avant</button></div>'
+    +'<p class="ref-hint" style="margin:6px 0">'+filtered.length+' entree(s) affichee(s) sur '+total+' au total. Lecture seule ; suppression ciblee (entree ou periode).</p>';
+  if(!filtered.length)h+='<p style="color:#6a7280;font-size:13px;margin:0">Aucune entree pour ce filtre.</p>';
+  else h+=filtered.slice(0,300).map(function(e){
+    const when=e.at?new Date(e.at).toLocaleString('fr-FR'):'?';
+    return '<div class="sync-row" data-aud="'+esc(e.id)+'"><div class="sync-main"><b>'+esc(sipsAuditLabel(e.action))+'</b><span>'+esc(sipsAuditDetail(e))+'</span><small>'+esc(when)+' - '+esc(e.actor||'?')+'</small></div><button class="del" data-auddel="'+esc(e.id)+'">Suppr.</button></div>';
+  }).join('');
+  host.innerHTML=h;
+  const fl=$('#audFilter');if(fl)fl.onchange=function(){SIPS_AUDIT_FILTER=fl.value;sipsLoadJournal();};
+  const bd=$('#audDelBefore');if(bd)bd.onclick=function(){const d=$('#audBefore').value;if(!d){toast('Choisis une date');return;}sipsAuditDeleteBefore(d);};
+  host.querySelectorAll('[data-auddel]').forEach(function(b){b.onclick=function(){sipsAuditDelete([b.dataset.auddel]);};});
+}
+async function sipsAuditDelete(ids){
+  if(!ids||!ids.length)return;
+  if(!confirm('Supprimer '+ids.length+' entree(s) du journal ?\n\nCette suppression est elle-meme tracee.'))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('supprimer une entree du journal')))return;
+  try{const r=await sipsFetch('/api/audit/delete',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({ids:ids,actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast((r.removed||0)+' entree(s) supprimee(s)');}
+  catch(e){toast('Erreur : '+e.message);return;}
+  sipsLoadJournal();
+}
+async function sipsAuditDeleteBefore(beforeDate){
+  if(!confirm('Supprimer toutes les entrees du journal datees du '+beforeDate+' ou avant ?\n\nCette suppression est elle-meme tracee.'))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('supprimer une periode du journal')))return;
+  try{const r=await sipsFetch('/api/audit/delete',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({beforeDate:beforeDate,actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast((r.removed||0)+' entree(s) supprimee(s)');}
+  catch(e){toast('Erreur : '+e.message);return;}
+  sipsLoadJournal();
 }
 function bindSyncBox(){
   const tst=$('#srvSyncTest');if(tst)tst.onclick=async function(){
