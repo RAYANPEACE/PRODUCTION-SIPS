@@ -439,6 +439,9 @@ async function sipsDecide(id,act){
   // Resynchronise la liste avec le serveur dans tous les cas : un element deja
   // traite (ailleurs / double-clic) disparait au lieu de rester affiche.
   try{await sipsLoadServeur();}catch(e){}
+  // Met aussi a jour la pastille de notifications (sinon elle reste figee
+  // jusqu'au prochain refresh complet de la page).
+  try{await sipsRefreshNotifications();}catch(e){}
 }
 async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');

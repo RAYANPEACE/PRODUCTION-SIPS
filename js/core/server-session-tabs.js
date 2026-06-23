@@ -36,6 +36,11 @@ let SESSION=lsGet('sips_session',null);
 let SESSION_TOKEN=lsGet('sips_token','');
 let SESSION_OFFLINE=false;
 let SESSION_LAST_VERIFIED=lsGet('sips_session_verified_at','');
+// Timeout par defaut des appels serveur. Sans lui, fetch() reste bloque longtemps
+// quand le PC serveur est injoignable (serveur eteint mais Wi-Fi encore actif) :
+// statut "Verification..." sans fin, historique local qui ne s'affiche pas,
+// soumissions hors-ligne sans retour (l'utilisateur re-clique -> doublons).
+const SIPS_FETCH_TIMEOUT=10000;
 function setSessionOffline(v){
   SESSION_OFFLINE=!!v;
   try{document.body.classList.toggle('session-offline',SESSION_OFFLINE);}catch(e){}
@@ -64,10 +69,11 @@ async function sipsFetch(path,opt){
   const fetchOpt=Object.assign({cache:'no-store'},opt,{headers});
   delete fetchOpt.timeoutMs;
   let timer=null;
-  if(opt.timeoutMs&&typeof AbortController!=='undefined'){
+  const tmo=opt.timeoutMs||SIPS_FETCH_TIMEOUT;
+  if(tmo&&typeof AbortController!=='undefined'){
     const ctl=new AbortController();
     fetchOpt.signal=ctl.signal;
-    timer=setTimeout(()=>ctl.abort(),opt.timeoutMs);
+    timer=setTimeout(()=>ctl.abort(),tmo);
   }
   let res;
   try{res=await fetch(sipsServerUrl()+path,fetchOpt);}
