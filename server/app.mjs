@@ -1285,7 +1285,35 @@ async function handleApiRoutes(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/audit') {
     if (!(await requireAdmin(req, res))) return;
     const db = await readDb();
-    return sendJson(res, 200, { ok: true, audit: db.audit.slice().reverse() });
+    const limit = Number(url.searchParams.get('limit')) || 0;
+    let rows = db.audit.slice().reverse();
+    if (limit > 0) rows = rows.slice(0, limit);
+    return sendJson(res, 200, { ok: true, audit: rows, total: db.audit.length });
+  }
+
+  // Suppression CIBLEE du journal (admin) : par ids (entree par entree) OU par
+  // date (entrees jusqu'au jour beforeDate inclus). Jamais de purge globale :
+  // sans critere -> 400. La suppression est elle-meme journalisee (audit.pruned).
+  if (req.method === 'POST' && url.pathname === '/api/audit/delete') {
+    if (!(await requireAdmin(req, res))) return;
+    const body = await readBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
+    const beforeDate = body.beforeDate ? String(body.beforeDate) : null; // 'YYYY-MM-DD'
+    if ((!ids || !ids.length) && !beforeDate) {
+      return sendJson(res, 400, { ok: false, error: 'Suppression ciblee requise : ids (entrees) ou beforeDate (periode). Pas de purge globale.' });
+    }
+    const db = await readDb();
+    const n0 = db.audit.length;
+    if (ids && ids.length) {
+      const set = new Set(ids);
+      db.audit = db.audit.filter(e => !set.has(e.id));
+    } else {
+      db.audit = db.audit.filter(e => String(e.at || '').slice(0, 10) > beforeDate);
+    }
+    const removed = n0 - db.audit.length;
+    audit(db, 'audit.pruned', body.actor || 'admin', { removed, mode: (ids && ids.length) ? 'ids' : 'beforeDate', beforeDate: beforeDate || null, count: (ids && ids.length) || null });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, removed });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/backup') {

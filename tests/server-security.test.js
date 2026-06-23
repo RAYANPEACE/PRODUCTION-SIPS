@@ -354,6 +354,22 @@ async function main() {
     check('[B3] le record inventaire valide est lisible avec son snapshot st',
       !!invRecord && invRecord.payload && invRecord.payload.st && invRecord.payload.st.c && !!invRecord.payload.st.c['B3-CODE']);
 
+    // ---- [B4] journal : suppression CIBLEE (ids / periode), jamais de purge globale, admin requis ----
+    const audAll = await api('GET', '/api/audit', { token: adminToken });
+    const audRows = (audAll.json && audAll.json.audit) || [];
+    const firstId = audRows.length ? audRows[0].id : null;
+    const totalBefore = audAll.json && audAll.json.total;
+    const delNoCriteria = await api('POST', '/api/audit/delete', { token: adminToken, body: {} });
+    const delNonAdmin = await api('POST', '/api/audit/delete', { token: invCounter, body: { ids: [firstId] } });
+    const delById = await api('POST', '/api/audit/delete', { token: adminToken, body: { ids: [firstId] } });
+    const audAfter = await api('GET', '/api/audit', { token: adminToken });
+    const stillHasDeleted = ((audAfter.json && audAfter.json.audit) || []).some(e => e.id === firstId);
+    const delByDate = await api('POST', '/api/audit/delete', { token: adminToken, body: { beforeDate: '2026-06-23' } });
+    check('[B4] suppression sans critere refusee (pas de purge globale)', delNoCriteria.status === 400);
+    check('[B4] suppression journal refusee a un non-admin', delNonAdmin.status === 401);
+    check('[B4] suppression par id retire l entree ciblee', delById.status === 200 && delById.json.removed >= 1 && !stillHasDeleted);
+    check('[B4] suppression par periode (beforeDate) retire les entrees anterieures', delByDate.status === 200 && typeof delByDate.json.removed === 'number');
+
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');
     const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');
