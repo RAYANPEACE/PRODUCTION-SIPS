@@ -1,43 +1,11 @@
 /* ================= MODULE PRODUCTION ================= */
 function todayStr(){const d=new Date();const p=n=>(n<10?'0':'')+n;return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 function frDate(s){if(!s)return '—';const m=String(s).split('-');return m.length===3?m[2]+'/'+m[1]+'/'+m[0]:s;}
-function dataUrlToFile(durl,name){return fetch(durl).then(r=>r.blob()).then(b=>new File([b],name,{type:b.type||'image/jpeg'}));}
 let PF=null;
 function embType(p){const a=REFS.find(x=>x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
 function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',perso:[],photos:[]};}
 function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
 function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||(b.perso||[]).some(x=>x.lbl&&num(x.qte)>0);}
-function blockDechets(b){
-  const emb=embType(b.p);const parts=[];
-  if(num(b.w_emb)>0)parts.push((emb==='sac'?'Sac':'Carton')+' '+fmt(num(b.w_emb)));
-  if(emb==='carton'&&num(b.w_film)>0)parts.push('Film '+fmt(num(b.w_film)));
-  if(num(b.w_mel)>0)parts.push('Mélange '+fmt(num(b.w_mel))+' kg');
-  (b.perso||[]).forEach(x=>{if(x.lbl&&num(x.qte)>0)parts.push(x.lbl+' '+fmt(num(x.qte)));});
-  return parts;
-}
-function prodShareText(pf){
-  const L=[];L.push('*PRODUCTION — '+frDate(pf.date||todayStr())+'*');
-  if(pf.agent)L.push('👤 '+pf.agent);
-  const blocks=(pf.blocks||[]).filter(b=>b.p&&num(b.n)>0);
-  const multi=blocks.length>1;
-  blocks.forEach((b,i)=>{
-    L.push('');L.push('*'+(multi?(i+1)+'. ':'')+b.p+' — '+fmt(num(b.n))+'*');
-    const d=blockDechets(b);if(d.length)L.push('Déchets : '+d.join(' · '));
-  });
-  if(pf.note&&pf.note.trim()){L.push('');L.push('📝 '+pf.note.trim());}
-  return L.join('\n');
-}
-async function prodShare(pf){
-  const text=prodShareText(pf);
-  const photos=[];(pf.blocks||[]).forEach(b=>(b.photos||[]).forEach(p=>photos.push(p)));
-  try{
-    let files=[];
-    for(let i=0;i<photos.length;i++){try{files.push(await dataUrlToFile(photos[i],'production_'+(i+1)+'.jpg'));}catch(e){}}
-    if(navigator.canShare&&files.length&&navigator.canShare({files:files})){await navigator.share({text:text,files:files,title:'Production'});return;}
-    if(navigator.share){await navigator.share({text:text,title:'Production'});if(files.length)toast('Texte partagé — ajoute les photos manuellement');return;}
-  }catch(e){if(e&&e.name==='AbortError')return;}
-  try{await navigator.clipboard.writeText(text);toast('Copié — colle dans WhatsApp');}catch(e){alert(text);}
-}
 async function prodSave(pf){
   const blocks=(pf.blocks||[]).filter(pfBlockHasInput);
   if(!blocks.length){toast('Rien à enregistrer');return false;}
@@ -89,13 +57,13 @@ function renderProduction(focusBi){
   });
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production</h2>'
-    +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui. Un bouton <b>Partager</b> pour le groupe WhatsApp.</p>'
+    +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui.</p>'
     +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
     +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfShare" class="b-sec">📤 Secours WhatsApp</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderProduction();
@@ -118,7 +86,6 @@ function renderProduction(focusBi){
   });
   $('#pfAddBlock').onclick=()=>{PF.blocks.push(freshBlock());renderProduction(PF.blocks.length-1);};
   $('#pfSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await prodSubmit(PF);}finally{b.disabled=false;b.textContent=t;}};
-  $('#pfShare').onclick=()=>prodShare(PF);
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
   loadProdHist();
@@ -181,25 +148,6 @@ let MOVF={sortie:null,entree:null};
 function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:''}],photos:[],note:''};}
 function movArts(catKind){return REFS.filter(r=>catKind==='finis'?r.cat==='fini':r.cat==='mp');}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
-function movShareText(kind,mf){
-  const c=MOVCFG[kind];const L=[];L.push('*'+c.word+' — '+frDate(mf.date||todayStr())+'*');
-  if(mf.ref)L.push(c.icon+' '+mf.ref);
-  const f=(mf.finis||[]).filter(x=>x.a&&num(x.q)>0);
-  const m=(mf.mp||[]).filter(x=>x.a&&num(x.q)>0);
-  if(f.length){L.push('');L.push('*Produits finis'+(kind==='entree'?' (retours)':'')+'*');f.forEach(x=>L.push('• '+x.a+' : '+fmt(num(x.q))));}
-  if(m.length){L.push('');L.push('*Matières / Échantillons*');m.forEach(x=>L.push('• '+x.a+' : '+fmt(num(x.q))));}
-  if(mf.note&&mf.note.trim()){L.push('');L.push('📝 '+mf.note.trim());}
-  return L.join('\n');
-}
-async function movShare(kind,mf){
-  const text=movShareText(kind,mf);
-  try{let files=[];
-    for(let i=0;i<(mf.photos||[]).length;i++){try{files.push(await dataUrlToFile(mf.photos[i],kind+'_'+(i+1)+'.jpg'));}catch(e){}}
-    if(navigator.canShare&&files.length&&navigator.canShare({files:files})){await navigator.share({text:text,files:files,title:MOVCFG[kind].word});return;}
-    if(navigator.share){await navigator.share({text:text,title:MOVCFG[kind].word});if(files.length)toast('Texte partagé — ajoute les photos manuellement');return;}
-  }catch(e){if(e&&e.name==='AbortError')return;}
-  try{await navigator.clipboard.writeText(text);toast('Copié — colle dans WhatsApp');}catch(e){alert(text);}
-}
 async function movSave(kind,mf){
   if(!movHasInput(mf)){toast('Rien à enregistrer');return false;}
   const c=MOVCFG[kind];
@@ -240,7 +188,7 @@ function renderMov(kind,focusSel){
     +movSectionHTML(mf,'mp','Matières premières / Échantillons')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvShare" class="b-sec">📤 Secours WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderMov(kind);
@@ -255,7 +203,6 @@ function renderMov(kind,focusSel){
   photoArrayUI($('#mvPhotos'),mf.photos,re);
   $('#mvSave').onclick=async()=>{if(await movSave(kind,mf))loadMovHist(kind);};
   $('#mvSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await movSubmit(kind,mf);}finally{b.disabled=false;b.textContent=t;}};
-  $('#mvShare').onclick=()=>movShare(kind,mf);
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
