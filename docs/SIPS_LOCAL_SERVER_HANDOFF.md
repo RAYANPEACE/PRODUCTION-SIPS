@@ -19,8 +19,9 @@ Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gat
 - **Lot nettoyage referentiel + Journal** : « Quitter mode admin » masque en session ; etat de stock = import Excel `.xlsx` seul (collage retire) ; « Dernier valide » lit le serveur ; bouton donnees de test retire ; **vue Journal (audit)** onglet Serveur (lecture + suppression CIBLEE par entree/periode, jamais de purge globale).
 - **Spec C — inventaire fragmente (multi-compteurs, hors-ligne d'abord)** : chaque compteur compte sa zone hors-ligne -> file -> manche serveur unique ; assemblage autoritaire serveur (non compte = `counted:false`, estampille `by`/`byUser`, conflits explicites) ; recompte cible article->compteur (`forMe`) ; « compte par X » ; retrait du secours fichier fragmente.
 - **Retrait « Secours WhatsApp »** sur Production/Sortie/Entree (file hors-ligne + Sauvegarde complete suffisent).
+- **Spec D — feuille « Stock » (etat de stock theorique)** : nouvel onglet lecture seule visible par tous ; stock = dernier inventaire valide + production + entrees − sorties − conso(RECF), source records VALIDES serveur + repli local ; **fleches** d'evolution ; produits finis **detailles par lot** (date de prod) avec **FIFO** (le plus ancien sort en premier), MP agregees. Module autonome `js/features/stock-sheet.js` (ne touche pas `refreshLiveStock`). Tests purs FIFO `npm run test:stock` = **11/11**.
 
-Etat technique : **SW v128**, `npm run test:server` = **47/47**, `npm run check:js` OK.
+Etat technique : **SW v129**, `npm run test:server` = **47/47**, `npm run test:stock` = **11/11**, `npm run check:js` OK.
 
 ## A faire avant de merger `main` (dans l'ordre)
 
@@ -33,7 +34,7 @@ Etat technique : **SW v128**, `npm run test:server` = **47/47**, `npm run check:
 ## Prochaines taches (apres les gates)
 
 - **Item 5 — Refonte UX/UI** inspiree des maquettes Stitch (`docs/ux/README.md`), incrementale : design tokens -> ecrans pilotes (Accueil + Production) -> extension. CSS centralise, ne pas toucher la logique.
-- **Sous-projet D — feuille etat de stock theorique temps reel + FIFO par lot + fleches d'evolution** (memoire `project_sips-roadmap-stock-fifo`). Depend de B+C. Le coeur (par lot + date de prod) = gros changement de modele, a specifier dans D. Une tranche agregee lecture seule (total + fleches) serait parallelisable.
+- **D fait** (onglet Stock : agrege serveur + fleches + lots/FIFO derives des productions). **Restant hors-perimetre D** (chantiers ulterieurs) : refonte de la saisie comptage **par lot** (compter physiquement chaque lot date) + garde-fou **bloquant** « pas de validation d'inventaire sans date de prod » ; FIFO/peremption par lot pour les **MP**. Voir spec `docs/superpowers/specs/2026-06-24-stock-theorique-fifo-design.md` §9.
 - Plus tard : Qualite serveur multi-etapes ; passage SQLite (submissions/records/audit/users) quand les workflows sont stabilises.
 
 ## Decisions / regles actives
