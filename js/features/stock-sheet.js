@@ -156,7 +156,9 @@ async function computeStockData(){
     const row = { code: c, des: r.des, unite: r.ub || r.u || '', cat, grp, base: round2(base), flux: round2(flux), stock, arrow, lots: null };
     if (grp === 'fini' && src.baseDate) {
       const lots = buildFinishedLots(c, base, src.baseDate, src.prod, src.entree, fl.desToCode, fl.today);
-      applyFifo(lots, fl.so[c] || 0);
+      // FIFO deduit les sorties ET l'eventuelle consommation RECF (si un produit fini sert d'ingredient),
+      // pour que la somme des restants des lots egale toujours le stock agrege (base + flux).
+      applyFifo(lots, (fl.so[c] || 0) + (fl.conso[c] || 0));
       row.lots = lots;
     }
     rows.push(row);
