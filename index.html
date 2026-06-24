@@ -62,6 +62,17 @@
   </div>
 </dialog>
 
+<dialog id="lotWarn">
+  <div class="dlg-h"><b>Date de production manquante</b><button onclick="lotWarn.close()">×</button></div>
+  <div class="dlg-b">
+    <p style="margin:0;font-size:13px">Ces <b>produits finis</b> comptés ont un lot <b>sans date de production</b>. Renseigne la date de chaque lot avant de valider (elle est nécessaire au suivi FIFO / péremption). Touche une ligne pour aller à sa carte.</p>
+    <ul id="lotWarnList"></ul>
+    <div class="dlg-actions">
+      <button class="b-go" onclick="lotWarn.close()">Compléter les dates</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="dlg">
   <div class="dlg-h"><b>Résumé du comptage</b><button onclick="dlg.close()">×</button></div>
   <div class="dlg-b">

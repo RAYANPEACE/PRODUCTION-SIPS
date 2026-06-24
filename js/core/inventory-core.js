@@ -443,10 +443,15 @@ function renderBlockSaisies(r,blk){const w=document.createElement('div');
 function blockMeta(r,blk,bi,isFin,redraw){
   const w=document.createElement('div');w.className='blk-meta';
   const dr=document.createElement('div');dr.className='blk-date';
-  dr.innerHTML=`<label>${isFin?'Date de production':'Date de péremption'}</label><input type="date" value="${blk.date||''}"><span class="blk-delay" data-delay></span>`;
+  const todayBtn=isFin?`<button type="button" class="blk-today" data-today>aujourd’hui</button>`:'';
+  dr.innerHTML=`<label>${isFin?'Date de production':'Date de péremption'}</label><input type="date" value="${blk.date||''}">${todayBtn}<span class="blk-delay" data-delay></span>`;
   const di=dr.querySelector('input');const dl=dr.querySelector('[data-delay]');
-  const updD=()=>{const info=isFin?prodInfo(blk.date):expInfo(blk.date);dl.className='blk-delay'+(info?' '+info.cls:'');dl.textContent=info?info.txt:'';};
+  // E1 : produit fini avec une saisie mais sans date de production -> champ signalé (rouge).
+  const updMissing=()=>{const need=isFin&&blockHasInput(r,blk)&&!String(blk.date||'').trim();dr.classList.toggle('missing',!!need);};
+  const updD=()=>{const info=isFin?prodInfo(blk.date):expInfo(blk.date);dl.className='blk-delay'+(info?' '+info.cls:'');dl.textContent=info?info.txt:'';updMissing();};
   di.addEventListener('change',ev=>{blk.date=ev.target.value;updD();saveCounts();});updD();
+  const tb=dr.querySelector('[data-today]');
+  if(tb)tb.onclick=()=>{blk.date=todayStr();di.value=blk.date;updD();saveCounts();};
   const ph=document.createElement('div');ph.className='lot-photo';buildLotPhoto(ph,r,blk,bi,redraw);
   w.append(dr,ph);return w;}
 function buildBlocks(r,b){
@@ -1087,11 +1092,38 @@ function inventoryServerPayload(){
   if(INV_RECOUNT_OF&&INV_RECOUNT_OF.stId===ST.id)out.recountOf={id:INV_RECOUNT_OF.id,date:INV_RECOUNT_OF.date};
   return out;
 }
+/* E1 — Garde-fou « date de production ». Renvoie les produits finis comptés
+   ayant un lot saisi sans date de prod. `entries` par défaut = ST.c (tout
+   l'inventaire) ; le flux fragmenté passe le sous-ensemble counts d'une part. */
+function finishedLotsMissingDate(entries){
+  entries=entries||ST.c;
+  return InventoryDomain.lotsMissingProdDate(entries,REFS,{isFini:isFini,blockHasInput:blockHasInput,ensureBlocks:ensureBlocks});
+}
+/* Ouvre le modal bloquant listant les produits finis sans date ; chaque ligne
+   défile vers la carte concernée dans l'onglet Comptage. */
+function openLotWarn(list){
+  const dlg=$('#lotWarn');const ul=$('#lotWarnList');if(!dlg||!ul)return;
+  ul.innerHTML='';
+  (list||[]).forEach(it=>{
+    const li=document.createElement('li');li.style.cursor='pointer';
+    li.innerHTML='<b>'+esc(it.des)+'</b> <small>('+it.nbLots+' lot'+(it.nbLots>1?'s':'')+' sans date)</small>';
+    li.onclick=async()=>{
+      try{dlg.close();}catch(_){}
+      try{const d=$('#dlg');if(d&&d.open)d.close();}catch(_){}
+      if(typeof switchTab==='function')await switchTab('comptage');
+      setTimeout(()=>{const card=$(`.card[data-code="${it.code}"]`);if(card)scrollCardIntoView(card);},80);
+    };
+    ul.append(li);
+  });
+  dlg.showModal();
+}
 async function submitInventoryServer(){
   if(RO){toast('Mode consultation — non modifiable');return;}
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à soumettre');return;}
+  const miss=finishedLotsMissingDate();
+  if(miss.length){openLotWarn(miss);return;}
   // Retour immediat sur le bouton (comme les mouvements) : "Envoi..." + desactive
   // pendant les ~3s, pour que l'utilisateur voie qu'une action est en cours.
   const b=$('#submitInvBtn');const bt=b?b.textContent:'';
@@ -1129,6 +1161,8 @@ async function validateCurrent(){
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à valider');return;}
+  const miss=finishedLotsMissingDate();
+  if(miss.length){openLotWarn(miss);return;}
   if(!confirm('Valider et VERROUILLER cet inventaire ('+(ST.date||'—')+(ST.agent?(' · '+ST.agent):'')+') ?\n\nIl devient la référence (Bilan, Capacité, Plan), figé en lecture seule (déverrouillable depuis l’Historique) et protégé contre l’écrasement. Un nouveau comptage vierge sera ouvert.'))return;
   if(!ST.id)ST.id='inv_'+Date.now();
   try{const ex=await idbGet(ST.id);if(ex&&ex.locked)ST.id='inv_'+Date.now();}catch(e){}
