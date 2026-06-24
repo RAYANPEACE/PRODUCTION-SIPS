@@ -531,13 +531,29 @@ function srvFragInventoryPayload(sess,merged){
   return {kind:'inventory',date:snap.date||todayStr(),agent:snap.agent||'',filled:filled,bilan:bilan,detail:detail,st:snap,
     frag:{source:'server',sessionId:sess.id,title:sess.title||'',baseInventoryId:sess.baseInventoryId||null,baseDate:sess.baseDate||'',agents:(sess.contributions||[]).map(c=>c.agent||'Compteur'),resolutions:merged.resolutions||[]}};
 }
+/* Spec C : vue de couverture d une manche -> qui a compte quoi vs non comptes vs conflits. */
+function srvRoundCoverage(sess){
+  const by={};
+  (sess.contributions||[]).forEach(c=>{((c.payload&&c.payload.freshCodes)||[]).forEach(code=>{(by[code]=by[code]||[]).push(c.agent||'Compteur');});});
+  const comptes=[],conflits=[];
+  Object.keys(by).sort().forEach(code=>{(by[code].length>1?conflits:comptes).push({code:code,by:by[code]});});
+  const known=new Set(Object.keys((sess.baseSnapshot&&sess.baseSnapshot.c)||{}));
+  Object.keys(by).forEach(c=>known.add(c));
+  const nonComptes=[...known].filter(c=>!by[c]).sort();
+  return {comptes:comptes,conflits:conflits,nonComptes:nonComptes};
+}
 async function srvFragAnalyze(id){
   try{
     const data=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id));
     const sess=data.session;
     let merged=srvFragBuildMerged(sess);
     let resolutionMap={};
-    let msg='Session '+(sess.title||sess.id)+'\n\nParts : '+(sess.contributions||[]).length+'\nArticles recomptees : '+merged.changed;
+    const cov=srvRoundCoverage(sess);
+    let msg='Manche '+(sess.title||frDate(sess.date)||sess.id)
+      +'\n\nParts : '+(sess.contributions||[]).length
+      +'\nArticles comptes : '+cov.comptes.length
+      +'\nNon comptes ce tour (ecart nul) : '+cov.nonComptes.length
+      +'\nConflits (meme article, plusieurs compteurs) : '+cov.conflits.length;
     if(merged.conflicts.length){
       const resolutions=await srvFragResolveConflicts(sess,merged.conflicts);
       if(!resolutions)return;
@@ -546,15 +562,22 @@ async function srvFragAnalyze(id){
       if(merged.conflicts.length){toast('Conflits non resolus');return;}
       msg+='\n\nConflits resolus explicitement : '+merged.resolutions.length+'.';
     }
-    msg+='\n\nAucun conflit. Creer une soumission inventaire a valider par admin ?';
+    msg+='\n\nAssembler et comparer au stock (Bilan) avant validation ?';
     if(!confirm(msg))return;
-    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('finaliser la session inventaire')))return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('finaliser la manche inventaire')))return;
     const payload=srvFragInventoryPayload(sess,merged);
-    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
+    const fin=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
       method:'POST',headers:sipsAdminHeaders(),
       body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,resolutions:resolutionMap,summary:{conflicts:0,resolvedConflicts:(merged.resolutions||[]).length,changed:merged.changed,contributions:(sess.contributions||[]).length}})
     });
-    toast('Fusion creee en soumission inventaire - validation admin requise');
+    const subId=fin&&fin.submission&&fin.submission.id;
+    const dlg=$('#fragDlg');if(dlg&&dlg.open)dlg.close();
+    // Spec C : enchaine sur le Bilan de revue (flux B) sur la soumission assemblee (reconstruite serveur).
+    if(subId&&typeof sipsOpenInventoryReview==='function'){
+      try{const full=await sipsFetch('/api/submissions/'+encodeURIComponent(subId),{headers:sipsAdminHeaders()});
+        if(full&&full.submission){sipsOpenInventoryReview(full.submission);return;}}catch(e){}
+    }
+    toast('Manche assemblee en soumission inventaire - a comparer puis valider');
     await srvFragLoadSessions();
   }catch(e){toast('Erreur fusion serveur : '+e.message);}
 }
