@@ -318,7 +318,7 @@ function fullTablesHTML(r){
       const cls=x.counted?(x.ok?'':' ko'):' nc';
       const pill=x.counted?(x.ok?'<span class="pill ok">OK</span>':'<span class="pill ko">À VÉRIFIER</span>'):'<span class="pill nc">non compté</span>';
       h+='<div class="bil-line'+cls+'">'
-        +'<div class="bl-id"><span class="bl-code">'+x.code+'</span> '+esc(x.nom)+'</div>'
+        +'<div class="bl-id"><span class="bl-code">'+x.code+'</span> '+esc(x.nom)+(x.by?' <span class="bl-by" style="color:var(--mute);font-size:11px">· compté par '+esc(x.by)+'</span>':'')+'</div>'
         +'<div class="bl-tp">théo <b>'+fmtq(x.theo)+'</b> · phys <b>'+(x.counted?fmtq(x.phys):'—')+'</b></div>'
         +'<div class="bl-ec">'+ecartHTML(x,true)+'</div>'
         +'<div class="bl-st">'+pill+'</div></div>';

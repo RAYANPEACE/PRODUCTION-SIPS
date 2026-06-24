@@ -882,6 +882,29 @@ async function openHistory(){
       });
     }).catch(function(){});
   }
+  // Spec C : "A recompter (articles cibles)" - articles precis renvoyes a CE compteur (forMe).
+  const targetHost=document.createElement('div');list.append(targetHost);
+  if(typeof SESSION!=='undefined'&&SESSION){
+    sipsFetch('/api/submissions?status=rejected&type=inventory&forMe=1').then(function(data){
+      if(dlg&&!dlg.open)return;
+      const rows=(data&&data.submissions||[]).filter(function(s){return s&&(s.recountArticles||[]).length;});
+      if(!rows.length)return;
+      const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--red);margin:10px 0 6px;text-transform:uppercase';
+      h.textContent='↩ A recompter (articles cibles)';targetHost.append(h);
+      rows.sort(function(a,b){return String(b.createdAt||'').localeCompare(String(a.createdAt||''));}).forEach(function(s){
+        const arts=(s.recountArticles||[]).map(function(a){const r=REFS.find(function(x){return x.code===a.code;});return a.code+(r?(' '+r.des):'');});
+        const it=document.createElement('div');it.className='hist-item';it.style.cssText='border:1px solid #f0c0c0;background:#fdf3f3';
+        it.innerHTML='<div class="info"><b>'+arts.length+' article(s) cible(s)</b><span>'+esc(arts.join(' · '))+' · '+esc(s.decisionNote||s.note||'Recompte demande')+'</span></div>';
+        const open=document.createElement('button');open.textContent='Recompter';open.onclick=function(){
+          if(dlg&&dlg.open)dlg.close();
+          if(TAB!=='comptage')switchTab('comptage');else render();
+          window.scrollTo(0,0);
+          toast('Recompte cible : '+arts.join(', ')+' — compte ces articles puis « Fragmenté » › « Envoyer ma part »');
+        };
+        it.append(open);targetHost.append(it);
+      });
+    }).catch(function(){});
+  }
   const serverHost=document.createElement('div');list.append(serverHost);
   sipsRecords('inventory',{timeoutMs:1200}).then(serverRows=>{
     if(dlg&&!dlg.open)return;

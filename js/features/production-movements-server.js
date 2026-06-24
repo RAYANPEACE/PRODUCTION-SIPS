@@ -298,6 +298,10 @@ function sipsOpenInventoryReview(s){
   const p=s.payload||{};
   if(!p.st||!p.st.c){toast('Soumission sans detail de comptage');return;}
   let r;try{r=buildBilanFrom(p.st);}catch(e){toast('Bilan indisponible : '+e.message);return;}
+  // Spec C : attribution par article (compte par X) + cibles de recompte (articles anormaux -> leur compteur).
+  r.rows.forEach(x=>{const e=p.st.c[x.code];if(e&&e.by)x.by=e.by;});
+  const recountTargets=r.rows.filter(x=>x.counted&&!x.ok&&p.st.c[x.code]&&p.st.c[x.code].byUser)
+    .map(x=>({code:x.code,by:p.st.c[x.code].by||'',byUser:p.st.c[x.code].byUser}));
   const counted=r.rows.filter(x=>x.counted).length;
   const who=p.agent||(s.author&&s.author.name)||'—';
   const app=$('#app');
@@ -312,9 +316,9 @@ function sipsOpenInventoryReview(s){
     +fullTablesHTML(r)+'</div>';
   $('#revBack').onclick=()=>{switchTab('serveur');};
   $('#revValidate').onclick=()=>sipsReviewDecide(s.id,'validate');
-  $('#revRecount').onclick=()=>sipsReviewDecide(s.id,'recount');
+  $('#revRecount').onclick=()=>sipsReviewDecide(s.id,'recount',recountTargets);
 }
-async function sipsReviewDecide(id,kind){
+async function sipsReviewDecide(id,kind,targets){
   const actor=(typeof USR!=='undefined'&&USR.nom)||'admin';
   if(kind==='validate'){
     if(!confirm('Valider cet inventaire ?\n\nIl deviendra la base officielle du Bilan.'))return;
@@ -325,7 +329,13 @@ async function sipsReviewDecide(id,kind){
     const note=prompt('Motif du recomptage (articles a revoir) ?','Recompter les ecarts signales');
     if(note===null)return;
     if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('demander un recomptage')))return;
-    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/reject',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:actor,note:note||'',recountRequested:true})});toast('Recomptage demande');}
+    const body={actor:actor,note:note||'',recountRequested:true};
+    // Spec C : recompte CIBLE -> chaque article anormal repart vers SON compteur (byUser).
+    if(targets&&targets.length){
+      const names=[...new Set(targets.map(t=>t.by).filter(Boolean))].join(', ');
+      if(confirm('Renvoyer '+targets.length+' article(s) anormal(aux) en recompte cible'+(names?' a '+names:'')+' ?\n\nAnnuler = recomptage general (tout l inventaire).'))body.recountArticles=targets;
+    }
+    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/reject',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify(body)});toast(body.recountArticles?'Recompte cible demande':'Recomptage demande');}
     catch(e){toast('Erreur serveur : '+e.message);return;}
   }
   switchTab('serveur');
