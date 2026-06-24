@@ -429,18 +429,22 @@ async function srvFragCreateSession(){
     await srvFragLoadSessions();
   }catch(e){toast('Erreur session serveur : '+e.message);}
 }
-async function srvFragSendMine(){
-  const id=srvFragSelectedId();
-  if(!id){toast('Choisis une session serveur');return;}
+// Spec C : envoi de MA part hors-ligne d'abord. La part part vers la manche
+// ouverte (sans sessionId) ; si le serveur est injoignable, elle va dans la file
+// d'attente locale (auto-envoi a la reconnexion). Aucune session a selectionner.
+async function srvFragSubmitMine(){
   const payload=srvFragContributionPayload();
-  if(payload.sessionId&&payload.sessionId!==id&&!confirm('Le comptage courant a ete charge depuis une autre session serveur.\n\nEnvoyer quand meme cette part vers la session selectionnee ?'))return;
-  if(!payload.sessionId&&!confirm('Cette part a ete demarree hors serveur.\n\nEnvoyer uniquement les articles modifies depuis le demarrage de cette part ? Les autres articles resteront pris depuis la base de la session serveur.'))return;
-  if(!payload.freshCodes.length){toast('Aucun article recompte dans cette session de comptage');return;}
+  if(!payload.freshCodes.length){toast('Compte au moins un article avant d envoyer ta part');return;}
+  if(typeof sipsRequiresLogin==='function'&&sipsRequiresLogin()){toast('Connexion requise pour envoyer ta part au serveur.');return;}
   try{
-    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/contributions',{method:'POST',body:JSON.stringify({payload:payload})});
+    await sipsFetch('/api/inventory-rounds/contribution',{method:'POST',body:JSON.stringify({payload:payload})});
     toast('Part envoyee au serveur : '+payload.freshCodes.length+' article(s)');
     await srvFragLoadSessions();
-  }catch(e){toast('Erreur envoi fragment : '+e.message);}
+  }catch(e){
+    if(e.status){toast('Erreur serveur : '+e.message);return;}
+    const q=sipsQueue('frag-contribution',payload,'');
+    toast(q?'Serveur indisponible : part ajoutee en attente (envoi auto au retour)':'Part deja en attente');
+  }
 }
 function srvFragBuildMerged(sess,resolutions){
   const base=sess.baseSnapshot?clone(sess.baseSnapshot):freshCounts();
@@ -559,7 +563,7 @@ if($('#srvFragLoad'))$('#srvFragLoad').onclick=srvFragLoadBase;
 if($('#srvFragOffline'))$('#srvFragOffline').onclick=srvFragStartOfflinePart;
 if($('#srvFragReload'))$('#srvFragReload').onclick=srvFragLoadSessions;
 if($('#srvFragPreview'))$('#srvFragPreview').onclick=srvFragPreviewMine;
-if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSendMine;
+if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSubmitMine;
 
 async function fragMergeFiles(){
   if(!FRAGFILES.length){toast('Ajoute au moins une part');return;}

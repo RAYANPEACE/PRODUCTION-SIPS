@@ -143,7 +143,15 @@ async function sipsFlushPending(){
       if(lot&&seenQualityLot[lot])continue;
       if(lot)seenQualityLot[lot]=1;
     }
-    try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}
+    try{
+      if(row.type==='frag-contribution'){
+        // Spec C : part d'inventaire hors-ligne -> manche ouverte (sans sessionId).
+        await sipsFetch('/api/inventory-rounds/contribution',{method:'POST',body:JSON.stringify({payload:row.payload,note:row.note||''})});
+      }else{
+        await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});
+      }
+      sent++;
+    }
     catch(e){keep.push(sipsPendingFailure(row,hash,e));}
   }
   sipsSetPending(keep);
