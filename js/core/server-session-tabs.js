@@ -274,6 +274,7 @@ function applySession(){
 }
 // Onglet visible ? Session = droits serveur ; sinon fallback legacy (adminOnly + PIN).
 function hasTab(id){
+  if(id==='stock')return true;   // Feuille etat de stock : lecture seule, visible par tous les roles.
   if(SESSION&&Array.isArray(SESSION.tabs))return SESSION.tabs.indexOf(id)>=0;
   var t=TABS.find(function(x){return x[0]===id;});if(!t)return false;
   // Verrou strict : sans vrai compte, le PIN ne donne plus acces aux onglets admin.
@@ -282,7 +283,7 @@ function hasTab(id){
 }
 
 /* ---------- ONGLETS ---------- */
-const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true],['serveur','Serveur',true,true]];
+const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['stock','Stock',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true],['serveur','Serveur',true,true]];
 let TAB='accueil';
 let SIPS_NOTIF_COUNTS={};
 let SIPS_NOTIF_PREV_TOTAL=null;
@@ -388,6 +389,7 @@ async function switchTab(id){
   else if(id==='entree'){renderEntrees();}
   else if(id==='analyse'){renderAnalyse();}
   else if(id==='qualite'){renderQualite();}
+  else if(id==='stock'){await renderStock();}
   else if(id==='serveur'){renderServeur();}
   else{$('#app').innerHTML='<div class="placeholder"><b>Module «\u00a0'+id+'\u00a0»</b><br>À construire à l\u2019étape suivante.</div>';}
   if(typeof renderFragBanner==='function')renderFragBanner();
