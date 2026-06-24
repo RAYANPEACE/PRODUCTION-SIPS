@@ -11,11 +11,10 @@ Tout le texte UI est en francais.
 
 Avant toute intervention, lire aussi :
 
-- `docs/SIPS_LOCAL_SERVER_HANDOFF.md` : etat courant, serveur local, prochaines taches, decisions prises avec l'utilisateur.
+- `docs/SIPS_LOCAL_SERVER_HANDOFF.md` : **point d'entree court** — etat courant, prochaines taches, decisions actives. (Historique complet = `docs/SIPS_HANDOFF_ARCHIVE.md` + `git log` ; ne le lire que si besoin de detail historique.)
 - `docs/SIPS_LESSONS_LEARNED.md` : pieges rencontres et regles a reutiliser pour SIPS et les prochaines apps terrain.
-- `docs/code-review-2026-06-19.md` : 5 bugs de revue high effort a corriger.
 
-Apres chaque correction, mettre a jour `docs/SIPS_LOCAL_SERVER_HANDOFF.md` avec ce qui a ete fait, les tests lances et les taches restantes.
+Apres chaque intervention, mettre a jour le handoff **en restant court** (1-2 lignes par entree). Archiver le journal dans `docs/SIPS_HANDOFF_ARCHIVE.md` quand il gonfle ; ne PAS recopier les messages de commit (git les garde).
 
 ## Architecture technique
 
