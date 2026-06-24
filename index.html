@@ -98,25 +98,6 @@
       </div>
       <div id="srvFragList" style="margin-top:8px"></div>
     </div>
-    <details id="fragModeFiles" class="frag-local-rescue">
-      <summary><span>Secours local fichiers</span><small>Ancien flux export/import, a utiliser seulement si le serveur n'est pas disponible.</small></summary>
-      <p style="margin:10px 0 8px;font-size:13px;color:#6a7280;line-height:1.5">Chaque compteur compte sa partie sur son telephone, puis exporte sa part et te l'envoie. Toi, tu ajoutes toutes les parts recues et l'app fusionne localement.</p>
-      <div class="frag-step">
-        <div class="fst-h">1. Toi : envoyer ta propre part de secours</div>
-        <button id="fragExportMine" class="fst-btn b-prim">Exporter ma part secours local</button>
-      </div>
-      <div class="frag-step">
-        <div class="fst-h">2. Ajouter les parts recues des autres</div>
-        <button id="fragImportFiles" class="fst-btn b-sec">Ajouter un fichier recu</button>
-        <input id="fragFileIn" type="file" accept=".txt,.json,text/plain" multiple style="display:none">
-        <div id="fragFileList" style="margin-top:8px"></div>
-      </div>
-      <div class="frag-step">
-        <div class="fst-h">3. Fusionner localement</div>
-        <input id="fragMergeTitle" placeholder="Libelle (facultatif) - ex. Inventaire juin" autocomplete="off" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;margin-bottom:8px">
-        <button id="fragMergeFiles" class="fst-btn b-go" disabled style="opacity:.5">Fusionner secours local & archiver</button>
-      </div>
-    </details>
   </div>
 </dialog>
 

@@ -1032,10 +1032,6 @@ function bindChange(sel,fn){const el=$(sel);if(el)el.onchange=fn;}
 bindClick('#histBtn',openHistory);
 bindClick('#roClose',closeArchive);
 bindClick('#fragBtn',()=>openFragDlg());
-bindClick('#fragExportMine',()=>shareFragment());
-bindClick('#fragImportFiles',()=>{const f=$('#fragFileIn');if(f)f.click();});
-bindChange('#fragFileIn',e=>{const fs=[...e.target.files];fs.forEach(f=>{const rd=new FileReader();rd.onload=()=>fragAddFile(rd.result);rd.readAsText(f);});e.target.value='';});
-bindClick('#fragMergeFiles',()=>fragMergeFiles());
 bindClick('#newInv',async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
