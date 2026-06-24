@@ -42,7 +42,7 @@ const prod = [
 ];
 const lots = ctx.buildFinishedLots('F1', 100, '2026-06-01', prod, [], desToCode, today);
 check('[FIFO] 3 lots (base + 2 productions du produit)', lots.length === 3);
-check('[FIFO] lot le plus ancien = base inventaire', lots[0].source === 'inventaire' && lots[0].date === '2026-06-01');
+check('[FIFO] lot le plus ancien = base inventaire', lots[0].date === '2026-06-01' && close(lots[0].qty, 100));
 check('[FIFO] lots tries par date croissante', lots[0].date <= lots[1].date && lots[1].date <= lots[2].date);
 check('[FIFO] production hors fenetre/produit ignoree', !lots.some(l => l.qty === 99));
 
@@ -62,7 +62,28 @@ check('[FIFO] le dernier lot porte le negatif', l3[l3.length - 1].rest < 0);
 
 // ---- entrees de produit fini ajoutent un lot date ----
 const l4 = ctx.buildFinishedLots('F1', 0, '2026-06-01', [], [{ date: '2026-06-15', finis: [{ a: 'P', q: 7 }] }], desToCode, today);
-check('[FIFO] une entree de produit fini cree un lot', l4.length === 1 && l4[0].source === 'entree' && close(l4[0].qty, 7));
+check('[FIFO] une entree de produit fini cree un lot', l4.length === 1 && l4[0].date === '2026-06-15' && close(l4[0].qty, 7));
+
+// ====== E2 : lots de base REELS par bloc (tableau) ======
+// Deux lots de base dates distincts (issus de 2 blocs de l'inventaire) -> dates preservees.
+const e1 = ctx.buildFinishedLots('F1', [{ date: '2026-06-02', qty: 40 }, { date: '2026-06-03', qty: 60 }], '2026-06-01', [], [], desToCode, today);
+check('[E2] lots de base par bloc : 2 lots dates', e1.length === 2 && e1[0].date === '2026-06-02' && e1[1].date === '2026-06-03');
+check('[E2] somme des lots de base = base agregee (40+60=100)', close(e1[0].qty + e1[1].qty, 100));
+
+// Fusion par date : un lot de base et une production le MEME jour fusionnent (cle = date).
+const e2 = ctx.buildFinishedLots('F1', [{ date: '2026-06-10', qty: 20 }], '2026-06-01', [{ date: '2026-06-10', blocks: [{ p: 'P', n: 30 }] }], [], desToCode, today);
+check('[E2] base + production meme date fusionnees en un lot', e2.length === 1 && e2[0].date === '2026-06-10' && close(e2[0].qty, 50));
+
+// Lot a date vide -> imprecise et trie en premier (FIFO le consomme d'abord).
+const e3 = ctx.buildFinishedLots('F1', [{ date: '', qty: 10 }, { date: '2026-06-05', qty: 5 }], '2026-06-01', [], [], desToCode, today);
+check('[E2] lot sans date marque imprecise et place en premier', e3[0].imprecise === true && e3[0].date === '' && e3[1].date === '2026-06-05');
+
+// Invariant apres FIFO sur lots de base reels : somme des restants = base - sorties.
+const e4 = ctx.buildFinishedLots('F1', [{ date: '2026-06-02', qty: 40 }, { date: '2026-06-08', qty: 60 }], '2026-06-01', [], [], desToCode, today);
+ctx.applyFifo(e4, 50); // consomme 40 (02) puis 10 (08)
+check('[E2] FIFO sur base reelle : plus ancien epuise (40->0)', close(e4[0].rest, 0));
+check('[E2] FIFO sur base reelle : 2e lot 60-10=50', close(e4[1].rest, 50));
+check('[E2] invariant somme restants = base-sorties (100-50=50)', close(sum(e4), 50));
 
 console.log('\n' + passed + ' reussi(s), ' + failed + ' echec(s).');
 process.exit(failed ? 1 : 0);

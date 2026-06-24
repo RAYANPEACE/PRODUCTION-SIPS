@@ -8,19 +8,36 @@
 
 /* ---- Fonctions pures (testables hors navigateur) ---- */
 
-/* Lots d'un produit fini, tries du plus ANCIEN au plus recent (le lot "base inventaire" est le plus ancien).
-   base = quantite du dernier inventaire valide ; prodRecs/entreeRecs = payloads de mouvements. */
-function buildFinishedLots(code, base, baseDate, prodRecs, entreeRecs, desToCode, today){
+/* Fusionne les lots de meme date (cle de lot = date seule). Un lot a date vide
+   est marque imprecise (date de production manquante) ; il sera trie en premier. */
+function mergeLotsByDate(lots){
+  const map = {}, order = [];
+  (lots || []).forEach(l => {
+    const k = String((l && l.date) || '');
+    if (!map[k]) { map[k] = { date: k, qty: 0, imprecise: k === '' }; order.push(k); }
+    map[k].qty = round2(map[k].qty + num(l.qty));
+  });
+  return order.map(k => map[k]).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+/* Lots d'un produit fini, tries du plus ANCIEN au plus recent.
+   E2 : baseLots accepte un TABLEAU [{date, qty}] (vrais lots par bloc de l'inventaire)
+   OU un nombre (retro-compat D = un seul lot de base date a baseDate).
+   prodRecs/entreeRecs = payloads de mouvements (datent leurs lots par record). */
+function buildFinishedLots(code, baseLots, baseDate, prodRecs, entreeRecs, desToCode, today){
   const inWin = d => baseDate && String(d || '') > baseDate && String(d || '') <= today;
   const lots = [];
-  if (base > 0) lots.push({ date: baseDate || '', qty: round2(base), source: 'inventaire' });
+  if (Array.isArray(baseLots)) {
+    baseLots.forEach(l => { if (l && num(l.qty) !== 0) lots.push({ date: String(l.date || ''), qty: round2(num(l.qty)) }); });
+  } else if (num(baseLots) > 0) {
+    lots.push({ date: baseDate || '', qty: round2(num(baseLots)) });
+  }
   (prodRecs || []).forEach(p => {
     if (!inWin(p && p.date)) return;
     (p.blocks || []).forEach(bk => {
       const n = num(bk && bk.n);
       if (!bk || !bk.p || n <= 0) return;
       if (desToCode[bk.p] !== code) return;
-      lots.push({ date: String(p.date || ''), qty: round2(n), source: 'production' });
+      lots.push({ date: String(p.date || ''), qty: round2(n) });
     });
   });
   (entreeRecs || []).forEach(r => {
@@ -28,11 +45,10 @@ function buildFinishedLots(code, base, baseDate, prodRecs, entreeRecs, desToCode
     (r.finis || []).forEach(x => {
       if (!x || !x.a || desToCode[x.a] !== code) return;
       const q = num(x.q);
-      if (q > 0) lots.push({ date: String(r.date || ''), qty: round2(q), source: 'entree' });
+      if (q > 0) lots.push({ date: String(r.date || ''), qty: round2(q) });
     });
   });
-  lots.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-  return lots;
+  return mergeLotsByDate(lots);
 }
 
 /* FIFO : consomme sortieQty en commencant par le lot le plus ancien. Pose l.rest sur chaque lot.
@@ -125,18 +141,35 @@ async function stockLocalSource(){
   };
 }
 
-/* Base par code depuis un snapshot d'inventaire : init = ETAT manuel, ecrase par le compte si counted. */
+/* Base par code depuis un snapshot d'inventaire : init = ETAT manuel, ecrase par le compte si counted.
+   E2 : extrait aussi les LOTS REELS par bloc des produits finis comptes (date = blk.date de la saisie),
+   pour remplacer le lot de base agrege. baseLots[code] = [{date, qty}] ; Somme(qty) === baseMap[code].
+   Utilise les globals d'inventory-core (ensureBlocks, blockHasInput, blockTotal, isFini, pOf) dispo
+   a l'execution navigateur ; reste hors des fonctions pures testees en VM. */
 function stockBaseMap(baseST){
-  const baseMap = {};
+  const baseMap = {}, baseLots = {};
   REFS.forEach(r => { const v = ETAT[r.code]; baseMap[r.code] = (v != null && v !== '') ? num(v) : 0; });
   if (baseST && baseST.c) {
     const prevST = ST, prevRO = RO;
     try {
       ST = JSON.parse(JSON.stringify(baseST)); RO = true; mergeAndMigrate();
-      REFS.forEach(r => { if (ST.c[r.code] && ST.c[r.code].counted) baseMap[r.code] = round2(total(r)); });
+      REFS.forEach(r => {
+        const e = ST.c[r.code];
+        if (!e || !e.counted) return;
+        baseMap[r.code] = round2(total(r));
+        if (typeof isFini === 'function' && isFini(r) && typeof ensureBlocks === 'function') {
+          ensureBlocks(r, e);
+          const lots = [];
+          (e.blocks || []).forEach(blk => {
+            if (typeof blockHasInput === 'function' && !blockHasInput(r, blk)) return;
+            lots.push({ date: String((blk && blk.date) || ''), qty: round2(blockTotal(r, blk, (blk && blk.cfg) || pOf(r))) });
+          });
+          if (lots.length) baseLots[r.code] = lots;
+        }
+      });
     } finally { ST = prevST; RO = prevRO; }
   }
-  return baseMap;
+  return { baseMap: baseMap, baseLots: baseLots };
 }
 
 /* ---- Assemblage ---- */
@@ -144,7 +177,8 @@ function stockBaseMap(baseST){
 async function computeStockData(){
   let src = await stockServerSource();
   if (!src) src = await stockLocalSource();
-  const baseMap = stockBaseMap(src.baseST);
+  const bm = stockBaseMap(src.baseST);
+  const baseMap = bm.baseMap, baseLotsMap = bm.baseLots;
   const fl = stockApplyMovements(src.baseDate, src.prod, src.entree, src.sortie);
   const rows = [];
   REFS.forEach(r => {
@@ -155,7 +189,9 @@ async function computeStockData(){
     const arrow = Math.abs(flux) < 1e-9 ? 0 : (flux > 0 ? 1 : -1);
     const row = { code: c, des: r.des, unite: r.ub || r.u || '', cat, grp, base: round2(base), flux: round2(flux), stock, arrow, lots: null };
     if (grp === 'fini' && src.baseDate) {
-      const lots = buildFinishedLots(c, base, src.baseDate, src.prod, src.entree, fl.desToCode, fl.today);
+      // E2 : vrais lots par bloc de l'inventaire si dispo, sinon repli sur la quantite agregee (D).
+      const bl = (baseLotsMap[c] && baseLotsMap[c].length) ? baseLotsMap[c] : base;
+      const lots = buildFinishedLots(c, bl, src.baseDate, src.prod, src.entree, fl.desToCode, fl.today);
       // FIFO deduit les sorties ET l'eventuelle consommation RECF (si un produit fini sert d'ingredient),
       // pour que la somme des restants des lots egale toujours le stock agrege (base + flux).
       applyFifo(lots, (fl.so[c] || 0) + (fl.conso[c] || 0));
@@ -200,15 +236,15 @@ function stockSheetHTML(data){
         + '<div class="bl-id"><span class="bl-code">' + x.code + '</span> ' + esc(x.des) + '</div>'
         + '<div class="bl-tp">base <b>' + fmtq(x.base) + '</b> · flux <b>' + (x.flux > 0 ? '+' : '') + fmtq(x.flux) + '</b></div>'
         + '<div class="bl-ec"><b' + negStyle + '>' + fmtq(x.stock) + ' ' + esc(x.unite) + '</b> ' + ar + '</div>';
-      const visibleLots = x.lots ? x.lots.filter(l => Math.abs(l.rest) > 1e-9 || l.source === 'inventaire') : [];
+      const visibleLots = x.lots ? x.lots.filter(l => Math.abs(l.rest) > 1e-9 || l.imprecise) : [];
       if (visibleLots.length) {
         h += '<div class="bl-st"><button class="b-sec" data-stk-toggle="' + esc(x.code) + '" style="font-size:11px;padding:2px 8px">Lots (' + visibleLots.length + ')</button></div>';
         h += '<div class="stk-lots" id="stklots-' + esc(x.code) + '" style="display:none;flex-basis:100%;margin-top:4px;padding-left:6px">'
           + visibleLots.map(l => {
-            const lbl = l.source === 'inventaire' ? 'lot base inventaire' : (l.source === 'entree' ? 'lot (entree)' : 'lot');
-            const note = l.source === 'inventaire' ? ' <em style="color:#9a6500">(sans date de lot precise)</em>' : '';
+            const lbl = l.imprecise ? 'lot sans date precise' : ('lot du <b>' + esc(l.date) + '</b>');
+            const note = l.imprecise ? ' <em style="color:#9a6500">(date de production manquante)</em>' : '';
             const rNeg = l.rest < 0 ? ' style="color:var(--red)"' : '';
-            return '<div style="font-size:12px;color:#556">' + lbl + ' <b>' + esc(l.date || '?') + '</b> — restant <b' + rNeg + '>' + fmtq(l.rest) + '</b>' + note + '</div>';
+            return '<div style="font-size:12px;color:#556">' + lbl + ' — restant <b' + rNeg + '>' + fmtq(l.rest) + '</b>' + note + '</div>';
           }).join('')
           + '<div style="font-size:11px;color:#9aa7b0;margin-top:2px">FIFO : le lot le plus ancien sort en premier.</div></div>';
       }
