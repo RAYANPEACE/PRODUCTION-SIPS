@@ -125,6 +125,19 @@ function inventoryContribution(agent, code, qty) {
   };
 }
 
+// Spec C : pose un inventaire VALIDE comme base (dernier inventaire valide serveur).
+async function seedValidatedInventory(adminToken, codeMap) {
+  const c = {};
+  for (const code of Object.keys(codeMap)) c[code] = { counted: true, blocks: [{ qty: codeMap[code] }] };
+  const sub = await api('POST', '/api/submissions', {
+    token: adminToken,
+    body: { type: 'inventory', payload: { kind: 'inventory', date: '2026-06-20', agent: 'Base ' + Object.keys(codeMap).join('-'), filled: Object.keys(c).length, st: { c, cfg: {} } } }
+  });
+  const id = sub.json && sub.json.submission && sub.json.submission.id;
+  await api('POST', '/api/submissions/' + id + '/validate', { token: adminToken, body: {} });
+  return id;
+}
+
 async function main() {
   const dataDir = await mkdtemp(join(tmpdir(), 'sips-sectest-'));
   const proc = spawn(process.execPath, [APP], {
@@ -369,6 +382,86 @@ async function main() {
     check('[B4] suppression journal refusee a un non-admin', delNonAdmin.status === 401);
     check('[B4] suppression par id retire l entree ciblee', delById.status === 200 && delById.json.removed >= 1 && !stillHasDeleted);
     check('[B4] suppression par periode (beforeDate) retire les entrees anterieures', delByDate.status === 200 && typeof delByDate.json.removed === 'number');
+
+    // ====== Spec C : inventaire fragmente (manche unique, assemblage, recompte cible) ======
+    // Repartir d'un etat sans manche ouverte (les tests precedents laissent des sessions ouvertes).
+    let dbC = await readTestDb(dataDir);
+    (dbC.inventorySessions || []).forEach(s => { if ((s.status || 'open') === 'open') s.status = 'finalized'; });
+    await writeTestDb(dataDir, dbC);
+
+    // ---- [C1] contribution sans sessionId rattachee a la manche ouverte (creee si aucune) ----
+    const c1a = await makeUser(adminToken, 'operateur', 'c1a');
+    const c1b = await makeUser(adminToken, 'operateur', 'c1b');
+    const c1r1 = await api('POST', '/api/inventory-rounds/contribution', { token: c1a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 5 }] } } } } });
+    const c1RoundId = c1r1.json && c1r1.json.round && c1r1.json.round.id;
+    const c1r2 = await api('POST', '/api/inventory-rounds/contribution', { token: c1b,
+      body: { payload: { agent: 'Sara', freshCodes: ['190004'], counts: { '190004': { counted: true, blocks: [{ qty: 9 }] } } } } });
+    check('[C1] contribution sans sessionId cree/retourne une manche', c1r1.status === 201 && !!c1RoundId);
+    check('[C1] une 2e part rejoint la MEME manche ouverte', c1r2.json && c1r2.json.round && c1r2.json.round.id === c1RoundId);
+    check('[C1] la manche ouverte regroupe les 2 parts', c1r2.json && c1r2.json.round && (c1r2.json.round.contributions || []).length === 2);
+    await api('POST', '/api/inventory-sessions/' + c1RoundId + '/finalize', { token: adminToken, body: {} });
+
+    // ---- [C2] assemblage : non compte = counted:false (jamais la base) + estampille by ----
+    await seedValidatedInventory(adminToken, { '190001': 100, '190009': 50 });
+    const c2a = await makeUser(adminToken, 'operateur', 'c2a');
+    await api('POST', '/api/inventory-rounds/contribution', { token: c2a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    const c2Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    const c2Fin = await api('POST', '/api/inventory-sessions/' + c2Round.id + '/finalize', { token: adminToken, body: {} });
+    const c2Sub = c2Fin.json && c2Fin.json.submission && await api('GET', '/api/submissions/' + c2Fin.json.submission.id, { token: adminToken });
+    const c2c = c2Sub && c2Sub.json && c2Sub.json.submission && c2Sub.json.submission.payload && c2Sub.json.submission.payload.st.c;
+    check('[C2] article compte estampille by=compteur', !!c2c && c2c['190001'].counted === true && c2c['190001'].by === 'Ahmed');
+    check('[C2] article non compte = counted:false', !!c2c && c2c['190009'] && c2c['190009'].counted === false);
+    check('[C2] article non compte ne garde PAS la valeur de base', !!c2c && c2c['190009'] && !c2c['190009'].blocks);
+
+    // ---- [C3] conflit (meme code, 2 compteurs) -> finalize refuse sans resolution ----
+    await seedValidatedInventory(adminToken, { '190001': 100 });
+    const c3a = await makeUser(adminToken, 'operateur', 'c3a');
+    const c3b = await makeUser(adminToken, 'operateur', 'c3b');
+    await api('POST', '/api/inventory-rounds/contribution', { token: c3a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    await api('POST', '/api/inventory-rounds/contribution', { token: c3b,
+      body: { payload: { agent: 'Sara', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 9 }] } } } } });
+    const c3Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    const c3Fin = await api('POST', '/api/inventory-sessions/' + c3Round.id + '/finalize', { token: adminToken, body: {} });
+    check('[C3] conflit non resolu -> finalize 409', c3Fin.status === 409 && (c3Fin.json.conflicts || []).some(x => x.code === '190001'));
+    await api('POST', '/api/inventory-sessions/' + c3Round.id + '/finalize', { token: adminToken, body: { resolutions: { '190001': 1 } } });
+
+    // ---- [C4] reconstruction serveur ignore tout payload client forge (regression G/H) ----
+    await seedValidatedInventory(adminToken, { '190001': 100 });
+    const c4a = await makeUser(adminToken, 'operateur', 'c4a');
+    await api('POST', '/api/inventory-rounds/contribution', { token: c4a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    const c4Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    const c4Fin = await api('POST', '/api/inventory-sessions/' + c4Round.id + '/finalize', { token: adminToken,
+      body: { payload: { st: { c: { '190001': { counted: true, blocks: [{ qty: 999 }] }, '190099': { counted: true, blocks: [{ qty: 1 }] } } } } } });
+    const c4c = c4Fin.json && c4Fin.json.submission && (await api('GET', '/api/submissions/' + c4Fin.json.submission.id, { token: adminToken })).json.submission.payload.st.c;
+    check('[C4] valeur reconstruite depuis la contribution (pas le payload forge)', !!c4c && c4c['190001'].blocks[0].qty === 7);
+    check('[C4] article jamais compte absent du resultat (pas injecte par le client)', !!c4c && !c4c['190099']);
+
+    // ---- [C5] recompte cible ne renvoie que l article vise a son compteur ----
+    await seedValidatedInventory(adminToken, { '190001': 100, '190004': 40 });
+    const c5a = await makeUser(adminToken, 'operateur', 'c5a');   // username operateur_c5a
+    const c5b = await makeUser(adminToken, 'operateur', 'c5b');
+    await api('POST', '/api/inventory-rounds/contribution', { token: c5a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    await api('POST', '/api/inventory-rounds/contribution', { token: c5b,
+      body: { payload: { agent: 'Sara', freshCodes: ['190004'], counts: { '190004': { counted: true, blocks: [{ qty: 9 }] } } } } });
+    const c5Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    const c5Fin = await api('POST', '/api/inventory-sessions/' + c5Round.id + '/finalize', { token: adminToken, body: {} });
+    const c5SubId = c5Fin.json && c5Fin.json.submission && c5Fin.json.submission.id;
+    const c5Detail = (await api('GET', '/api/submissions/' + c5SubId, { token: adminToken })).json.submission;
+    const c5ByUser = c5Detail.payload.st.c['190001'].byUser;   // identite stable du compteur de 190001
+    const c5Rej = await api('POST', '/api/submissions/' + c5SubId + '/reject', { token: adminToken,
+      body: { note: 'ecart anormal', recountArticles: [{ code: '190001', by: 'Ahmed', byUser: c5ByUser }] } });
+    const c5MineA = await api('GET', '/api/submissions?status=rejected&type=inventory&forMe=1', { token: c5a });
+    const c5MineB = await api('GET', '/api/submissions?status=rejected&type=inventory&forMe=1', { token: c5b });
+    check('[C5] reject avec recountArticles accepte', c5Rej.status === 200);
+    check('[C5] le compteur cible voit SON article a recompter',
+      c5MineA.status === 200 && (c5MineA.json.submissions || []).some(s => (s.recountArticles || []).some(x => x.code === '190001')));
+    check('[C5] un autre compteur ne voit PAS cet article cible',
+      c5MineB.status === 200 && !(c5MineB.json.submissions || []).some(s => (s.recountArticles || []).some(x => x.code === '190001')));
 
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');

@@ -418,6 +418,7 @@ function publicSubmission(s) {
     note: s.note || '',
     correctionRequested: !!s.correctionRequested,
     recountRequested: !!s.recountRequested,
+    recountArticles: Array.isArray(s.recountArticles) ? s.recountArticles : null,
     correctionOf: s.correctionOf || null
   };
 }
@@ -600,6 +601,32 @@ function normalizeResolutionMap(value) {
   return out;
 }
 
+// Spec C : la "manche" d'inventaire = au plus UNE session ouverte a la fois.
+// Une part qui arrive sans sessionId (comptage hors-ligne) se rattache a la
+// manche ouverte ; si aucune n'est ouverte, on l'ouvre (base = dernier inventaire valide).
+function findOrCreateOpenRound(db, actor) {
+  if (!Array.isArray(db.inventorySessions)) db.inventorySessions = [];
+  let sess = db.inventorySessions.find(s => (s.status || 'open') === 'open');
+  if (sess) return sess;
+  const baseRecord = latestInventoryRecord(db);
+  sess = {
+    id: 'isess_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+    title: '',
+    date: new Date().toISOString().slice(0, 10),
+    baseInventoryId: baseRecord ? baseRecord.id : null,
+    baseDate: baseRecord && baseRecord.payload ? (baseRecord.payload.date || '') : '',
+    baseSnapshot: baseRecord && baseRecord.payload ? (baseRecord.payload.st || null) : null,
+    status: 'open',
+    createdAt: new Date().toISOString(),
+    createdBy: actor ? { id: actor.id, name: actor.nom, role: actor.role } : { name: 'auto' },
+    autoOpened: true,
+    contributions: []
+  };
+  db.inventorySessions.push(sess);
+  audit(db, 'inventory_session.opened', actor ? actor.nom : 'auto', { id: sess.id, auto: true });
+  return sess;
+}
+
 function buildInventoryPayloadFromSession(sess, resolutionInput) {
   const contributions = Array.isArray(sess.contributions) ? sess.contributions : [];
   if (!contributions.length) {
@@ -611,8 +638,8 @@ function buildInventoryPayloadFromSession(sess, resolutionInput) {
   base.date = sess.date || base.date || new Date().toISOString().slice(0, 10);
   base.agent = 'Fusion serveur - ' + (sess.title || sess.id);
   base.sessionStart = Date.now();
-  base.c = objectMap(base.c);
-  base.cfg = objectMap(base.cfg);
+  const baseC = objectMap(base.c);
+  const baseCfg = objectMap(base.cfg);
 
   const byCode = {};
   for (const contribution of contributions) {
@@ -625,16 +652,25 @@ function buildInventoryPayloadFromSession(sess, resolutionInput) {
       byCode[code] = byCode[code] || [];
       byCode[code].push({
         agent: contribution.agent || payload.agent || contribution.username || 'Compteur',
+        byUser: contribution.username || '',
         entry,
         cfg: cfg[code] && typeof cfg[code] === 'object' ? cfg[code] : null
       });
     }
   }
 
+  // Spec C : univers = codes connus de la base (pour cfg) UNION codes comptes ce tour.
+  // Un code compte par 1 -> sa valeur + estampille by ; par >1 -> conflit ;
+  // par PERSONNE -> { counted:false } (ecart nul, jamais la valeur de base).
+  const universe = new Set(Object.keys(baseC));
+  for (const code of Object.keys(byCode)) universe.add(code);
+  const resultC = {};
+  const resultCfg = {};
   const conflicts = [];
   const applied = [];
-  for (const code of Object.keys(byCode).sort()) {
+  for (const code of [...universe].sort()) {
     const rows = byCode[code];
+    if (!rows || !rows.length) { resultC[code] = { counted: false }; continue; }
     const hasResolution = Object.prototype.hasOwnProperty.call(resolutions, code);
     if (rows.length > 1 && !hasResolution) {
       conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent) });
@@ -645,8 +681,9 @@ function buildInventoryPayloadFromSession(sess, resolutionInput) {
       conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent), invalidResolution: idx });
       continue;
     }
-    base.c[code] = cloneJson(rows[idx].entry);
-    if (rows[idx].cfg) base.cfg[code] = cloneJson(rows[idx].cfg);
+    resultC[code] = { ...cloneJson(rows[idx].entry), counted: true, by: rows[idx].agent, byUser: rows[idx].byUser || '' };
+    if (rows[idx].cfg) resultCfg[code] = cloneJson(rows[idx].cfg);
+    else if (baseCfg[code]) resultCfg[code] = cloneJson(baseCfg[code]);
     if (rows.length > 1) applied.push({ code, agent: rows[idx].agent, choices: rows.map(r => r.agent) });
   }
 
@@ -658,6 +695,8 @@ function buildInventoryPayloadFromSession(sess, resolutionInput) {
       conflicts
     };
   }
+  base.c = resultC;
+  base.cfg = resultCfg;
 
   const changed = Object.keys(byCode).length;
   const filled = countInventoryEntries(base);
@@ -904,6 +943,46 @@ async function handleApiRoutes(req, res, url) {
   }
 
   // ====== INVENTAIRE FRAGMENTE SERVEUR ======
+  // Spec C : contribution SANS sessionId -> rattachee a la manche ouverte (creee si aucune).
+  if (req.method === 'POST' && url.pathname === '/api/inventory-rounds/contribution') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    const payload = body.payload || {};
+    const freshCodes = Array.isArray(payload.freshCodes)
+      ? [...new Set(payload.freshCodes.map(c => String(c)).filter(Boolean))] : [];
+    const counts = {};
+    const src = (payload.counts && typeof payload.counts === 'object') ? payload.counts
+              : (payload.st && payload.st.c) ? payload.st.c : {};
+    for (const code of freshCodes) if (src[code] && src[code].counted) counts[code] = src[code];
+    const countedCodes = Object.keys(counts);
+    if (!freshCodes.length || !countedCodes.length) {
+      return sendJson(res, 400, { ok: false, error: 'Aucun article recompte dans cette part' });
+    }
+    const db = await readDb();
+    const actor = await authUser(req);
+    const sess = findOrCreateOpenRound(db, actor);
+    const rec = {
+      id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      userId: user.id, username: user.username,
+      agent: String(payload.agent || user.nom || '').trim() || user.nom,
+      counted: countedCodes.length, freshCount: countedCodes.length,
+      submittedAt: new Date().toISOString(), note: String(body.note || '').trim(),
+      payload: {
+        baseInventoryId: sess.baseInventoryId || null, baseDate: sess.baseDate || '',
+        agent: String(payload.agent || user.nom || '').trim() || user.nom,
+        freshCodes: countedCodes, counts, cfg: payload.cfg || {}
+      }
+    };
+    sess.contributions = sess.contributions || [];
+    const existing = sess.contributions.findIndex(c => c.userId === user.id);
+    if (existing >= 0) sess.contributions[existing] = rec; else sess.contributions.push(rec);
+    sess.updatedAt = rec.submittedAt;
+    audit(db, 'inventory_session.contribution', user.nom, { id: sess.id, counted: countedCodes.length });
+    await writeDb(db);
+    return sendJson(res, existing >= 0 ? 200 : 201, { ok: true, round: publicInventorySession(sess), contribution: rec });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/inventory-sessions') {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1080,9 +1159,25 @@ async function handleApiRoutes(req, res, url) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
     }
+    const forMe = url.searchParams.get('forMe') === '1';
     let rows = db.submissions;
     if (status) rows = rows.filter(s => s.status === status);
     if (type) rows = rows.filter(s => s.type === type);
+    // Spec C : recompte cible -> un compteur liste les soumissions rejetees dont un
+    // article lui est attribue (byUser), meme s'il n'en est pas l'auteur. On ne
+    // renvoie que SES articles cibles, sans le payload complet d'autrui.
+    if (type === 'inventory' && status === 'rejected' && forMe && !admin) {
+      const me = [user && user.username, user && user.nom].filter(Boolean).map(x => String(x).toLowerCase());
+      rows = (user && me.length)
+        ? rows.filter(s => Array.isArray(s.recountArticles)
+            && s.recountArticles.some(a => me.includes(String(a.byUser || '').toLowerCase())))
+        : [];
+      rows = rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return sendJson(res, 200, { ok: true, submissions: rows.map(s => ({
+        ...publicSubmission(s),
+        recountArticles: (s.recountArticles || []).filter(a => me.includes(String(a.byUser || '').toLowerCase()))
+      })) });
+    }
     // Un non-admin ne voit QUE ses propres soumissions inventaire rejetees.
     if (type === 'inventory' && status === 'rejected' && !admin) {
       rows = user ? rows.filter(s => s.author && s.author.id === user.id) : [];
@@ -1216,6 +1311,13 @@ async function handleApiRoutes(req, res, url) {
     sub.decisionNote = body.note || '';
     sub.correctionRequested = sub.status === 'rejected' && sub.type === 'quality' && !!body.correction;
     sub.recountRequested = sub.status === 'rejected' && sub.type === 'inventory' && !!body.recountRequested;
+    // Spec C : recompte CIBLE par article -> chaque article repart vers SON compteur (byUser).
+    if (sub.status === 'rejected' && sub.type === 'inventory' && Array.isArray(body.recountArticles)) {
+      sub.recountArticles = body.recountArticles
+        .filter(x => x && x.code)
+        .map(x => ({ code: String(x.code), by: String(x.by || '').trim(), byUser: String(x.byUser || '').trim() }));
+      if (sub.recountArticles.length) sub.recountRequested = true;
+    }
     if (sub.status === 'validated') {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
