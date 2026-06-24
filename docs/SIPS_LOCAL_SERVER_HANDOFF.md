@@ -21,7 +21,9 @@ Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gat
 - **Retrait « Secours WhatsApp »** sur Production/Sortie/Entree (file hors-ligne + Sauvegarde complete suffisent).
 - **Spec D — feuille « Stock » (etat de stock theorique)** : nouvel onglet lecture seule visible par tous ; stock = dernier inventaire valide + production + entrees − sorties − conso(RECF), source records VALIDES serveur + repli local ; **fleches** d'evolution ; produits finis **detailles par lot** (date de prod) avec **FIFO** (le plus ancien sort en premier), MP agregees. Module autonome `js/features/stock-sheet.js` (ne touche pas `refreshLiveStock`). Tests purs FIFO `npm run test:stock` = **11/11**.
 
-Etat technique : **SW v129**, `npm run test:server` = **47/47**, `npm run test:stock` = **11/11**, `npm run check:js` OK.
+- **Spec E1 — garde-fou bloquant « date de production » par lot (produit fini)** : decoupage du chantier « modele par lot » en E1/E2/E3 (spec `docs/superpowers/specs/2026-06-24-saisie-lot-gardefou-design.md`). Constat cle : la saisie capture **deja** les lots dates (`ST.c.blocks[].date`) ; le reel manque = `blk.date` optionnel + `stock-sheet` agrege les dates. **E1 fait** : empeche soumettre/valider un inventaire si un produit fini compte a un lot saisi **sans date de prod** (3 accroches : submit serveur B, valider local, part fragmentee C) ; modal `#lotWarn` cliquable -> carte ; champ date rouge + bouton « aujourd'hui » ; aucun champ nouveau. Tests purs `npm run test:lot` = **9/9**. **Reste E2** (stock-sheet lit les lots REELS au lieu d'agreger + FIFO sur vrais lots) et **E3** (MP par lot + peremption).
+
+Etat technique : **SW v130**, `npm run test:server` = **47/47**, `npm run test:stock` = **11/11**, `npm run test:lot` = **9/9**, `npm run check:js` OK.
 
 ## A faire avant de merger `main` (dans l'ordre)
 
@@ -34,7 +36,7 @@ Etat technique : **SW v129**, `npm run test:server` = **47/47**, `npm run test:s
 ## Prochaines taches (apres les gates)
 
 - **Item 5 — Refonte UX/UI** inspiree des maquettes Stitch (`docs/ux/README.md`), incrementale : design tokens -> ecrans pilotes (Accueil + Production) -> extension. CSS centralise, ne pas toucher la logique.
-- **D fait** (onglet Stock : agrege serveur + fleches + lots/FIFO derives des productions). **Restant hors-perimetre D** (chantiers ulterieurs) : refonte de la saisie comptage **par lot** (compter physiquement chaque lot date) + garde-fou **bloquant** « pas de validation d'inventaire sans date de prod » ; FIFO/peremption par lot pour les **MP**. Voir spec `docs/superpowers/specs/2026-06-24-stock-theorique-fifo-design.md` §9.
+- **Chantier « modele par lot » (suite de D)** : decoupe en E1/E2/E3. **E1 FAIT** (garde-fou bloquant date de prod, voir ci-dessus). **E2 a faire** : `stock-sheet.js` lit les lots REELS (date par bloc du dernier inventaire valide) au lieu d'agreger ; FIFO produits finis sur ces vrais lots (remplace les lots derives de D). **E3 a faire** : MP par lot + peremption dans la feuille Stock. Spec E1 : `docs/superpowers/specs/2026-06-24-saisie-lot-gardefou-design.md`.
 - Plus tard : Qualite serveur multi-etapes ; passage SQLite (submissions/records/audit/users) quand les workflows sont stabilises.
 
 ## Decisions / regles actives
