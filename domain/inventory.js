@@ -62,23 +62,34 @@
     return false;
   }
 
-  /* E1 — Garde-fou « date de production ». Liste les PRODUITS FINIS comptés
-     ayant au moins un lot (bloc) avec une saisie mais SANS date de production.
-     Pure : aucune dépendance DOM/IndexedDB. Les helpers (isFini, blockHasInput,
-     ensureBlocks) sont injectés par l'app ; des replis raisonnables existent
-     pour les tests.
+  /* Repli pur : une matière périssable (date de bloc = péremption) est un article
+     en sacs/caisses (g 'vrac') ou un arôme/petite matière au poids (g 'tare'). */
+  function defaultIsPerishableMp(r) {
+    return !!r && (r.g === 'vrac' || r.g === 'tare');
+  }
+  function defaultIsFini(r) {
+    return !!r && (r.cat === 'fini' || r.g === 'fini');
+  }
+
+  /* Garde-fou « date manquante » (E1 produits finis = date de production ;
+     E3 matières périssables = date de péremption). Liste les articles concernés
+     comptés ayant au moins un lot (bloc) avec une saisie mais SANS date.
+     Pure : aucune dépendance DOM/IndexedDB. Helpers injectés par l'app, replis
+     raisonnables pour les tests.
        entries : map { code -> entry (ST.c[code]) }
        refs    : REFS
-       h       : { isFini?, blockHasInput?, ensureBlocks? }
-     Retour : [{ code, des, nbLots }]  (vide = rien ne bloque). */
-  function lotsMissingProdDate(entries, refs, h) {
+       h       : { isFini?, isPerishableMp?, blockHasInput?, ensureBlocks? }
+     Retour : [{ code, des, nbLots, kind }] avec kind ∈ {'fini','mp'} ; vide = OK. */
+  function lotsMissingDate(entries, refs, h) {
     h = h || {};
-    const isFini = h.isFini || (r => !!r && (r.cat === 'fini' || r.g === 'fini'));
+    const isFini = h.isFini || defaultIsFini;
+    const isPerishableMp = h.isPerishableMp || defaultIsPerishableMp;
     const blockHasInput = h.blockHasInput || defaultBlockHasInput;
     const ensureBlocks = h.ensureBlocks || null;
     const out = [];
     (refs || []).forEach(r => {
-      if (!isFini(r)) return;
+      const kind = isFini(r) ? 'fini' : (isPerishableMp(r) ? 'mp' : null);
+      if (!kind) return;
       const e = entries && entries[r.code];
       if (!e || !e.counted) return;
       if (ensureBlocks) ensureBlocks(r, e);
@@ -87,7 +98,7 @@
       blocks.forEach(b => {
         if (blockHasInput(r, b) && !String((b && b.date) || '').trim()) nbLots++;
       });
-      if (nbLots > 0) out.push({ code: r.code, des: r.des, nbLots: nbLots });
+      if (nbLots > 0) out.push({ code: r.code, des: r.des, nbLots: nbLots, kind: kind });
     });
     return out;
   }
@@ -97,6 +108,8 @@
     deepCopy,
     createInventoryFromLastValidated,
     defaultBlockHasInput,
-    lotsMissingProdDate
+    defaultIsPerishableMp,
+    lotsMissingDate,
+    lotsMissingProdDate: lotsMissingDate   // alias compat E1
   };
 });

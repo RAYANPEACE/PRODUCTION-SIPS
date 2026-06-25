@@ -345,10 +345,10 @@ async function srvFragCreateSession(){
 async function srvFragSubmitMine(){
   const payload=srvFragContributionPayload();
   if(!payload.freshCodes.length){toast('Compte au moins un article avant d envoyer ta part');return;}
-  // E1 : garde-fou date de production sur MA part (produits finis comptes sans date).
-  if(typeof finishedLotsMissingDate==='function'){
-    const miss=finishedLotsMissingDate(payload.counts);
-    if(miss.length){if(typeof openLotWarn==='function')openLotWarn(miss);else toast('Date de production manquante pour '+miss.length+' produit(s) fini(s).');return;}
+  // E1/E3 : garde-fou date sur MA part (produits finis = date de prod ; matieres perissables = peremption).
+  if(typeof inventoryLotsMissingDate==='function'){
+    const miss=inventoryLotsMissingDate(payload.counts);
+    if(miss.length){if(typeof openLotWarn==='function')openLotWarn(miss);else toast('Date manquante pour '+miss.length+' article(s) (production / peremption).');return;}
   }
   if(typeof sipsRequiresLogin==='function'&&sipsRequiresLogin()){toast('Connexion requise pour envoyer ta part au serveur.');return;}
   try{

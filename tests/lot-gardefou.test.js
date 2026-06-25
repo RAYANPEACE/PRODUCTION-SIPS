@@ -25,26 +25,30 @@ function check(label, cond) {
   else { failed++; console.error('  ✗ ' + label); }
 }
 
-// Référentiel minimal : un produit fini (carton) et une matière première (vrac).
+// Référentiel minimal : un produit fini, une matiere perissable (vrac), un arome
+// (tare) et un emballage (film, jamais bloquant).
 const REFS = [
   { code: 'F1', des: 'DIAMO 5KG', cat: 'fini', g: 'fini', m: 'carton' },
-  { code: 'M1', des: 'LAIT VRAC', cat: 'mp', g: 'vrac', m: 'vrac' }
+  { code: 'M1', des: 'LAIT VRAC', cat: 'mp', g: 'vrac', m: 'vrac' },
+  { code: 'A1', des: 'AROME CAFE', cat: 'mp', g: 'tare', m: 'tare' },
+  { code: 'B1', des: 'FILM 400G', cat: 'mp', g: 'film', m: 'bobine' }
 ];
-// Helpers injectés calqués sur inventory-core.
+// Helpers injectés calqués sur inventory-core. isPerishableMp via le repli (g vrac/tare).
 const helpers = {
   isFini: r => r.cat === 'fini' || r.g === 'fini',
-  // blockHasInput simplifié pour les modes de test (carton via pleines ; vrac via pleines/kg).
+  // blockHasInput simplifié pour les modes de test (carton/vrac via pleines/kg ; tare via weighings).
   blockHasInput: (r, b) => !!b && (
     (Array.isArray(b.pleines) && b.pleines.some(v => String(v).trim())) ||
-    String(b.kg || '').trim() !== ''
+    String(b.kg || '').trim() !== '' ||
+    (Array.isArray(b.weighings) && b.weighings.some(w => w && String(w.brut || '').trim()))
   ),
   ensureBlocks: () => {} // les entrées de test fournissent déjà e.blocks
 };
-const call = entries => Dom.lotsMissingProdDate(entries, REFS, helpers);
+const call = entries => Dom.lotsMissingDate(entries, REFS, helpers);
 
-// 1) produit fini compté, un lot saisi SANS date -> signalé
-check('[GF] fini compté + lot saisi sans date -> signalé',
-  call({ F1: { counted: true, blocks: [{ pleines: ['3'], date: '' }] } }).length === 1);
+// 1) produit fini compté, un lot saisi SANS date -> signalé (kind fini)
+const r1 = call({ F1: { counted: true, blocks: [{ pleines: ['3'], date: '' }] } });
+check('[GF] fini compté + lot sans date -> signalé (kind fini)', r1.length === 1 && r1[0].kind === 'fini');
 
 // 2) produit fini compté, lot saisi AVEC date -> non signalé
 check('[GF] fini compté + lot daté -> non signalé',
@@ -54,9 +58,17 @@ check('[GF] fini compté + lot daté -> non signalé',
 check('[GF] lot sans date mais vide -> non signalé',
   call({ F1: { counted: true, blocks: [{ pleines: [''], date: '' }] } }).length === 0);
 
-// 4) MP sans date -> hors périmètre, non signalé
-check('[GF] MP sans date -> non signalé (hors périmètre E1)',
-  call({ M1: { counted: true, blocks: [{ pleines: ['2'], date: '' }] } }).length === 0);
+// 4) E3 : matiere perissable (vrac) sans peremption -> DESORMAIS signalée (kind mp)
+const r4 = call({ M1: { counted: true, blocks: [{ pleines: ['2'], date: '' }] } });
+check('[GF] matiere vrac sans date -> signalée (kind mp)', r4.length === 1 && r4[0].kind === 'mp');
+
+// 4bis) arome (tare) sans peremption -> signalé (kind mp)
+check('[GF] arome tare sans date -> signalé (kind mp)',
+  call({ A1: { counted: true, blocks: [{ weighings: [{ brut: '5' }], date: '' }] } }).length === 1);
+
+// 4ter) emballage (film) sans date -> JAMAIS signalé (choix utilisateur)
+check('[GF] emballage film sans date -> non signalé',
+  call({ B1: { counted: true, blocks: [{ pleines: ['4'], date: '' }] } }).length === 0);
 
 // 5) produit fini NON compté -> non signalé
 check('[GF] fini non compté -> non signalé',
@@ -77,12 +89,13 @@ const r7 = call({ F1: { counted: true, blocks: [
 ] } });
 check('[GF] 2 lots sans date -> nbLots = 2', r7.length === 1 && r7[0].nbLots === 2);
 
-// 8) entrées multiples : seul le fini est remonté (le code/des sont corrects)
+// 8) fini + matiere + emballage sans date : fini et matiere remontes, emballage non
 const r8 = call({
   F1: { counted: true, blocks: [{ pleines: ['1'], date: '' }] },
-  M1: { counted: true, blocks: [{ pleines: ['9'], date: '' }] }
+  M1: { counted: true, blocks: [{ pleines: ['9'], date: '' }] },
+  B1: { counted: true, blocks: [{ pleines: ['7'], date: '' }] }
 });
-check('[GF] seul le produit fini est remonté', r8.length === 1 && r8[0].code === 'F1' && r8[0].des === 'DIAMO 5KG');
+check('[GF] fini + matiere signalés, emballage non', r8.length === 2 && r8.some(x => x.code === 'F1' && x.kind === 'fini') && r8.some(x => x.code === 'M1' && x.kind === 'mp') && !r8.some(x => x.code === 'B1'));
 
 console.log('\n' + passed + ' reussi(s), ' + failed + ' echec(s).');
 process.exit(failed ? 1 : 0);

@@ -446,8 +446,11 @@ function blockMeta(r,blk,bi,isFin,redraw){
   const todayBtn=isFin?`<button type="button" class="blk-today" data-today>aujourd’hui</button>`:'';
   dr.innerHTML=`<label>${isFin?'Date de production':'Date de péremption'}</label><input type="date" value="${blk.date||''}">${todayBtn}<span class="blk-delay" data-delay></span>`;
   const di=dr.querySelector('input');const dl=dr.querySelector('[data-delay]');
-  // E1 : produit fini avec une saisie mais sans date de production -> champ signalé (rouge).
-  const updMissing=()=>{const need=isFin&&blockHasInput(r,blk)&&!String(blk.date||'').trim();dr.classList.toggle('missing',!!need);};
+  // E1/E3 : produit fini (date prod) ou matiere perissable (date peremption) avec une
+  // saisie mais sans date -> champ signalé (rouge). (Bouton "aujourd'hui" : finis seulement,
+  // une peremption n'est jamais le jour meme.)
+  const needsDate=isFin||isPerishableMp(r);
+  const updMissing=()=>{const need=needsDate&&blockHasInput(r,blk)&&!String(blk.date||'').trim();dr.classList.toggle('missing',!!need);};
   const updD=()=>{const info=isFin?prodInfo(blk.date):expInfo(blk.date);dl.className='blk-delay'+(info?' '+info.cls:'');dl.textContent=info?info.txt:'';updMissing();};
   di.addEventListener('change',ev=>{blk.date=ev.target.value;updD();saveCounts();});updD();
   const tb=dr.querySelector('[data-today]');
@@ -1092,21 +1095,24 @@ function inventoryServerPayload(){
   if(INV_RECOUNT_OF&&INV_RECOUNT_OF.stId===ST.id)out.recountOf={id:INV_RECOUNT_OF.id,date:INV_RECOUNT_OF.date};
   return out;
 }
-/* E1 — Garde-fou « date de production ». Renvoie les produits finis comptés
-   ayant un lot saisi sans date de prod. `entries` par défaut = ST.c (tout
-   l'inventaire) ; le flux fragmenté passe le sous-ensemble counts d'une part. */
-function finishedLotsMissingDate(entries){
+/* Matière périssable (date de bloc = péremption) : matières en sacs/caisses ou aromes. */
+function isPerishableMp(r){return !!r&&(r.g==='vrac'||r.g==='tare');}
+/* Garde-fou « date manquante » (E1 finis = date de prod ; E3 matieres = peremption).
+   Renvoie les articles comptes ayant un lot saisi sans date. `entries` par defaut
+   = ST.c ; le flux fragmente passe le sous-ensemble counts d'une part. */
+function inventoryLotsMissingDate(entries){
   entries=entries||ST.c;
-  return InventoryDomain.lotsMissingProdDate(entries,REFS,{isFini:isFini,blockHasInput:blockHasInput,ensureBlocks:ensureBlocks});
+  return InventoryDomain.lotsMissingDate(entries,REFS,{isFini:isFini,isPerishableMp:isPerishableMp,blockHasInput:blockHasInput,ensureBlocks:ensureBlocks});
 }
-/* Ouvre le modal bloquant listant les produits finis sans date ; chaque ligne
+/* Ouvre le modal bloquant listant les articles sans date (par type) ; chaque ligne
    défile vers la carte concernée dans l'onglet Comptage. */
 function openLotWarn(list){
   const dlg=$('#lotWarn');const ul=$('#lotWarnList');if(!dlg||!ul)return;
   ul.innerHTML='';
   (list||[]).forEach(it=>{
     const li=document.createElement('li');li.style.cursor='pointer';
-    li.innerHTML='<b>'+esc(it.des)+'</b> <small>('+it.nbLots+' lot'+(it.nbLots>1?'s':'')+' sans date)</small>';
+    const dateWord=it.kind==='mp'?'date de péremption':'date de production';
+    li.innerHTML='<b>'+esc(it.des)+'</b> <small>('+it.nbLots+' lot'+(it.nbLots>1?'s':'')+' sans '+dateWord+')</small>';
     li.onclick=async()=>{
       try{dlg.close();}catch(_){}
       try{const d=$('#dlg');if(d&&d.open)d.close();}catch(_){}
@@ -1122,7 +1128,7 @@ async function submitInventoryServer(){
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à soumettre');return;}
-  const miss=finishedLotsMissingDate();
+  const miss=inventoryLotsMissingDate();
   if(miss.length){openLotWarn(miss);return;}
   // Retour immediat sur le bouton (comme les mouvements) : "Envoi..." + desactive
   // pendant les ~3s, pour que l'utilisateur voie qu'une action est en cours.
@@ -1161,7 +1167,7 @@ async function validateCurrent(){
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à valider');return;}
-  const miss=finishedLotsMissingDate();
+  const miss=inventoryLotsMissingDate();
   if(miss.length){openLotWarn(miss);return;}
   if(!confirm('Valider et VERROUILLER cet inventaire ('+(ST.date||'—')+(ST.agent?(' · '+ST.agent):'')+') ?\n\nIl devient la référence (Bilan, Capacité, Plan), figé en lecture seule (déverrouillable depuis l’Historique) et protégé contre l’écrasement. Un nouveau comptage vierge sera ouvert.'))return;
   if(!ST.id)ST.id='inv_'+Date.now();

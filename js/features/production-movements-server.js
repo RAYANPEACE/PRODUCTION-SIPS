@@ -145,7 +145,7 @@ const MOVCFG={
  entree:{title:'Entrées',word:'ENTRÉE',icon:'📦',refLabel:'Fournisseur / référence / BL',refPlace:'ex. fournisseur, n° BL, container',pfx:'entree_',saved:'Entrée enregistrée',hint:'Enregistre une entrée : réceptions de matières premières et/ou retours de produits finis. Date vide = aujourd\u2019hui. Photo si nécessaire.'}
 };
 let MOVF={sortie:null,entree:null};
-function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:''}],photos:[],note:''};}
+function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
 function movArts(catKind){return REFS.filter(r=>catKind==='finis'?r.cat==='fini':r.cat==='mp');}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
 async function movSave(kind,mf){
@@ -164,11 +164,13 @@ async function movSubmit(kind,mf){
   await sipsSubmit(kind,payload,MOVCFG[kind].word+' '+(payload.date||''));
   return true;
 }
-function movSectionHTML(mf,sec,title){
+function movSectionHTML(mf,sec,title,withExp){
   const arts=movArts(sec);
   const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}>${esc(r.des)}</option>`).join('');
-  let rows=mf[sec].map((x,i)=>`<div class="pf-row" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}"><button class="mv-del" title="retirer">✕</button></div>`).join('');
-  return '<div class="pf-sec"><div class="pf-h">'+title+'</div><div class="mv-lines" data-secwrap="'+sec+'">'+rows+'</div><button class="mv-add pf-add" data-addsec="'+sec+'">+ article</button></div>';
+  const expCell=x=>withExp?`<input class="mv-exp" type="date" title="date de péremption" value="${esc(x.exp||'')}">`:'';
+  let rows=mf[sec].map((x,i)=>`<div class="pf-row${withExp?' pf-row-exp':''}" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}">${expCell(x)}<button class="mv-del" title="retirer">✕</button></div>`).join('');
+  const hint=withExp?'<small style="display:block;font-size:11px;color:var(--mute);margin:2px 0 6px">Renseigne la date de péremption de chaque matière (suivi FEFO).</small>':'';
+  return '<div class="pf-sec"><div class="pf-h">'+title+'</div>'+hint+'<div class="mv-lines" data-secwrap="'+sec+'">'+rows+'</div><button class="mv-add pf-add" data-addsec="'+sec+'">+ article</button></div>';
 }
 function renderMov(kind,focusSel){
   const c=MOVCFG[kind];
@@ -185,7 +187,7 @@ function renderMov(kind,focusSel){
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
-    +movSectionHTML(mf,'mp','Matières premières / Échantillons')
+    +movSectionHTML(mf,'mp','Matières premières / Échantillons',kind==='entree')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
     +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
@@ -198,8 +200,9 @@ function renderMov(kind,focusSel){
   app.querySelectorAll('.pf-row[data-sec]').forEach(row=>{const sec=row.dataset.sec;const i=+row.dataset.li;
     row.querySelector('.mv-a').onchange=e=>{mf[sec][i].a=e.target.value;};
     row.querySelector('.mv-q').oninput=e=>{mf[sec][i].q=e.target.value;};
+    const ex=row.querySelector('.mv-exp');if(ex)ex.onchange=e=>{mf[sec][i].exp=e.target.value;};
     row.querySelector('.mv-del').onclick=()=>{mf[sec].splice(i,1);if(!mf[sec].length)mf[sec].push({a:'',q:''});re();};});
-  app.querySelectorAll('.mv-add').forEach(btn=>{const sec=btn.dataset.addsec;btn.onclick=()=>{mf[sec].push({a:'',q:''});renderMov(kind,sec+'-'+(mf[sec].length-1));};});
+  app.querySelectorAll('.mv-add').forEach(btn=>{const sec=btn.dataset.addsec;btn.onclick=()=>{mf[sec].push({a:'',q:'',exp:''});renderMov(kind,sec+'-'+(mf[sec].length-1));};});
   photoArrayUI($('#mvPhotos'),mf.photos,re);
   $('#mvSave').onclick=async()=>{if(await movSave(kind,mf))loadMovHist(kind);};
   $('#mvSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await movSubmit(kind,mf);}finally{b.disabled=false;b.textContent=t;}};
@@ -269,7 +272,7 @@ function sipsSubmissionDetailHTML(s){
   if(s.type==='sortie'||s.type==='entree'){
     return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Reference',p.ref],['Photos',(p.photos||[]).length],['Note',p.note]])
       +sipsLines('Produits finis',p.finis,[['a','Article'],['q','Qte']])
-      +sipsLines('Matieres premieres / Echantillons',p.mp,[['a','Article'],['q','Qte']]);
+      +sipsLines('Matieres premieres / Echantillons',p.mp,s.type==='entree'?[['a','Article'],['q','Qte'],['exp','Peremption']]:[['a','Article'],['q','Qte']]);
   }
   if(s.type==='quality'){
     const i=p.informations||{},v=p.visas||{};

@@ -9,15 +9,43 @@
 /* ---- Fonctions pures (testables hors navigateur) ---- */
 
 /* Fusionne les lots de meme date (cle de lot = date seule). Un lot a date vide
-   est marque imprecise (date de production manquante) ; il sera trie en premier. */
-function mergeLotsByDate(lots){
+   est marque imprecise. Tri par date croissante ; undatedLast=true place les lots
+   sans date en DERNIER (matieres/FEFO : peremption inconnue non prioritaire) au lieu
+   d'en premier (finis/FIFO : production inconnue = supposee la plus ancienne). */
+function mergeLotsByDate(lots, undatedLast){
   const map = {}, order = [];
   (lots || []).forEach(l => {
     const k = String((l && l.date) || '');
     if (!map[k]) { map[k] = { date: k, qty: 0, imprecise: k === '' }; order.push(k); }
     map[k].qty = round2(map[k].qty + num(l.qty));
   });
-  return order.map(k => map[k]).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return order.map(k => map[k]).sort((a, b) => {
+    if (undatedLast) { if (a.imprecise && !b.imprecise) return 1; if (!a.imprecise && b.imprecise) return -1; }
+    return String(a.date).localeCompare(String(b.date));
+  });
+}
+/* E3 — Lots d'une MATIERE perissable, tries par PEREMPTION croissante (FEFO ; le lot
+   qui perime le plus tot d'abord), les lots sans date en dernier.
+   baseLots = tableau [{date(=peremption), qty}] des blocs de l'inventaire (ou nombre =
+   base agregee sans dates -> un lot imprecise). entreeRecs : les entrees apportent des
+   lots dates par leur peremption saisie (x.exp). Pas de records de production pour les MP. */
+function buildMpLots(code, baseLots, baseDate, entreeRecs, desToCode, today){
+  const inWin = d => baseDate && String(d || '') > baseDate && String(d || '') <= today;
+  const lots = [];
+  if (Array.isArray(baseLots)) {
+    baseLots.forEach(l => { if (l && num(l.qty) !== 0) lots.push({ date: String(l.date || ''), qty: round2(num(l.qty)) }); });
+  } else if (num(baseLots) > 0) {
+    lots.push({ date: '', qty: round2(num(baseLots)) });
+  }
+  (entreeRecs || []).forEach(r => {
+    if (!inWin(r && r.date)) return;
+    (r.mp || []).forEach(x => {
+      if (!x || !x.a || desToCode[x.a] !== code) return;
+      const q = num(x.q);
+      if (q > 0) lots.push({ date: String(x.exp || ''), qty: round2(q) });
+    });
+  });
+  return mergeLotsByDate(lots, true);
 }
 /* Lots d'un produit fini, tries du plus ANCIEN au plus recent.
    E2 : baseLots accepte un TABLEAU [{date, qty}] (vrais lots par bloc de l'inventaire)
@@ -157,7 +185,8 @@ function stockBaseMap(baseST){
         const e = ST.c[r.code];
         if (!e || !e.counted) return;
         baseMap[r.code] = round2(total(r));
-        if (typeof isFini === 'function' && isFini(r) && typeof ensureBlocks === 'function') {
+        const wantsLots = (typeof isFini === 'function' && isFini(r)) || (typeof isPerishableMp === 'function' && isPerishableMp(r));
+        if (wantsLots && typeof ensureBlocks === 'function') {
           ensureBlocks(r, e);
           const lots = [];
           (e.blocks || []).forEach(blk => {
@@ -187,15 +216,20 @@ async function computeStockData(){
     const flux = (fl.add[c] || 0) + (fl.en[c] || 0) - (fl.so[c] || 0) - (fl.conso[c] || 0);
     const stock = round2(base + flux);
     const arrow = Math.abs(flux) < 1e-9 ? 0 : (flux > 0 ? 1 : -1);
-    const row = { code: c, des: r.des, unite: r.ub || r.u || '', cat, grp, base: round2(base), flux: round2(flux), stock, arrow, lots: null };
+    const row = { code: c, des: r.des, unite: r.ub || r.u || '', cat, grp, base: round2(base), flux: round2(flux), stock, arrow, lots: null, lotKind: null };
+    const bl = (baseLotsMap[c] && baseLotsMap[c].length) ? baseLotsMap[c] : base;
     if (grp === 'fini' && src.baseDate) {
-      // E2 : vrais lots par bloc de l'inventaire si dispo, sinon repli sur la quantite agregee (D).
-      const bl = (baseLotsMap[c] && baseLotsMap[c].length) ? baseLotsMap[c] : base;
+      // E2 : vrais lots finis par bloc (FIFO par date de production).
       const lots = buildFinishedLots(c, bl, src.baseDate, src.prod, src.entree, fl.desToCode, fl.today);
       // FIFO deduit les sorties ET l'eventuelle consommation RECF (si un produit fini sert d'ingredient),
       // pour que la somme des restants des lots egale toujours le stock agrege (base + flux).
       applyFifo(lots, (fl.so[c] || 0) + (fl.conso[c] || 0));
-      row.lots = lots;
+      row.lots = lots; row.lotKind = 'fini';
+    } else if (typeof isPerishableMp === 'function' && isPerishableMp(r) && src.baseDate) {
+      // E3 : lots de matiere perissable (FEFO par date de peremption). Conso MP = sorties + RECF.
+      const lots = buildMpLots(c, bl, src.baseDate, src.entree, fl.desToCode, fl.today);
+      applyFifo(lots, (fl.so[c] || 0) + (fl.conso[c] || 0));
+      row.lots = lots; row.lotKind = 'mp';
     }
     rows.push(row);
   });
@@ -236,17 +270,30 @@ function stockSheetHTML(data){
         + '<div class="bl-id"><span class="bl-code">' + x.code + '</span> ' + esc(x.des) + '</div>'
         + '<div class="bl-tp">base <b>' + fmtq(x.base) + '</b> · flux <b>' + (x.flux > 0 ? '+' : '') + fmtq(x.flux) + '</b></div>'
         + '<div class="bl-ec"><b' + negStyle + '>' + fmtq(x.stock) + ' ' + esc(x.unite) + '</b> ' + ar + '</div>';
+      const isMp = x.lotKind === 'mp';
       const visibleLots = x.lots ? x.lots.filter(l => Math.abs(l.rest) > 1e-9 || l.imprecise) : [];
       if (visibleLots.length) {
         h += '<div class="bl-st"><button class="b-sec" data-stk-toggle="' + esc(x.code) + '" style="font-size:11px;padding:2px 8px">Lots (' + visibleLots.length + ')</button></div>';
         h += '<div class="stk-lots" id="stklots-' + esc(x.code) + '" style="display:none;flex-basis:100%;margin-top:4px;padding-left:6px">'
           + visibleLots.map(l => {
-            const lbl = l.imprecise ? 'lot sans date precise' : ('lot du <b>' + esc(l.date) + '</b>');
-            const note = l.imprecise ? ' <em style="color:#9a6500">(date de production manquante)</em>' : '';
+            let lbl, note = '';
+            if (l.imprecise) {
+              lbl = isMp ? 'lot sans date de peremption' : 'lot sans date precise';
+              note = ' <em style="color:#9a6500">(' + (isMp ? 'date de peremption manquante' : 'date de production manquante') + ')</em>';
+            } else if (isMp) {
+              lbl = 'perime le <b>' + esc(l.date) + '</b>';
+              const info = (typeof expInfo === 'function') ? expInfo(l.date) : null;
+              if (info) {
+                const col = info.cls === 'exp-ko' ? 'var(--red)' : (info.cls === 'exp-warn' ? '#d2691e' : (info.cls === 'exp-soon' ? '#b8860b' : 'var(--green)'));
+                note = ' <em style="color:' + col + '">' + esc(info.txt) + '</em>';
+              }
+            } else {
+              lbl = 'lot du <b>' + esc(l.date) + '</b>';
+            }
             const rNeg = l.rest < 0 ? ' style="color:var(--red)"' : '';
             return '<div style="font-size:12px;color:#556">' + lbl + ' — restant <b' + rNeg + '>' + fmtq(l.rest) + '</b>' + note + '</div>';
           }).join('')
-          + '<div style="font-size:11px;color:#9aa7b0;margin-top:2px">FIFO : le lot le plus ancien sort en premier.</div></div>';
+          + '<div style="font-size:11px;color:#9aa7b0;margin-top:2px">' + (isMp ? 'FEFO : le lot qui perime le plus tot sort en premier.' : 'FIFO : le lot le plus ancien sort en premier.') + '</div></div>';
       }
       h += '</div>';
     });

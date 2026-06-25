@@ -85,5 +85,26 @@ check('[E2] FIFO sur base reelle : plus ancien epuise (40->0)', close(e4[0].rest
 check('[E2] FIFO sur base reelle : 2e lot 60-10=50', close(e4[1].rest, 50));
 check('[E2] invariant somme restants = base-sorties (100-50=50)', close(sum(e4), 50));
 
+// ====== E3 : MATIERES PREMIERES par lot + FEFO (peremption) ======
+const dM = { 'LAIT': 'M1' };
+// base = 2 blocs avec peremptions ; entree datee par sa peremption (exp) -> tri PEREMPTION croissante (FEFO).
+const m1 = ctx.buildMpLots('M1', [{ date: '2026-08-01', qty: 50 }, { date: '2026-07-15', qty: 30 }], '2026-06-01',
+  [{ date: '2026-06-10', mp: [{ a: 'LAIT', q: 20, exp: '2026-07-01' }] }], dM, '2026-06-30');
+check('[FEFO] tri par peremption croissante', m1[0].date === '2026-07-01' && m1[1].date === '2026-07-15' && m1[2].date === '2026-08-01');
+check('[FEFO] lot d entree date par sa peremption (exp)', close(m1[0].qty, 20));
+ctx.applyFifo(m1, 35); // FEFO : 20 (01/07) puis 15 (15/07)
+check('[FEFO] lot perimant le plus tot epuise en premier', close(m1[0].rest, 0));
+check('[FEFO] 2e lot 30-15=15', close(m1[1].rest, 15));
+check('[FEFO] 3e lot intact : 50', close(m1[2].rest, 50));
+check('[FEFO] invariant somme restants = base+entree-conso (100-35=65)', close(sum(m1), 65));
+
+// lot sans peremption -> place EN DERNIER (peremption inconnue non prioritaire) et imprecise.
+const m2 = ctx.buildMpLots('M1', [{ date: '', qty: 10 }, { date: '2026-07-15', qty: 30 }], '2026-06-01', [], dM, '2026-06-30');
+check('[FEFO] lot sans peremption place en dernier', m2[0].date === '2026-07-15' && m2[m2.length - 1].imprecise === true);
+
+// base agregee sans dates (nombre) -> un lot imprecise (repli).
+const m3 = ctx.buildMpLots('M1', 12, '2026-06-01', [], dM, '2026-06-30');
+check('[FEFO] base agregee (nombre) -> lot imprecise unique', m3.length === 1 && m3[0].imprecise === true && close(m3[0].qty, 12));
+
 console.log('\n' + passed + ' reussi(s), ' + failed + ' echec(s).');
 process.exit(failed ? 1 : 0);

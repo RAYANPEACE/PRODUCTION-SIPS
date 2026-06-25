@@ -327,6 +327,9 @@
   .pf-row select,.pf-row input{min-width:0;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:8px;font-size:13px;background:#fbfcfb}
   .pf-row .pf-n,.pf-row .pf-dq,.pf-row .pf-mk{font-family:ui-monospace,monospace;text-align:center}
   .pf-row button{border:none;background:none;color:var(--red);font-size:16px;font-weight:700}
+  .pf-row-exp{grid-template-columns:1fr 80px 30px;grid-template-areas:"a q d" "e e e"}
+  .pf-row-exp .mv-a{grid-area:a}.pf-row-exp .mv-q{grid-area:q}.pf-row-exp .mv-del{grid-area:d}
+  .pf-row-exp .mv-exp{grid-area:e;font-family:ui-monospace,monospace}
   .pf-add{width:100%;padding:7px;border:1.5px dashed var(--steel);background:#f3f7fc;color:var(--steel-d);border-radius:8px;font-weight:600;font-size:12px}
   #pfNote{width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:8px;font-size:13px;background:#fbfcfb;font-family:inherit;resize:vertical}
   .photo-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
