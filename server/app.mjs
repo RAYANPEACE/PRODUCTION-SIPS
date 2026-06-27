@@ -608,6 +608,32 @@ function normalizeResolutionMap(value) {
 // Spec C : la "manche" d'inventaire = au plus UNE session ouverte a la fois.
 // Une part qui arrive sans sessionId (comptage hors-ligne) se rattache a la
 // manche ouverte ; si aucune n'est ouverte, on l'ouvre (base = dernier inventaire valide).
+// R2-6 : assignments de recompte ciblé ACTIFS = articles renvoyes a un compteur precis
+// (recountArticles.byUser) par une soumission inventaire rejetee non encore resolue.
+// Renvoie { code: Set(byUser en minuscules) }. Vide => aucune manche de recompte active.
+function activeRecountAssignments(db) {
+  const out = {};
+  for (const s of (db.submissions || [])) {
+    if (s.type !== 'inventory' || s.status !== 'rejected' || s.recountResolvedAt) continue;
+    for (const a of (s.recountArticles || [])) {
+      const code = a && a.code, who = String((a && a.byUser) || '').trim().toLowerCase();
+      if (!code || !who) continue;
+      (out[code] = out[code] || new Set()).add(who);
+    }
+  }
+  return out;
+}
+// Purge : une assemblee (finalize) ou une validation d'inventaire supersede les recomptes
+// cibles en attente -> on les marque resolus pour qu'ils ne "collent" pas (faux blocages).
+function resolvePendingRecounts(db) {
+  const now = new Date().toISOString();
+  for (const s of (db.submissions || [])) {
+    if (s.type === 'inventory' && s.status === 'rejected'
+        && Array.isArray(s.recountArticles) && s.recountArticles.length && !s.recountResolvedAt) {
+      s.recountResolvedAt = now;
+    }
+  }
+}
 function findOrCreateOpenRound(db, actor) {
   if (!Array.isArray(db.inventorySessions)) db.inventorySessions = [];
   let sess = db.inventorySessions.find(s => (s.status || 'open') === 'open');
@@ -975,6 +1001,15 @@ async function handleApiRoutes(req, res, url) {
         && String(payload.baseInventoryId) !== String(sess.baseInventoryId)) {
       return sendJson(res, 409, { ok: false, error: 'Part perimee : elle vise un autre inventaire de base que la manche en cours. Recharge la session courante avant de renvoyer.' });
     }
+    // R2-6 : isolation du recompte cible. Un article renvoye a UN compteur precis ne peut
+    // pas etre soumis par un autre (anti-pollution de l'assemblage). Les codes non assignes
+    // et ceux assignes au compteur courant passent (manche normale inchangee).
+    const assign = activeRecountAssignments(db);
+    const meId = [user.username, user.nom].filter(Boolean).map(x => String(x).toLowerCase());
+    const blocked = countedCodes.filter(code => assign[code] && !meId.some(u => assign[code].has(u)));
+    if (blocked.length) {
+      return sendJson(res, 403, { ok: false, error: 'Recompte cible : ' + blocked.join(', ') + ' est/sont reserve(s) a un autre compteur. Tu ne peux soumettre que tes articles assignes.' });
+    }
     const rec = {
       id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
       userId: user.id, username: user.username,
@@ -1166,9 +1201,12 @@ async function handleApiRoutes(req, res, url) {
     db.submissions.push(sub);
     sess.status = 'finalized';
     sess.finalizedAt = finalizedAt;
-    sess.finalizedBy = body.actor || (actor ? actor.nom : 'admin');
+    // Securite (meme classe que R1-1) : attribution depuis le token, pas de body.actor.
+    sess.finalizedBy = (actor && actor.nom) || 'admin';
     sess.submissionId = sub.id;
     sess.finalSummary = merge.summary;
+    // R2-6 : l'assemblee supersede les recomptes cibles en attente -> on les purge.
+    resolvePendingRecounts(db);
     audit(db, 'inventory_session.finalized', sess.finalizedBy, {
       id: sess.id,
       submissionId: sub.id,
@@ -1362,6 +1400,8 @@ async function handleApiRoutes(req, res, url) {
         .map(x => ({ code: String(x.code), by: String(x.by || '').trim(), byUser: String(x.byUser || '').trim() }));
       if (sub.recountArticles.length) sub.recountRequested = true;
     }
+    // R2-6 : un inventaire VALIDE supersede les recomptes cibles en attente -> purge.
+    if (sub.status === 'validated' && sub.type === 'inventory') resolvePendingRecounts(db);
     if (sub.status === 'validated') {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),

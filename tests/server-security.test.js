@@ -526,6 +526,32 @@ async function main() {
     check('[R2-7] 1re part conservee apres 2e part disjointe (190001)', !!r7c && r7c['190001'] && r7c['190001'].counted === true);
     check('[R2-7] 2e part presente (190004) sans ecraser la 1re', !!r7c && r7c['190004'] && r7c['190004'].counted === true);
 
+    // ---- [R2-6] isolation du recompte cible : seul le compteur assigne soumet l'article ----
+    await seedValidatedInventory(adminToken, { '190001': 100, '190004': 40 });
+    const t1 = await makeUser(adminToken, 'operateur', 't1');
+    const t2 = await makeUser(adminToken, 'operateur', 't2');
+    await api('POST', '/api/inventory-rounds/contribution', { token: t1,
+      body: { payload: { agent: 'T1', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    await api('POST', '/api/inventory-rounds/contribution', { token: t2,
+      body: { payload: { agent: 'T2', freshCodes: ['190004'], counts: { '190004': { counted: true, blocks: [{ qty: 9 }] } } } } });
+    const t6Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions.find(s => (s.status || 'open') === 'open');
+    const t6Fin = await api('POST', '/api/inventory-sessions/' + t6Round.id + '/finalize', { token: adminToken, body: {} });
+    const t6SubId = t6Fin.json.submission.id;
+    const t6ByUser = (await api('GET', '/api/submissions/' + t6SubId, { token: adminToken })).json.submission.payload.st.c['190001'].byUser;
+    await api('POST', '/api/submissions/' + t6SubId + '/reject', { token: adminToken,
+      body: { note: 'ecart', recountArticles: [{ code: '190001', by: 'T1', byUser: t6ByUser }] } });
+    const t2Bad = await api('POST', '/api/inventory-rounds/contribution', { token: t2,
+      body: { payload: { agent: 'T2', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 99 }] } } } } });
+    check('[R2-6] compteur non assigne bloque (403) sur article en recompte cible', t2Bad.status === 403);
+    const t1Ok = await api('POST', '/api/inventory-rounds/contribution', { token: t1,
+      body: { payload: { agent: 'T1', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 8 }] } } } } });
+    check('[R2-6] compteur assigne peut soumettre son article cible', t1Ok.status === 200 || t1Ok.status === 201);
+    const t6Round2 = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions.find(s => (s.status || 'open') === 'open');
+    await api('POST', '/api/inventory-sessions/' + t6Round2.id + '/finalize', { token: adminToken, body: {} });
+    const t2After = await api('POST', '/api/inventory-rounds/contribution', { token: t2,
+      body: { payload: { agent: 'T2', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 50 }] } } } } });
+    check('[R2-6] apres finalisation, l assignment est purge (code de nouveau libre)', t2After.status === 200 || t2After.status === 201);
+
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');
     const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');
