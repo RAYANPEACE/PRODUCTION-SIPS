@@ -90,8 +90,15 @@ function applyFifo(lots, sortieQty){
     l.rest = round2(l.rest - take);
     rest = round2(rest - take);
   }
-  if (rest > 1e-9 && lots.length) {
-    lots[lots.length - 1].rest = round2(lots[lots.length - 1].rest - rest);
+  if (rest > 1e-9) {
+    if (lots.length) {
+      lots[lots.length - 1].rest = round2(lots[lots.length - 1].rest - rest);
+    } else {
+      // Aucun lot connu mais consommation > 0 (ex. sorties d'un article jamais inventorie) :
+      // on materialise un lot synthetique negatif pour que Somme(rest) = base+flux (invariant)
+      // et que l'incoherence soit visible dans le detail, pas seulement dans l'agrege.
+      lots.push({ date: '', qty: 0, imprecise: true, rest: round2(-rest) });
+    }
   }
   return lots;
 }

@@ -463,6 +463,69 @@ async function main() {
     check('[C5] un autre compteur ne voit PAS cet article cible',
       c5MineB.status === 200 && !(c5MineB.json.submissions || []).some(s => (s.recountArticles || []).some(x => x.code === '190001')));
 
+    // ====== Revue adversariale 2026-06-27 : corrections R1/R2 ======
+
+    // ---- [R1-1] l'attribution de decision vient du TOKEN, pas de body.actor ----
+    const r1Sub = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'inventory', payload: { kind: 'inventory', date: '2026-06-21', agent: 'X', filled: 1, st: { c: { '190001': { counted: true, blocks: [{ qty: 1 }] } }, cfg: {} } } } });
+    const r1Id = r1Sub.json.submission.id;
+    const r1Val = await api('POST', '/api/submissions/' + r1Id + '/validate', { token: adminToken, body: { actor: 'Pirate Forge' } });
+    const r1Decided = (await api('GET', '/api/submissions/' + r1Id, { token: adminToken })).json.submission;
+    check('[R1-1] decidedBy vient du token authentifie (pas de body.actor)',
+      r1Val.status === 200 && r1Decided.decidedBy === 'Chef' && r1Decided.decidedBy !== 'Pirate Forge');
+
+    // ---- [R1-2] la date de visa qualite est posee par le serveur (anti-antidatage) ----
+    const r2signer = await makeUser(adminToken, 'operateur', 'r2date');
+    const r2Sub = await api('POST', '/api/submissions', { token: adminToken, body: qualityPayload('LOT-DATE') });
+    const r2Id = r2Sub.json.submission.id;
+    await api('POST', '/api/submissions/' + r2Id + '/quality-sign', { token: r2signer, body: { role: 'operateur', visa: { signature: SIG, date: '1999-01-01T00:00:00.000Z' } } });
+    const r2Visa = (await api('GET', '/api/submissions/' + r2Id, { token: adminToken })).json.submission.payload.visas.operateur;
+    check('[R1-2] date de visa = serveur (pas la date client forgee)',
+      !!r2Visa && r2Visa.date !== '1999-01-01T00:00:00.000Z' && /^\d{4}-\d{2}-\d{2}T/.test(r2Visa.date));
+    check('[R1-2] date client conservee a part (clientDate, non opposable)', !!r2Visa && r2Visa.clientDate === '1999-01-01T00:00:00.000Z');
+
+    // ---- [R1-3] GET /api/submissions exige une authentification (anti-enumeration anonyme) ----
+    const r3Anon = await api('GET', '/api/submissions?type=inventory');
+    check('[R1-3] GET /api/submissions sans auth refuse (401)', r3Anon.status === 401);
+
+    // ---- [R1-4] detail de session : un non-admin ne voit pas les comptes d'autrui ----
+    await seedValidatedInventory(adminToken, { '190001': 100 });
+    const r4a = await makeUser(adminToken, 'operateur', 'r4a');
+    await api('POST', '/api/inventory-rounds/contribution', { token: r4a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    const r4Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    const r4User = (await api('GET', '/api/inventory-sessions/' + r4Round.id, { token: r4a })).json.session;
+    const r4Admin = (await api('GET', '/api/inventory-sessions/' + r4Round.id, { token: adminToken })).json.session;
+    check('[R1-4] non-admin recoit la base (peut charger sa zone)', !!r4User.baseSnapshot);
+    check('[R1-4] non-admin ne recoit PAS les comptes detailles des contributions',
+      (r4User.contributions || []).every(c => !c.payload));
+    check('[R1-4] admin recoit les contributions detaillees', (r4Admin.contributions || []).some(c => c.payload && c.payload.counts));
+
+    // ---- [R2-5] une part visant une autre base que la manche ouverte est rejetee ----
+    const r5BaseA = await seedValidatedInventory(adminToken, { '190001': 100 });
+    const r5a = await makeUser(adminToken, 'operateur', 'r5a');
+    await api('POST', '/api/inventory-rounds/contribution', { token: r5a,
+      body: { payload: { baseInventoryId: r5BaseA, agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    const r5RoundA = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    await api('POST', '/api/inventory-sessions/' + r5RoundA.id + '/finalize', { token: adminToken, body: {} });
+    await seedValidatedInventory(adminToken, { '190001': 200 });   // nouvelle base B
+    const r5Stale = await api('POST', '/api/inventory-rounds/contribution', { token: r5a,
+      body: { payload: { baseInventoryId: r5BaseA, agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 5 }] } } } } });
+    check('[R2-5] part perimee (base A) rejetee quand la manche est sur base B (409)', r5Stale.status === 409);
+
+    // ---- [R2-7] 2 parts disjointes du meme compteur fusionnent (pas de perte) ----
+    await seedValidatedInventory(adminToken, { '190001': 100, '190004': 40 });
+    const r7a = await makeUser(adminToken, 'operateur', 'r7a');
+    await api('POST', '/api/inventory-rounds/contribution', { token: r7a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 7 }] } } } } });
+    await api('POST', '/api/inventory-rounds/contribution', { token: r7a,
+      body: { payload: { agent: 'Ahmed', freshCodes: ['190004'], counts: { '190004': { counted: true, blocks: [{ qty: 9 }] } } } } });
+    const r7Round = (await api('GET', '/api/inventory-sessions', { token: adminToken })).json.sessions[0];
+    const r7Fin = await api('POST', '/api/inventory-sessions/' + r7Round.id + '/finalize', { token: adminToken, body: {} });
+    const r7c = (await api('GET', '/api/submissions/' + r7Fin.json.submission.id, { token: adminToken })).json.submission.payload.st.c;
+    check('[R2-7] 1re part conservee apres 2e part disjointe (190001)', !!r7c && r7c['190001'] && r7c['190001'].counted === true);
+    check('[R2-7] 2e part presente (190004) sans ecraser la 1re', !!r7c && r7c['190004'] && r7c['190004'].counted === true);
+
     // ---- [K] serveStatic : ne jamais servir les donnees serveur ou fichiers caches ----
     const staticDb = await fetch(BASE + '/server/data/sips-data.json');
     const staticSecret = await fetch(BASE + '/server/data/.jwt-secret');

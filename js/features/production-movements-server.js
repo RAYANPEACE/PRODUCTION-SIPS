@@ -148,8 +148,25 @@ let MOVF={sortie:null,entree:null};
 function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
 function movArts(catKind){return REFS.filter(r=>catKind==='finis'?r.cat==='fini':r.cat==='mp');}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
+/* E3/R3-9 : a l'ENTREE, une matiere perissable (g vrac/tare) avec quantite doit avoir
+   une date de peremption (fiabilise le FEFO). Emballages non concernes. Renvoie les
+   lignes fautives (vide = OK). */
+function entreeMpSansPeremption(kind,mf){
+  if(kind!=='entree')return [];
+  return (mf.mp||[]).filter(x=>{
+    if(!x||!x.a||num(x.q)<=0)return false;
+    const r=REFS.find(rr=>rr.des===x.a);
+    return r&&(r.g==='vrac'||r.g==='tare')&&!String(x.exp||'').trim();
+  });
+}
+function movPeremptionGuard(kind,mf){
+  const bad=entreeMpSansPeremption(kind,mf);
+  if(bad.length){toast('Date de peremption manquante pour '+bad.length+' matiere(s) : '+bad.map(x=>x.a).join(', '));return false;}
+  return true;
+}
 async function movSave(kind,mf){
   if(!movHasInput(mf)){toast('Rien à enregistrer');return false;}
+  if(!movPeremptionGuard(kind,mf))return false;
   const c=MOVCFG[kind];
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
   const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
@@ -159,6 +176,7 @@ async function movSave(kind,mf){
 }
 async function movSubmit(kind,mf){
   if(!movHasInput(mf)){toast('Rien a soumettre');return false;}
+  if(!movPeremptionGuard(kind,mf))return false;
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
   const payload={kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note||'',submittedAt:new Date().toISOString()};
   await sipsSubmit(kind,payload,MOVCFG[kind].word+' '+(payload.date||''));

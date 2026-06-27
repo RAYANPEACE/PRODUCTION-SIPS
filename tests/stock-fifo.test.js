@@ -106,5 +106,12 @@ check('[FEFO] lot sans peremption place en dernier', m2[0].date === '2026-07-15'
 const m3 = ctx.buildMpLots('M1', 12, '2026-06-01', [], dM, '2026-06-30');
 check('[FEFO] base agregee (nombre) -> lot imprecise unique', m3.length === 1 && m3[0].imprecise === true && close(m3[0].qty, 12));
 
+// ====== R3-8 : aucun lot mais consommation > 0 -> lot synthetique negatif (invariant) ======
+const neg = ctx.buildFinishedLots('F1', 0, '2026-06-01', [], [], desToCode, today); // 0 lot
+ctx.applyFifo(neg, 5); // sortie/conso 5 sans aucun lot connu
+check('[R3-8] aucun lot + conso>0 -> 1 lot synthetique imprecise', neg.length === 1 && neg[0].imprecise === true);
+check('[R3-8] le lot synthetique porte le negatif (rest = -conso)', close(neg[0].rest, -5));
+check('[R3-8] invariant somme restants = base+flux (0-5=-5)', close(sum(neg), -5));
+
 console.log('\n' + passed + ' reussi(s), ' + failed + ' echec(s).');
 process.exit(failed ? 1 : 0);

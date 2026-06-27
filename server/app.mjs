@@ -492,11 +492,15 @@ async function stampQualityVisa(role, visa, user) {
   const stamped = {
     nom: user.nom,
     signature: String(visa.signature),
-    date: String(visa.date || new Date().toISOString()),
+    // Securite : la date de signature opposable est posee par le SERVEUR uniquement
+    // (anti-antidatage). La date fournie par le client n'a qu'une valeur d'affichage
+    // et est conservee a part (clientDate), hors materiel HMAC -> non opposable.
+    date: new Date().toISOString(),
     userId: user.id,
     username: user.username,
     role
   };
+  if (visa.date) stamped.clientDate = String(visa.date);
   stamped.serverStamp = {
     v: 1,
     alg: 'HMAC-SHA256',
@@ -962,6 +966,15 @@ async function handleApiRoutes(req, res, url) {
     const db = await readDb();
     const actor = await authUser(req);
     const sess = findOrCreateOpenRound(db, actor);
+    // Securite (anti-corruption) : une part capturee hors-ligne sur une base A ne doit
+    // pas etre rattachee a une manche ouverte sur une autre base B (comptes perimes).
+    // Le client envoie baseInventoryId ; en cas de mismatch, on rejette (la part reste
+    // sur l'appareil, l'utilisateur recharge la session courante). writeDb n'est PAS
+    // appele -> aucune manche fantome persistee.
+    if (payload.baseInventoryId && sess.baseInventoryId
+        && String(payload.baseInventoryId) !== String(sess.baseInventoryId)) {
+      return sendJson(res, 409, { ok: false, error: 'Part perimee : elle vise un autre inventaire de base que la manche en cours. Recharge la session courante avant de renvoyer.' });
+    }
     const rec = {
       id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
       userId: user.id, username: user.username,
@@ -976,7 +989,23 @@ async function handleApiRoutes(req, res, url) {
     };
     sess.contributions = sess.contributions || [];
     const existing = sess.contributions.findIndex(c => c.userId === user.id);
-    if (existing >= 0) sess.contributions[existing] = rec; else sess.contributions.push(rec);
+    // Anti-perte (parts multiples du meme compteur, hors-ligne/retries) : on FUSIONNE
+    // avec la part precedente au lieu de l'ecraser. Union des codes ; la nouvelle valeur
+    // gagne par code (correction d'un article possible) ; les articles disjoints d'une
+    // part anterieure ne disparaissent plus.
+    if (existing >= 0) {
+      const prev = sess.contributions[existing];
+      const prevPayload = (prev && prev.payload) || {};
+      const mergedCounts = Object.assign({}, prevPayload.counts || {}, counts);
+      const mergedCodes = [...new Set([...(prevPayload.freshCodes || []), ...countedCodes])];
+      rec.payload.counts = mergedCounts;
+      rec.payload.freshCodes = mergedCodes;
+      rec.counted = mergedCodes.length;
+      rec.freshCount = mergedCodes.length;
+      sess.contributions[existing] = rec;
+    } else {
+      sess.contributions.push(rec);
+    }
     sess.updatedAt = rec.submittedAt;
     audit(db, 'inventory_session.contribution', user.nom, { id: sess.id, counted: countedCodes.length });
     await writeDb(db);
@@ -1031,7 +1060,14 @@ async function handleApiRoutes(req, res, url) {
     const db = await readDb();
     const sess = db.inventorySessions.find(s => s.id === inventorySessionDetail[1]);
     if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
-    return sendJson(res, 200, { ok: true, session: fullInventorySession(sess) });
+    // Securite : seuls les admins (assemblage/finalisation) voient les contributions
+    // DETAILLEES (comptes) des autres. Un compteur recoit les metadonnees + la base
+    // (pour charger sa zone) ; les comptes d'autrui restent caches (anti-biais).
+    const sessAdmin = await isAdminRequest(req);
+    const sessOut = sessAdmin
+      ? fullInventorySession(sess)
+      : Object.assign({}, publicInventorySession(sess), { baseSnapshot: sess.baseSnapshot || null });
+    return sendJson(res, 200, { ok: true, session: sessOut });
   }
 
   const inventoryContribution = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/contributions$/);
@@ -1151,6 +1187,11 @@ async function handleApiRoutes(req, res, url) {
     const includePayload = url.searchParams.get('include') === 'payload';
     const admin = await isAdminRequest(req);
     const user = await authUser(req);
+    // Securite : aucune lecture (meme metadonnees) sans authentification. Empeche
+    // l'enumeration anonyme des soumissions (auteurs, statuts, flags recompte).
+    if (!user && !admin) {
+      return sendJson(res, 401, { ok: false, error: 'Connexion requise' });
+    }
     if (includePayload) {
       const qualitySignerRead = type === 'quality' && ['submitted', 'rejected'].indexOf(status) >= 0 && canSignQuality(user);
       // Recomptage : un compte connecte peut lire SES PROPRES inventaires rejetes (avec payload.st).
@@ -1307,7 +1348,10 @@ async function handleApiRoutes(req, res, url) {
     }
     sub.status = action === 'validate' ? 'validated' : 'rejected';
     sub.decidedAt = new Date().toISOString();
-    sub.decidedBy = body.actor || 'admin';
+    // Securite : l'attribution de la decision vient du token authentifie, JAMAIS du
+    // corps de requete (anti-forge / integrite d'audit). body.actor est ignore.
+    const decider = await authUser(req);
+    sub.decidedBy = (decider && decider.nom) || 'admin';
     sub.decisionNote = body.note || '';
     sub.correctionRequested = sub.status === 'rejected' && sub.type === 'quality' && !!body.correction;
     sub.recountRequested = sub.status === 'rejected' && sub.type === 'inventory' && !!body.recountRequested;
