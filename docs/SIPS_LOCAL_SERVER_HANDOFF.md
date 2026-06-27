@@ -23,7 +23,9 @@ Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gat
 
 - **Spec E1 — garde-fou bloquant « date de production » par lot (produit fini)** : decoupage du chantier « modele par lot » en E1/E2/E3 (spec `docs/superpowers/specs/2026-06-24-saisie-lot-gardefou-design.md`). Constat cle : la saisie capture **deja** les lots dates (`ST.c.blocks[].date`) ; le reel manque = `blk.date` optionnel + `stock-sheet` agrege les dates. **E1 fait** : empeche soumettre/valider un inventaire si un produit fini compte a un lot saisi **sans date de prod** (3 accroches : submit serveur B, valider local, part fragmentee C) ; modal `#lotWarn` cliquable -> carte ; champ date rouge + bouton « aujourd'hui » ; aucun champ nouveau. Tests purs `npm run test:lot` = **9/9**. **Reste E2** (stock-sheet lit les lots REELS au lieu d'agreger + FIFO sur vrais lots) et **E3** (MP par lot + peremption).
 
-Etat technique : **SW v132**, `npm run test:server` = **47/47**, `npm run test:stock` = **26/26** (11 D + 7 E2 + 8 E3 FEFO), `npm run test:lot` = **11/11** (finis + matieres), `npm run check:js` OK.
+- **Revue adversariale cross-model (Codex, 2026-06-27)** : 3 revues (securite serveur, inventaire B/C, modele par lot E1-E3). 9 findings reels, **8 corriges** (commit d68b38c) — R1-1 actor depuis token, R1-2 date visa serveur, R1-3 auth GET /api/submissions, R1-4 detail session role-split, R2-5 rejet part offline base differente, R2-7 fusion parts same-user, R3-9 garde-fou entree MP perissable, R3-8 lot synthetique negatif. **R2-6 NON fait** (enforcement serveur du recompte cible) : sorti du lot car il faut une vraie conception (marquer les manches de recompte + porter l'assignment + purge a resolution) ; sinon faux blocages collants. **Tache dediee a venir.**
+
+Etat technique : **SW v133**, `npm run test:server` = **57/57** (+10 R1/R2), `npm run test:stock` = **29/29** (11 D + 7 E2 + 8 E3 + 3 R3-8), `npm run test:lot` = **11/11**, `npm run check:js` OK.
 
 ## A faire avant de merger `main` (dans l'ordre)
 
