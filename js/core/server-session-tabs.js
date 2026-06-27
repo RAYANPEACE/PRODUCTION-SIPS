@@ -34,6 +34,32 @@ let SIPS_SERVER=lsGet('lep_server_cfg',{url:'',adminPin:''});
    pour que tous les usages existants de USR.nom / USR.poste / ADMIN continuent de marcher. */
 let SESSION=lsGet('sips_session',null);
 let SESSION_TOKEN=lsGet('sips_token','');
+let SESSION_OFFLINE=false;
+let SESSION_LAST_VERIFIED=lsGet('sips_session_verified_at','');
+// Timeout par defaut des appels serveur. Sans lui, fetch() reste bloque longtemps
+// quand le PC serveur est injoignable (serveur eteint mais Wi-Fi encore actif) :
+// statut "Verification..." sans fin, historique local qui ne s'affiche pas,
+// soumissions hors-ligne sans retour (l'utilisateur re-clique -> doublons).
+const SIPS_FETCH_TIMEOUT=3000;
+// ----- Verrou strict hors-ligne (securite auth) -----
+// Cet appareil sait-il que le serveur utilise des comptes ? Persistant : une fois
+// vrai, reste vrai. Marque quand on confirme un serveur configure ou apres login.
+function markAuthConfigured(){try{lsSet('sips_auth_configured',true);}catch(e){}}
+function authConfigured(){return !!(lsGet('sips_auth_configured',false)||SESSION||SESSION_TOKEN||SESSION_LAST_VERIFIED);}
+// Vrai = comptes serveur actifs MAIS aucune session reelle en cache.
+// Dans ce cas : pas d'admin par PIN, pas de soumission serveur sous identite libre.
+function sipsRequiresLogin(){return authConfigured()&&!(SESSION&&SESSION_TOKEN);}
+function setSessionOffline(v){
+  SESSION_OFFLINE=!!v;
+  try{document.body.classList.toggle('session-offline',SESSION_OFFLINE);}catch(e){}
+}
+// Marque la session comme verifiee par le serveur (en ligne) et memorise l'heure.
+// Appele apres login/setup, apres /auth/me, et a la reconnexion.
+function authMarkVerified(){
+  SESSION_LAST_VERIFIED=new Date().toISOString();
+  try{lsSet('sips_session_verified_at',SESSION_LAST_VERIFIED);}catch(e){}
+  setSessionOffline(false);
+}
 function authHeader(){return SESSION_TOKEN?{'authorization':'Bearer '+SESSION_TOKEN}:{};}
 function sipsServerUrl(){
   const u=String((SIPS_SERVER&&SIPS_SERVER.url)||'').trim().replace(/\/+$/,'');
@@ -51,10 +77,11 @@ async function sipsFetch(path,opt){
   const fetchOpt=Object.assign({cache:'no-store'},opt,{headers});
   delete fetchOpt.timeoutMs;
   let timer=null;
-  if(opt.timeoutMs&&typeof AbortController!=='undefined'){
+  const tmo=opt.timeoutMs||SIPS_FETCH_TIMEOUT;
+  if(tmo&&typeof AbortController!=='undefined'){
     const ctl=new AbortController();
     fetchOpt.signal=ctl.signal;
-    timer=setTimeout(()=>ctl.abort(),opt.timeoutMs);
+    timer=setTimeout(()=>ctl.abort(),tmo);
   }
   let res;
   try{res=await fetch(sipsServerUrl()+path,fetchOpt);}
@@ -94,6 +121,9 @@ function sipsQueue(type,payload,note){
   return true;
 }
 async function sipsSubmit(type,payload,note){
+  // Verrou strict : des comptes serveur existent mais aucune session reelle en
+  // cache -> on refuse de soumettre (et de mettre en file) sous une identite libre.
+  if(sipsRequiresLogin()){toast('Connexion requise : reconnecte-toi (serveur disponible) pour soumettre au serveur.');return {ok:false,queued:false,error:'login-required',loginRequired:true};}
   const body={type,payload,author:sipsActor(),note:note||''};
   try{const r=await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify(body)});toast(r.duplicate?'Deja soumis au serveur':'Soumis au serveur');return {ok:true,duplicate:!!r.duplicate,submission:r.submission};}
   catch(e){
@@ -113,7 +143,15 @@ async function sipsFlushPending(){
       if(lot&&seenQualityLot[lot])continue;
       if(lot)seenQualityLot[lot]=1;
     }
-    try{await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});sent++;}
+    try{
+      if(row.type==='frag-contribution'){
+        // Spec C : part d'inventaire hors-ligne -> manche ouverte (sans sessionId).
+        await sipsFetch('/api/inventory-rounds/contribution',{method:'POST',body:JSON.stringify({payload:row.payload,note:row.note||''})});
+      }else{
+        await sipsFetch('/api/submissions',{method:'POST',body:JSON.stringify({type:row.type,payload:row.payload,author:row.author,note:row.note||''})});
+      }
+      sent++;
+    }
     catch(e){keep.push(sipsPendingFailure(row,hash,e));}
   }
   sipsSetPending(keep);
@@ -133,7 +171,16 @@ async function updSrvDash(){
 // envoie les soumissions en attente si joignable, et rafraichit le statut.
 async function sipsAutoSyncOnVisible(){
   if(document.hidden)return;
-  try{var r=await sipsPing();if(r.ok&&sipsPending().length)await sipsFlushPending();}catch(e){}
+  try{
+    var r=await sipsPing();
+    if(r.ok){
+      // Serveur revenu : revalider une session reprise du cache (Phase 5).
+      if(SESSION_TOKEN&&SESSION&&SESSION_OFFLINE){
+        try{var me=await sipsFetch('/api/auth/me',{timeoutMs:2500});SESSION=me.user;authStore();applySession();authMarkVerified();if(typeof updateAuthUI==='function')updateAuthUI();}catch(e){}
+      }
+      if(sipsPending().length)await sipsFlushPending();
+    }
+  }catch(e){}
   updSrvDash();
   sipsRefreshNotifications();
 }
@@ -142,10 +189,13 @@ document.addEventListener('visibilitychange',sipsAutoSyncOnVisible);
 setInterval(function(){if(!document.hidden)updSrvDash();},15000);
 setInterval(function(){if(!document.hidden)sipsRefreshNotifications();},20000);
 function sipsAdminHeaders(){return {'x-sips-admin-pin':String((SIPS_SERVER&&SIPS_SERVER.adminPin)||'')};}
-async function sipsRecords(type){
+async function sipsRecords(type,opt){
   try{
+    opt=opt||{};
     const q=[];if(type)q.push('type='+encodeURIComponent(type));q.push('status=validated');
-    const data=await sipsFetch('/api/records'+(q.length?'?'+q.join('&'):''),{headers:sipsAdminHeaders()});
+    const fetchOpt={headers:sipsAdminHeaders()};
+    if(opt.timeoutMs)fetchOpt.timeoutMs=opt.timeoutMs;
+    const data=await sipsFetch('/api/records'+(q.length?'?'+q.join('&'):''),fetchOpt);
     const rows=data.records||[];
     return rows;
   }catch(e){return [];}
@@ -199,6 +249,8 @@ function askPin(){
 }
 function toggleAdmin(){
   if(ADMIN){ADMIN=false;updateAdminUI();switchTab('accueil');toast('Mode employé');return;}
+  // Verrou strict : comptes serveur actifs mais pas de session -> pas d'admin par PIN.
+  if(sipsRequiresLogin()){toast('Comptes serveur actifs : connecte-toi pour les droits admin.');return;}
   if(askPin()){ADMIN=true;updateAdminUI();toast('Mode admin déverrouillé');}
 }
 function updateAdminUI(){
@@ -222,13 +274,16 @@ function applySession(){
 }
 // Onglet visible ? Session = droits serveur ; sinon fallback legacy (adminOnly + PIN).
 function hasTab(id){
+  if(id==='stock')return true;   // Feuille etat de stock : lecture seule, visible par tous les roles.
   if(SESSION&&Array.isArray(SESSION.tabs))return SESSION.tabs.indexOf(id)>=0;
   var t=TABS.find(function(x){return x[0]===id;});if(!t)return false;
+  // Verrou strict : sans vrai compte, le PIN ne donne plus acces aux onglets admin.
+  if(sipsRequiresLogin())return !t[3];
   return !t[3]||ADMIN;
 }
 
 /* ---------- ONGLETS ---------- */
-const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true],['serveur','Serveur',true,true]];
+const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['stock','Stock',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true],['serveur','Serveur',true,true]];
 let TAB='accueil';
 let SIPS_NOTIF_COUNTS={};
 let SIPS_NOTIF_PREV_TOTAL=null;
@@ -334,6 +389,7 @@ async function switchTab(id){
   else if(id==='entree'){renderEntrees();}
   else if(id==='analyse'){renderAnalyse();}
   else if(id==='qualite'){renderQualite();}
+  else if(id==='stock'){await renderStock();}
   else if(id==='serveur'){renderServeur();}
   else{$('#app').innerHTML='<div class="placeholder"><b>Module «\u00a0'+id+'\u00a0»</b><br>À construire à l\u2019étape suivante.</div>';}
   if(typeof renderFragBanner==='function')renderFragBanner();
@@ -353,13 +409,15 @@ function renderRef(){
     +'<button data-rt="recf">Recettes</button>'
     +'<button data-rt="mach">Machines</button>'
     +'</div><div id="refBody"></div>'
-    +'<div class="ref-foot"><button id="adminOut">Quitter le mode admin</button></div>'
+    // Bouton de sortie admin : seulement en mode legacy PIN (sans session serveur).
+    // En session serveur, la deconnexion se fait via la pastille compte en haut a droite -> redondant.
+    +(SESSION?'':'<div class="ref-foot"><button id="adminOut">Quitter le mode admin</button></div>')
     +'</div>';
   app.querySelectorAll('.ref-nav button').forEach(b=>{
     b.classList.toggle('active',b.dataset.rt===REFTAB);
     b.onclick=()=>{REFTAB=b.dataset.rt;renderRef();};
   });
-  $('#adminOut').onclick=toggleAdmin;
+  {const ao=$('#adminOut');if(ao)ao.onclick=toggleAdmin;}
   const body=$('#refBody');
   if(REFTAB==='articles')renderArticles(body);
   else if(REFTAB==='etat')renderEtat(body);
@@ -420,23 +478,12 @@ function renderEtat(body){
   body.innerHTML='<p class="ref-hint">Stock théorique de référence — <b>seule base du Bilan et des écarts</b>. Une valeur par article ; vide = 0.</p>'
     +'<div class="etat-date"><label for="etatDate">📅 Date de cet état de stock</label><input id="etatDate" type="date" value="'+esc(ETAT_DATE||'')+'"><div class="etat-date-h">Le Bilan le comparera automatiquement à l’inventaire du même jour ou juste avant (jamais postérieur).</div></div>'
     +'<button class="ref-add" id="etatXlsx">Importer le fichier Excel (.xlsx)</button>'
-    +'<div class="ref-paste"><textarea id="etatPaste" placeholder="Ou coller depuis Excel : une ligne par article&#10;code[tab ou ;]valeur"></textarea><button id="etatPasteBtn">Importer le collage</button></div>'
-    +'<div class="ref-list">'+rows+'</div>'
-    +'<button class="ref-sec" id="etatReset">Recharger l\u2019exemple de test</button>';
+    +'<div class="ref-list">'+rows+'</div>';
   const ed=$('#etatDate');if(ed)ed.addEventListener('input',e=>{ETAT_DATE=e.target.value||'';lsSet('lep_etat_date',ETAT_DATE);});
   body.querySelectorAll('.eval').forEach(inp=>{
     const code=inp.closest('.ref-row').dataset.code;
     inp.addEventListener('input',e=>{const v=e.target.value.trim();if(v==='')delete ETAT[code];else ETAT[code]=pnum(v);lsSet('lep_etat',ETAT);});
   });
-  $('#etatPasteBtn').onclick=()=>{
-    const txt=$('#etatPaste').value||'';let n=0;
-    txt.split(/\r?\n/).forEach(line=>{
-      const parts=line.split(/[\t;]/);if(parts.length<2)return;
-      const code=parts[0].trim();
-      if(/^\d{6}$/.test(code)){ETAT[code]=pnum(parts[1]);n++;}
-    });
-    lsSet('lep_etat',ETAT);renderRef();toast(n+' ligne(s) importée(s)');
-  };
   $('#etatXlsx').onclick=()=>{
     const fi=document.createElement('input');fi.type='file';fi.accept='.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';fi.style.display='none';
     fi.onchange=async ev=>{const f=ev.target.files[0];if(!f)return;
@@ -465,7 +512,6 @@ function renderEtat(body){
     };
     fi.click();
   };
-  $('#etatReset').onclick=()=>{if(confirm('Remplacer l\u2019état de stock par l\u2019exemple de test ?')){ETAT={...SEED_ETAT};lsSet('lep_etat',ETAT);renderRef();}};
 }
 
 function renderCond(body){

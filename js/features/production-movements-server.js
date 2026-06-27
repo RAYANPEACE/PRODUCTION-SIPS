@@ -1,43 +1,11 @@
 /* ================= MODULE PRODUCTION ================= */
 function todayStr(){const d=new Date();const p=n=>(n<10?'0':'')+n;return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 function frDate(s){if(!s)return '—';const m=String(s).split('-');return m.length===3?m[2]+'/'+m[1]+'/'+m[0]:s;}
-function dataUrlToFile(durl,name){return fetch(durl).then(r=>r.blob()).then(b=>new File([b],name,{type:b.type||'image/jpeg'}));}
 let PF=null;
 function embType(p){const a=REFS.find(x=>x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
 function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',perso:[],photos:[]};}
 function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
 function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||(b.perso||[]).some(x=>x.lbl&&num(x.qte)>0);}
-function blockDechets(b){
-  const emb=embType(b.p);const parts=[];
-  if(num(b.w_emb)>0)parts.push((emb==='sac'?'Sac':'Carton')+' '+fmt(num(b.w_emb)));
-  if(emb==='carton'&&num(b.w_film)>0)parts.push('Film '+fmt(num(b.w_film)));
-  if(num(b.w_mel)>0)parts.push('Mélange '+fmt(num(b.w_mel))+' kg');
-  (b.perso||[]).forEach(x=>{if(x.lbl&&num(x.qte)>0)parts.push(x.lbl+' '+fmt(num(x.qte)));});
-  return parts;
-}
-function prodShareText(pf){
-  const L=[];L.push('*PRODUCTION — '+frDate(pf.date||todayStr())+'*');
-  if(pf.agent)L.push('👤 '+pf.agent);
-  const blocks=(pf.blocks||[]).filter(b=>b.p&&num(b.n)>0);
-  const multi=blocks.length>1;
-  blocks.forEach((b,i)=>{
-    L.push('');L.push('*'+(multi?(i+1)+'. ':'')+b.p+' — '+fmt(num(b.n))+'*');
-    const d=blockDechets(b);if(d.length)L.push('Déchets : '+d.join(' · '));
-  });
-  if(pf.note&&pf.note.trim()){L.push('');L.push('📝 '+pf.note.trim());}
-  return L.join('\n');
-}
-async function prodShare(pf){
-  const text=prodShareText(pf);
-  const photos=[];(pf.blocks||[]).forEach(b=>(b.photos||[]).forEach(p=>photos.push(p)));
-  try{
-    let files=[];
-    for(let i=0;i<photos.length;i++){try{files.push(await dataUrlToFile(photos[i],'production_'+(i+1)+'.jpg'));}catch(e){}}
-    if(navigator.canShare&&files.length&&navigator.canShare({files:files})){await navigator.share({text:text,files:files,title:'Production'});return;}
-    if(navigator.share){await navigator.share({text:text,title:'Production'});if(files.length)toast('Texte partagé — ajoute les photos manuellement');return;}
-  }catch(e){if(e&&e.name==='AbortError')return;}
-  try{await navigator.clipboard.writeText(text);toast('Copié — colle dans WhatsApp');}catch(e){alert(text);}
-}
 async function prodSave(pf){
   const blocks=(pf.blocks||[]).filter(pfBlockHasInput);
   if(!blocks.length){toast('Rien à enregistrer');return false;}
@@ -89,13 +57,13 @@ function renderProduction(focusBi){
   });
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production</h2>'
-    +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui. Un bouton <b>Partager</b> pour le groupe WhatsApp.</p>'
+    +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui.</p>'
     +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
     +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfShare" class="b-sec">📤 Secours WhatsApp</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderProduction();
@@ -117,8 +85,7 @@ function renderProduction(focusBi){
     photoArrayUI(card.querySelector('.pb-photos'),b.photos,re);
   });
   $('#pfAddBlock').onclick=()=>{PF.blocks.push(freshBlock());renderProduction(PF.blocks.length-1);};
-  $('#pfSubmit').onclick=()=>prodSubmit(PF);
-  $('#pfShare').onclick=()=>prodShare(PF);
+  $('#pfSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await prodSubmit(PF);}finally{b.disabled=false;b.textContent=t;}};
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
   loadProdHist();
@@ -134,11 +101,8 @@ function migrateProdRec(rec){
   const blocks=[b];pr.slice(1).forEach(x=>{const nb=freshBlock();nb.p=x.p;nb.n=x.n;blocks.push(nb);});
   return blocks;
 }
-async function loadProdHist(){
-  const host=$('#pfHist');if(!host)return;
-  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf('prod_')===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+function renderProdHist(host,recs,serverRows){
   host.innerHTML='';
-  const serverRows=await sipsRecords('production');
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
@@ -169,35 +133,40 @@ async function loadProdHist(){
   });
   if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune production enregistree.</p>';}
 }
+// Local tout de suite, serveur en arriere-plan (voir renderMovHist/loadMovHist).
+async function loadProdHist(){
+  const host=$('#pfHist');if(!host)return;
+  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf('prod_')===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+  renderProdHist(host,recs,[]);
+  try{const serverRows=await sipsRecords('production');if($('#pfHist')===host)renderProdHist(host,recs,serverRows);}catch(e){}
+}
 const MOVCFG={
  sortie:{title:'Sorties',word:'SORTIE',icon:'🚚',refLabel:'Véhicule / plaque / destinataire',refPlace:'ex. camion 1234-AB / labo',pfx:'sortie_',saved:'Sortie enregistrée',hint:'Enregistre une sortie : produits finis expédiés et/ou matières & échantillons (les deux possibles). Date vide = aujourd\u2019hui. Photo véhicule/plaque depuis la galerie.'},
  entree:{title:'Entrées',word:'ENTRÉE',icon:'📦',refLabel:'Fournisseur / référence / BL',refPlace:'ex. fournisseur, n° BL, container',pfx:'entree_',saved:'Entrée enregistrée',hint:'Enregistre une entrée : réceptions de matières premières et/ou retours de produits finis. Date vide = aujourd\u2019hui. Photo si nécessaire.'}
 };
 let MOVF={sortie:null,entree:null};
-function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:''}],photos:[],note:''};}
+function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
 function movArts(catKind){return REFS.filter(r=>catKind==='finis'?r.cat==='fini':r.cat==='mp');}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
-function movShareText(kind,mf){
-  const c=MOVCFG[kind];const L=[];L.push('*'+c.word+' — '+frDate(mf.date||todayStr())+'*');
-  if(mf.ref)L.push(c.icon+' '+mf.ref);
-  const f=(mf.finis||[]).filter(x=>x.a&&num(x.q)>0);
-  const m=(mf.mp||[]).filter(x=>x.a&&num(x.q)>0);
-  if(f.length){L.push('');L.push('*Produits finis'+(kind==='entree'?' (retours)':'')+'*');f.forEach(x=>L.push('• '+x.a+' : '+fmt(num(x.q))));}
-  if(m.length){L.push('');L.push('*Matières / Échantillons*');m.forEach(x=>L.push('• '+x.a+' : '+fmt(num(x.q))));}
-  if(mf.note&&mf.note.trim()){L.push('');L.push('📝 '+mf.note.trim());}
-  return L.join('\n');
+/* E3/R3-9 : a l'ENTREE, une matiere perissable (g vrac/tare) avec quantite doit avoir
+   une date de peremption (fiabilise le FEFO). Emballages non concernes. Renvoie les
+   lignes fautives (vide = OK). */
+function entreeMpSansPeremption(kind,mf){
+  if(kind!=='entree')return [];
+  return (mf.mp||[]).filter(x=>{
+    if(!x||!x.a||num(x.q)<=0)return false;
+    const r=REFS.find(rr=>rr.des===x.a);
+    return r&&(r.g==='vrac'||r.g==='tare')&&!String(x.exp||'').trim();
+  });
 }
-async function movShare(kind,mf){
-  const text=movShareText(kind,mf);
-  try{let files=[];
-    for(let i=0;i<(mf.photos||[]).length;i++){try{files.push(await dataUrlToFile(mf.photos[i],kind+'_'+(i+1)+'.jpg'));}catch(e){}}
-    if(navigator.canShare&&files.length&&navigator.canShare({files:files})){await navigator.share({text:text,files:files,title:MOVCFG[kind].word});return;}
-    if(navigator.share){await navigator.share({text:text,title:MOVCFG[kind].word});if(files.length)toast('Texte partagé — ajoute les photos manuellement');return;}
-  }catch(e){if(e&&e.name==='AbortError')return;}
-  try{await navigator.clipboard.writeText(text);toast('Copié — colle dans WhatsApp');}catch(e){alert(text);}
+function movPeremptionGuard(kind,mf){
+  const bad=entreeMpSansPeremption(kind,mf);
+  if(bad.length){toast('Date de peremption manquante pour '+bad.length+' matiere(s) : '+bad.map(x=>x.a).join(', '));return false;}
+  return true;
 }
 async function movSave(kind,mf){
   if(!movHasInput(mf)){toast('Rien à enregistrer');return false;}
+  if(!movPeremptionGuard(kind,mf))return false;
   const c=MOVCFG[kind];
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
   const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
@@ -207,16 +176,19 @@ async function movSave(kind,mf){
 }
 async function movSubmit(kind,mf){
   if(!movHasInput(mf)){toast('Rien a soumettre');return false;}
+  if(!movPeremptionGuard(kind,mf))return false;
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
   const payload={kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(mf.finis),mp:clone(mf.mp),photos:clone(mf.photos||[]),note:mf.note||'',submittedAt:new Date().toISOString()};
   await sipsSubmit(kind,payload,MOVCFG[kind].word+' '+(payload.date||''));
   return true;
 }
-function movSectionHTML(mf,sec,title){
+function movSectionHTML(mf,sec,title,withExp){
   const arts=movArts(sec);
   const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}>${esc(r.des)}</option>`).join('');
-  let rows=mf[sec].map((x,i)=>`<div class="pf-row" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}"><button class="mv-del" title="retirer">✕</button></div>`).join('');
-  return '<div class="pf-sec"><div class="pf-h">'+title+'</div><div class="mv-lines" data-secwrap="'+sec+'">'+rows+'</div><button class="mv-add pf-add" data-addsec="'+sec+'">+ article</button></div>';
+  const expCell=x=>withExp?`<input class="mv-exp" type="date" title="date de péremption" value="${esc(x.exp||'')}">`:'';
+  let rows=mf[sec].map((x,i)=>`<div class="pf-row${withExp?' pf-row-exp':''}" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}">${expCell(x)}<button class="mv-del" title="retirer">✕</button></div>`).join('');
+  const hint=withExp?'<small style="display:block;font-size:11px;color:var(--mute);margin:2px 0 6px">Renseigne la date de péremption de chaque matière (suivi FEFO).</small>':'';
+  return '<div class="pf-sec"><div class="pf-h">'+title+'</div>'+hint+'<div class="mv-lines" data-secwrap="'+sec+'">'+rows+'</div><button class="mv-add pf-add" data-addsec="'+sec+'">+ article</button></div>';
 }
 function renderMov(kind,focusSel){
   const c=MOVCFG[kind];
@@ -233,10 +205,10 @@ function renderMov(kind,focusSel){
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
-    +movSectionHTML(mf,'mp','Matières premières / Échantillons')
+    +movSectionHTML(mf,'mp','Matières premières / Échantillons',kind==='entree')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
-    +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvShare" class="b-sec">📤 Secours WhatsApp</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
+    +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
     +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderMov(kind);
@@ -246,21 +218,19 @@ function renderMov(kind,focusSel){
   app.querySelectorAll('.pf-row[data-sec]').forEach(row=>{const sec=row.dataset.sec;const i=+row.dataset.li;
     row.querySelector('.mv-a').onchange=e=>{mf[sec][i].a=e.target.value;};
     row.querySelector('.mv-q').oninput=e=>{mf[sec][i].q=e.target.value;};
+    const ex=row.querySelector('.mv-exp');if(ex)ex.onchange=e=>{mf[sec][i].exp=e.target.value;};
     row.querySelector('.mv-del').onclick=()=>{mf[sec].splice(i,1);if(!mf[sec].length)mf[sec].push({a:'',q:''});re();};});
-  app.querySelectorAll('.mv-add').forEach(btn=>{const sec=btn.dataset.addsec;btn.onclick=()=>{mf[sec].push({a:'',q:''});renderMov(kind,sec+'-'+(mf[sec].length-1));};});
+  app.querySelectorAll('.mv-add').forEach(btn=>{const sec=btn.dataset.addsec;btn.onclick=()=>{mf[sec].push({a:'',q:'',exp:''});renderMov(kind,sec+'-'+(mf[sec].length-1));};});
   photoArrayUI($('#mvPhotos'),mf.photos,re);
   $('#mvSave').onclick=async()=>{if(await movSave(kind,mf))loadMovHist(kind);};
-  $('#mvSubmit').onclick=()=>movSubmit(kind,mf);
-  $('#mvShare').onclick=()=>movShare(kind,mf);
+  $('#mvSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await movSubmit(kind,mf);}finally{b.disabled=false;b.textContent=t;}};
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
 }
-async function loadMovHist(kind){
-  const c=MOVCFG[kind];const host=$('#mvHist');if(!host)return;
-  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf(c.pfx)===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+function renderMovHist(host,kind,recs,serverRows){
+  const c=MOVCFG[kind];
   host.innerHTML='';
-  const serverRows=await sipsRecords(kind);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
@@ -287,6 +257,15 @@ async function loadMovHist(kind){
   });
   if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune '+(kind==='entree'?'entree':'sortie')+' enregistree.</p>';}
 }
+// Affiche l'historique LOCAL tout de suite (sans attendre le serveur), puis ajoute
+// les records serveur quand ils arrivent. Evite l'ecran vide de plusieurs secondes
+// a chaque changement d'onglet quand le serveur est lent ou injoignable.
+async function loadMovHist(kind){
+  const c=MOVCFG[kind];const host=$('#mvHist');if(!host)return;
+  let recs=[];try{recs=(await idbAll()).filter(r=>String(r.id).indexOf(c.pfx)===0).sort((a,b)=>b.savedAt-a.savedAt);}catch(e){}
+  renderMovHist(host,kind,recs,[]);
+  try{const serverRows=await sipsRecords(kind);if($('#mvHist')===host)renderMovHist(host,kind,recs,serverRows);}catch(e){}
+}
 function renderSorties(f){renderMov('sortie',f);}
 function renderEntrees(f){renderMov('entree',f);}
 
@@ -311,7 +290,7 @@ function sipsSubmissionDetailHTML(s){
   if(s.type==='sortie'||s.type==='entree'){
     return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Reference',p.ref],['Photos',(p.photos||[]).length],['Note',p.note]])
       +sipsLines('Produits finis',p.finis,[['a','Article'],['q','Qte']])
-      +sipsLines('Matieres premieres / Echantillons',p.mp,[['a','Article'],['q','Qte']]);
+      +sipsLines('Matieres premieres / Echantillons',p.mp,s.type==='entree'?[['a','Article'],['q','Qte'],['exp','Peremption']]:[['a','Article'],['q','Qte']]);
   }
   if(s.type==='quality'){
     const i=p.informations||{},v=p.visas||{};
@@ -327,16 +306,70 @@ function sipsSubmissionDetailHTML(s){
   }
   if(s.type==='inventory'){
     const detail=Object.keys(p.detail||{}).map(code=>Object.assign({code:code},p.detail[code]));
-    return sipsKV([['Date',frDate(p.date)],['Compteur',p.agent],['Articles comptes',p.filled],['Alertes bilan',p.bilan&&p.bilan.nbAlertes],['Ecart total',p.bilan&&p.bilan.total]])
+    return sipsKV([['Date',frDate(p.date)],['Compteur',p.agent],['Articles comptes',p.filled],['Recomptage de',p.recountOf&&p.recountOf.id],['Alertes bilan',p.bilan&&p.bilan.nbAlertes],['Ecart total',p.bilan&&p.bilan.total]])
+      +(s.recountRequested?'<p style="color:var(--red);font-size:12px;margin:6px 0 0">Recomptage demande</p>':'')
       +sipsLines('Articles comptes',detail.slice(0,80),[['code','Code'],['n','Article'],['p','Physique'],['t','Theorique'],['e','Ecart']]);
   }
   return '<pre style="white-space:pre-wrap;font-size:12px;background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0 0">'+esc(JSON.stringify(p,null,2).slice(0,2000))+'</pre>';
+}
+/* Vue de revue plein ecran : compare le snapshot d une soumission inventaire a l ERP admin (ETAT),
+   reutilise le moteur Bilan (buildBilanFrom), puis offre Valider / Demander recomptage. */
+function sipsOpenInventoryReview(s){
+  if(!s){toast('Soumission introuvable');return;}
+  const p=s.payload||{};
+  if(!p.st||!p.st.c){toast('Soumission sans detail de comptage');return;}
+  let r;try{r=buildBilanFrom(p.st);}catch(e){toast('Bilan indisponible : '+e.message);return;}
+  // Spec C : attribution par article (compte par X) + cibles de recompte (articles anormaux -> leur compteur).
+  r.rows.forEach(x=>{const e=p.st.c[x.code];if(e&&e.by)x.by=e.by;});
+  const recountTargets=r.rows.filter(x=>x.counted&&!x.ok&&p.st.c[x.code]&&p.st.c[x.code].byUser)
+    .map(x=>({code:x.code,by:p.st.c[x.code].by||'',byUser:p.st.c[x.code].byUser}));
+  const counted=r.rows.filter(x=>x.counted).length;
+  const who=p.agent||(s.author&&s.author.name)||'—';
+  const app=$('#app');
+  app.innerHTML='<div class="bilan-wrap">'
+    +'<div class="bil-ctrl"><button id="revBack" class="b-sec">← Retour serveur</button>'
+    +'<button id="revValidate" class="b-go">✅ Valider</button>'
+    +'<button id="revRecount" class="del">↩ Demander recomptage</button></div>'
+    +'<h2 class="prod-title">Revue inventaire — '+esc(who)+' '+esc(frDate(p.date)||'')+'</h2>'
+    +'<div class="bil-pair '+(r.alertes.length?'warn':'ok')+'">'
+      +(r.alertes.length?('⚠ '+r.alertes.length+' ecart(s) a verifier'):'✓ Aucun ecart bloquant')
+      +' · ecart total <b>'+fmtq(Math.round(r.total*1000)/1000)+'</b> · '+counted+' article(s) comptes vs etat de stock du <b>'+esc(ETAT_DATE||'—')+'</b></div>'
+    +fullTablesHTML(r)+'</div>';
+  $('#revBack').onclick=()=>{switchTab('serveur');};
+  $('#revValidate').onclick=()=>sipsReviewDecide(s.id,'validate');
+  $('#revRecount').onclick=()=>sipsReviewDecide(s.id,'recount',recountTargets);
+}
+async function sipsReviewDecide(id,kind,targets){
+  const actor=(typeof USR!=='undefined'&&USR.nom)||'admin';
+  if(kind==='validate'){
+    if(!confirm('Valider cet inventaire ?\n\nIl deviendra la base officielle du Bilan.'))return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('valider cet inventaire')))return;
+    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/validate',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:actor})});toast('Inventaire valide');}
+    catch(e){toast('Erreur serveur : '+e.message);return;}
+  }else{
+    const note=prompt('Motif du recomptage (articles a revoir) ?','Recompter les ecarts signales');
+    if(note===null)return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('demander un recomptage')))return;
+    const body={actor:actor,note:note||'',recountRequested:true};
+    // Spec C : recompte CIBLE -> chaque article anormal repart vers SON compteur (byUser).
+    if(targets&&targets.length){
+      const names=[...new Set(targets.map(t=>t.by).filter(Boolean))].join(', ');
+      if(confirm('Renvoyer '+targets.length+' article(s) anormal(aux) en recompte cible'+(names?' a '+names:'')+' ?\n\nAnnuler = recomptage general (tout l inventaire).'))body.recountArticles=targets;
+    }
+    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/reject',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify(body)});toast(body.recountArticles?'Recompte cible demande':'Recomptage demande');}
+    catch(e){toast('Erreur serveur : '+e.message);return;}
+  }
+  switchTab('serveur');
 }
 function sipsSubmissionHTML(s){
   const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
   const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
   const summary=sipsPayloadSummary(s.type,s.payload);
-  const actions=s.status==='submitted'?'<button data-act="validate">Valider</button>'+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>':'';
+  const actions=s.status==='submitted'
+    ?(s.type==='inventory'
+       ?'<button data-act="compare">Comparer au stock (Bilan)</button><button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>'
+       :'<button data-act="validate">Valider</button>'+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>')
+    :'';
   return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+actions+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
 }
 function sipsRecordHTML(r){
@@ -384,7 +417,8 @@ async function renderServeur(){
     +'<div id="srvSyncBox">'+renderSyncBox('Etat non teste',null)+'</div>'
     +'<div class="pf-sec"><div class="pf-h">Utilisateurs</div><div class="pf-actions"><button id="srvUserNew" class="b-go">+ Nouvel utilisateur</button><button id="srvUserReload" class="b-sec">Actualiser utilisateurs</button></div><div id="srvUsers">Chargement...</div></div>'
     +'<div class="pf-sec"><div class="pf-h">Soumissions en attente de validation</div><div id="srvSubs">Chargement...</div></div>'
-    +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div></div>';
+    +'<div class="pf-sec"><div class="pf-h">Donnees validees</div><div id="srvRecords">Chargement...</div></div>'
+    +'<div class="pf-sec"><div class="pf-h">Journal (audit)</div><div id="srvJournal">Chargement...</div></div></div>';
   $('#srvSave').onclick=function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);toast('Configuration serveur enregistree');renderServeur();};
   $('#srvTest').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);const r=await sipsPing();$('#srvStatus').textContent=r.ok?'Serveur connecte - '+r.data.time:'Hors ligne - '+r.error;};
   $('#srvRefresh').onclick=async function(){SIPS_SERVER={url:$('#srvUrl').value.trim(),adminPin:$('#srvPin').value.trim()};lsSet('lep_server_cfg',SIPS_SERVER);await sipsLoadServeur();toast('Liste serveur actualisee');};
@@ -395,6 +429,61 @@ async function renderServeur(){
   $('#srvUserReload').onclick=function(){sipsLoadUsers();};
   await sipsLoadServeur();
   await sipsLoadUsers();
+  await sipsLoadJournal();
+}
+/* ---- Journal (audit) : lecture admin + suppression CIBLEE (entree / periode) ---- */
+let SIPS_AUDIT_FILTER='all';
+function sipsAuditLabel(a){return ({
+  'submission.created':'Soumission creee','submission.validated':'Validee','submission.rejected':'Rejetee',
+  'submission.duplicate':'Doublon ignore','submission.duplicate_lot':'Doublon lot ignore',
+  'quality.signature':'Signature qualite','record.cancelled':'Mouvement annule','audit.pruned':'Journal purge'
+})[a]||a||'Action';}
+function sipsAuditDetail(e){
+  const d=(e&&e.details)||{};const bits=[];
+  if(d.type)bits.push(sipsTypeLabel(d.type));
+  if(d.lot)bits.push('lot '+d.lot);
+  if(d.note)bits.push('motif : '+d.note);
+  if(d.reason)bits.push('motif : '+d.reason);
+  if(typeof d.removed==='number')bits.push(d.removed+' entree(s)'+(d.beforeDate?(' (<= '+d.beforeDate+')'):''));
+  if(d.id)bits.push('#'+String(d.id).slice(0,12));
+  return bits.join(' · ');
+}
+async function sipsLoadJournal(){
+  const host=$('#srvJournal');if(!host)return;
+  let rows=[],total=0;
+  try{const data=await sipsFetch('/api/audit?limit=300',{headers:sipsAdminHeaders()});rows=data.audit||[];total=data.total||rows.length;}
+  catch(e){host.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Journal indisponible : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi en admin ou renseigne le PIN serveur.':'')+'</p>';return;}
+  const cats=[['all','Tout'],['record.cancelled','Annulations'],['submission.rejected','Rejets'],['submission.validated','Validations'],['submission.created','Creations']];
+  const filtered=SIPS_AUDIT_FILTER==='all'?rows:rows.filter(r=>r.action===SIPS_AUDIT_FILTER);
+  let h='<div class="pf-actions" style="flex-wrap:wrap;gap:6px;align-items:center">'
+    +'<select id="audFilter">'+cats.map(c=>'<option value="'+c[0]+'"'+(c[0]===SIPS_AUDIT_FILTER?' selected':'')+'>'+c[1]+'</option>').join('')+'</select>'
+    +'<input id="audBefore" type="date" style="max-width:160px">'
+    +'<button id="audDelBefore" class="b-sec">Supprimer cette periode et avant</button></div>'
+    +'<p class="ref-hint" style="margin:6px 0">'+filtered.length+' entree(s) affichee(s) sur '+total+' au total. Lecture seule ; suppression ciblee (entree ou periode).</p>';
+  if(!filtered.length)h+='<p style="color:#6a7280;font-size:13px;margin:0">Aucune entree pour ce filtre.</p>';
+  else h+=filtered.slice(0,300).map(function(e){
+    const when=e.at?new Date(e.at).toLocaleString('fr-FR'):'?';
+    return '<div class="sync-row" data-aud="'+esc(e.id)+'"><div class="sync-main"><b>'+esc(sipsAuditLabel(e.action))+'</b><span>'+esc(sipsAuditDetail(e))+'</span><small>'+esc(when)+' - '+esc(e.actor||'?')+'</small></div><button class="del" data-auddel="'+esc(e.id)+'">Suppr.</button></div>';
+  }).join('');
+  host.innerHTML=h;
+  const fl=$('#audFilter');if(fl)fl.onchange=function(){SIPS_AUDIT_FILTER=fl.value;sipsLoadJournal();};
+  const bd=$('#audDelBefore');if(bd)bd.onclick=function(){const d=$('#audBefore').value;if(!d){toast('Choisis une date');return;}sipsAuditDeleteBefore(d);};
+  host.querySelectorAll('[data-auddel]').forEach(function(b){b.onclick=function(){sipsAuditDelete([b.dataset.auddel]);};});
+}
+async function sipsAuditDelete(ids){
+  if(!ids||!ids.length)return;
+  if(!confirm('Supprimer '+ids.length+' entree(s) du journal ?\n\nCette suppression est elle-meme tracee.'))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('supprimer une entree du journal')))return;
+  try{const r=await sipsFetch('/api/audit/delete',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({ids:ids,actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast((r.removed||0)+' entree(s) supprimee(s)');}
+  catch(e){toast('Erreur : '+e.message);return;}
+  sipsLoadJournal();
+}
+async function sipsAuditDeleteBefore(beforeDate){
+  if(!confirm('Supprimer toutes les entrees du journal datees du '+beforeDate+' ou avant ?\n\nCette suppression est elle-meme tracee.'))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('supprimer une periode du journal')))return;
+  try{const r=await sipsFetch('/api/audit/delete',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({beforeDate:beforeDate,actor:(typeof USR!=='undefined'&&USR.nom)||'admin'})});toast((r.removed||0)+' entree(s) supprimee(s)');}
+  catch(e){toast('Erreur : '+e.message);return;}
+  sipsLoadJournal();
 }
 function bindSyncBox(){
   const tst=$('#srvSyncTest');if(tst)tst.onclick=async function(){
@@ -416,7 +505,7 @@ function bindSyncBox(){
 }
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
-  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>sipsDecide(id,b.dataset.act));});}
+  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>{if(b.dataset.act==='compare'){const sub=rows.find(x=>x.id===id);b.onclick=()=>sipsOpenInventoryReview(sub);}else{b.onclick=()=>sipsDecide(id,b.dataset.act);}});});}
   catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi avec un compte admin ou renseigne le PIN serveur.':'')+'</p>';}
   try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
@@ -439,6 +528,9 @@ async function sipsDecide(id,act){
   // Resynchronise la liste avec le serveur dans tous les cas : un element deja
   // traite (ailleurs / double-clic) disparait au lieu de rester affiche.
   try{await sipsLoadServeur();}catch(e){}
+  // Met aussi a jour la pastille de notifications (sinon elle reste figee
+  // jusqu'au prochain refresh complet de la page).
+  try{await sipsRefreshNotifications();}catch(e){}
 }
 async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');

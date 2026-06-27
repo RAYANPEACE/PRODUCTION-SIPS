@@ -177,10 +177,8 @@ function fragAgentRow(val){
   return row;
 }
 function openFragDlg(){
-  FRAGFILES=[];$('#fragMergeTitle').value='';
-  const rescue=$('#fragModeFiles');if(rescue)rescue.open=false;
   const d=$('#srvFragDate');if(d&&!d.value)d.value=todayStr();
-  fragRenderFileList();srvFragLoadSessions();
+  srvFragLoadSessions();
   $('#fragDlg').showModal();
 }
 function fragStartFromDlg(){
@@ -204,92 +202,10 @@ function fragResume(sess,wantMerge){
   toast('Session fragmentée ouverte');
 }
 
-/* ====== MODE « CHACUN SON TÉLÉPHONE » : échange de parts par fichier ======
-   Chaque personne exporte son comptage (fichier .txt) et l'envoie (WhatsApp,
-   mail…). Une personne importe toutes les parts reçues : l'app les fusionne
-   (pour chaque article, la part la plus récente gagne — gère aussi le
-   comptage étalé sur plusieurs jours). Réutilise le format d'export existant. */
-
 /* Codes des articles réellement (re)comptés pendant la session de comptage en cours */
 function freshCodes(){
   const ss=ST.sessionStart||0;
   return REFS.filter(r=>{const e=ST.c[r.code];return e&&e.counted&&e._ts!=null&&e._ts>=ss;}).map(r=>r.code);
-}
-/* Exporte le comptage courant comme « part » partageable */
-function buildFragmentFile(){
-  const o=JSON.parse(buildJSON());           // {meta,articles,etat,cfg?}
-  o.type='lep-fragment';o.v=2;o.ts=Date.now();
-  o.sessionStart=ST.sessionStart||0;
-  o.freshCodes=freshCodes();                 // articles recomptés cette session (les seuls « frais » à la fusion)
-  return JSON.stringify(o,null,2);
-}
-async function shareFragment(){
-  ST.date=$('#date').value;
-  const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;
-  if(!counted){toast('Compte au moins un article avant d’exporter ta part');return;}
-  const fresh=freshCodes().length;
-  if(!fresh&&!confirm('Tu n’as recompté aucun article cette session (tout vient d’un inventaire chargé).\n\nÀ la fusion, ta part n’apportera aucun nouveau comptage. Exporter quand même ?'))return;
-  if(!String(ST.agent||'').trim()&&!confirm('Aucun nom de compteur saisi. Continuer quand même ?\n(Le nom aide à reconnaître ta part lors de la fusion.)'))return;
-  const name='ma_part_'+(ST.date||'sansdate')+(slug(ST.agent)?'_'+slug(ST.agent):'')+'.txt';
-  const content=buildFragmentFile();
-  let file=null;try{file=new File([content],name,{type:'text/plain'});}catch(_){}
-  try{
-    if(file&&navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
-      await navigator.share({files:[file],title:'Ma part d’inventaire',text:'Part d’inventaire '+(ST.date||'')+(ST.agent?(' — '+ST.agent):'')});return;
-    }
-  }catch(e){}
-  download(name,content,'text/plain');
-}
-
-/* Transforme un fichier reçu (part OU inventaire complet) en fragment fusionnable.
-   Détermine l'ensemble « fresh » = articles réellement recomptés pendant la session
-   du compteur (le reste = valeurs héritées de l'inventaire de base, non « frais »). */
-function fragIngestFile(o){
-  const etat=(o&&o.etat)?o.etat:o;
-  if(!etat||!etat.c)return null;
-  const agent=(etat.agent||(o.meta&&o.meta.agent)||'Compteur').trim()||'Compteur';
-  const ts=Date.parse((o.meta&&o.meta.exporte)||'')||o.ts||etat.savedAt||Date.now();
-  const sessionStart=(o.sessionStart!=null?o.sessionStart:(etat.sessionStart!=null?etat.sessionStart:0));
-  // Valeurs calculées par le compteur = autoritaires (évite tout recalcul avec d'autres réglages)
-  if(o&&Array.isArray(o.articles))o.articles.forEach(a=>{const e=etat.c[a.code];if(!e)return;if(a.compte&&a.physique!=null)e._phys=a.physique;});
-  // Ensemble des articles recomptés pendant la session du compteur
-  let fresh=null;
-  if(Array.isArray(o.freshCodes))fresh=new Set(o.freshCodes.filter(c=>etat.c[c]&&etat.c[c].counted));
-  else{
-    const codesWithTs=Object.keys(etat.c).filter(c=>etat.c[c]&&etat.c[c]._ts!=null);
-    const hasSession=(o.sessionStart!=null)||(etat.sessionStart!=null);
-    if(!hasSession&&!codesWithTs.length)fresh=null;   // vieux fichier sans horodatage : tout compté = frais (rétro-compat)
-    else fresh=new Set(Object.keys(etat.c).filter(c=>{const e=etat.c[c];return e&&e.counted&&e._ts!=null&&e._ts>=sessionStart;}));
-  }
-  const cnt=Object.values(etat.c).filter(e=>e&&e.counted).length;
-  const freshCnt=fresh?fresh.size:cnt;
-  return {agent,date:etat.date||'',ts,sessionStart,fresh,count:cnt,freshCount:freshCnt,st:{c:etat.c,cfg:(o.cfg||etat.cfg||{})}};
-}
-
-let FRAGFILES=[];   // parts chargées dans le dialogue, en attente de fusion
-function fragAddFile(text){
-  let o;try{o=JSON.parse(text);}catch(e){toast('Fichier illisible');return;}
-  const fr=fragIngestFile(o);
-  if(!fr){toast('Format non reconnu (ce n’est pas une part / un inventaire)');return;}
-  // Même compteur renvoyé plusieurs fois : on garde la part la plus récente
-  const i=FRAGFILES.findIndex(x=>x.agent.toLowerCase()===fr.agent.toLowerCase());
-  if(i>=0){if(fr.ts>=FRAGFILES[i].ts){FRAGFILES[i]=fr;toast('Part de '+fr.agent+' mise à jour (plus récente)');}else toast('Part de '+fr.agent+' ignorée (une plus récente est déjà chargée)');}
-  else{FRAGFILES.push(fr);toast('Part de '+fr.agent+' ajoutée');}
-  fragRenderFileList();
-}
-function fragRenderFileList(){
-  const wrap=$('#fragFileList');if(!wrap)return;wrap.innerHTML='';
-  if(!FRAGFILES.length){wrap.innerHTML='<div style="font-size:12.5px;color:#6a7280;padding:4px 0">Aucune part chargée. Ajoute les fichiers reçus des compteurs.</div>';$('#fragMergeFiles').disabled=true;$('#fragMergeFiles').style.opacity=.5;return;}
-  FRAGFILES.forEach((fr,i)=>{
-    const el=document.createElement('div');el.className='frag-sess';
-    const d=new Date(fr.ts);
-    el.innerHTML=`<div class="fs-info"><b>${esc(fr.agent)}</b>
-      <span><b style="color:var(--green)">${fr.freshCount} recompté(s)</b> · ${fr.count} compté(s) au total · ${fr.date||'—'} · reçu ${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span></div>`;
-    const acts=document.createElement('div');acts.className='fs-acts';
-    const del=document.createElement('button');del.className='del';del.textContent='Retirer';del.onclick=()=>{FRAGFILES.splice(i,1);fragRenderFileList();};
-    acts.append(del);el.append(acts);wrap.append(el);
-  });
-  const mb=$('#fragMergeFiles');mb.disabled=false;mb.style.opacity=1;mb.textContent='Fusionner '+FRAGFILES.length+' part'+(FRAGFILES.length>1?'s':'')+' secours & archiver';
 }
 /* ====== MODE SERVEUR : session officielle base + freshCodes ====== */
 let SRV_FRAG_SESSIONS=[];
@@ -423,18 +339,27 @@ async function srvFragCreateSession(){
     await srvFragLoadSessions();
   }catch(e){toast('Erreur session serveur : '+e.message);}
 }
-async function srvFragSendMine(){
-  const id=srvFragSelectedId();
-  if(!id){toast('Choisis une session serveur');return;}
+// Spec C : envoi de MA part hors-ligne d'abord. La part part vers la manche
+// ouverte (sans sessionId) ; si le serveur est injoignable, elle va dans la file
+// d'attente locale (auto-envoi a la reconnexion). Aucune session a selectionner.
+async function srvFragSubmitMine(){
   const payload=srvFragContributionPayload();
-  if(payload.sessionId&&payload.sessionId!==id&&!confirm('Le comptage courant a ete charge depuis une autre session serveur.\n\nEnvoyer quand meme cette part vers la session selectionnee ?'))return;
-  if(!payload.sessionId&&!confirm('Cette part a ete demarree hors serveur.\n\nEnvoyer uniquement les articles modifies depuis le demarrage de cette part ? Les autres articles resteront pris depuis la base de la session serveur.'))return;
-  if(!payload.freshCodes.length){toast('Aucun article recompte dans cette session de comptage');return;}
+  if(!payload.freshCodes.length){toast('Compte au moins un article avant d envoyer ta part');return;}
+  // E1/E3 : garde-fou date sur MA part (produits finis = date de prod ; matieres perissables = peremption).
+  if(typeof inventoryLotsMissingDate==='function'){
+    const miss=inventoryLotsMissingDate(payload.counts);
+    if(miss.length){if(typeof openLotWarn==='function')openLotWarn(miss);else toast('Date manquante pour '+miss.length+' article(s) (production / peremption).');return;}
+  }
+  if(typeof sipsRequiresLogin==='function'&&sipsRequiresLogin()){toast('Connexion requise pour envoyer ta part au serveur.');return;}
   try{
-    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/contributions',{method:'POST',body:JSON.stringify({payload:payload})});
+    await sipsFetch('/api/inventory-rounds/contribution',{method:'POST',body:JSON.stringify({payload:payload})});
     toast('Part envoyee au serveur : '+payload.freshCodes.length+' article(s)');
     await srvFragLoadSessions();
-  }catch(e){toast('Erreur envoi fragment : '+e.message);}
+  }catch(e){
+    if(e.status){toast('Erreur serveur : '+e.message);return;}
+    const q=sipsQueue('frag-contribution',payload,'');
+    toast(q?'Serveur indisponible : part ajoutee en attente (envoi auto au retour)':'Part deja en attente');
+  }
 }
 function srvFragBuildMerged(sess,resolutions){
   const base=sess.baseSnapshot?clone(sess.baseSnapshot):freshCounts();
@@ -521,28 +446,53 @@ function srvFragInventoryPayload(sess,merged){
   return {kind:'inventory',date:snap.date||todayStr(),agent:snap.agent||'',filled:filled,bilan:bilan,detail:detail,st:snap,
     frag:{source:'server',sessionId:sess.id,title:sess.title||'',baseInventoryId:sess.baseInventoryId||null,baseDate:sess.baseDate||'',agents:(sess.contributions||[]).map(c=>c.agent||'Compteur'),resolutions:merged.resolutions||[]}};
 }
+/* Spec C : vue de couverture d une manche -> qui a compte quoi vs non comptes vs conflits. */
+function srvRoundCoverage(sess){
+  const by={};
+  (sess.contributions||[]).forEach(c=>{((c.payload&&c.payload.freshCodes)||[]).forEach(code=>{(by[code]=by[code]||[]).push(c.agent||'Compteur');});});
+  const comptes=[],conflits=[];
+  Object.keys(by).sort().forEach(code=>{(by[code].length>1?conflits:comptes).push({code:code,by:by[code]});});
+  const known=new Set(Object.keys((sess.baseSnapshot&&sess.baseSnapshot.c)||{}));
+  Object.keys(by).forEach(c=>known.add(c));
+  const nonComptes=[...known].filter(c=>!by[c]).sort();
+  return {comptes:comptes,conflits:conflits,nonComptes:nonComptes};
+}
 async function srvFragAnalyze(id){
   try{
     const data=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id));
     const sess=data.session;
     let merged=srvFragBuildMerged(sess);
-    let msg='Session '+(sess.title||sess.id)+'\n\nParts : '+(sess.contributions||[]).length+'\nArticles recomptees : '+merged.changed;
+    let resolutionMap={};
+    const cov=srvRoundCoverage(sess);
+    let msg='Manche '+(sess.title||frDate(sess.date)||sess.id)
+      +'\n\nParts : '+(sess.contributions||[]).length
+      +'\nArticles comptes : '+cov.comptes.length
+      +'\nNon comptes ce tour (ecart nul) : '+cov.nonComptes.length
+      +'\nConflits (meme article, plusieurs compteurs) : '+cov.conflits.length;
     if(merged.conflicts.length){
       const resolutions=await srvFragResolveConflicts(sess,merged.conflicts);
       if(!resolutions)return;
+      resolutionMap=resolutions;
       merged=srvFragBuildMerged(sess,resolutions);
       if(merged.conflicts.length){toast('Conflits non resolus');return;}
       msg+='\n\nConflits resolus explicitement : '+merged.resolutions.length+'.';
     }
-    msg+='\n\nAucun conflit. Creer une soumission inventaire a valider par admin ?';
+    msg+='\n\nAssembler et comparer au stock (Bilan) avant validation ?';
     if(!confirm(msg))return;
-    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('finaliser la session inventaire')))return;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('finaliser la manche inventaire')))return;
     const payload=srvFragInventoryPayload(sess,merged);
-    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
+    const fin=await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/finalize',{
       method:'POST',headers:sipsAdminHeaders(),
-      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,summary:{conflicts:0,resolvedConflicts:(merged.resolutions||[]).length,changed:merged.changed,contributions:(sess.contributions||[]).length}})
+      body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',payload:payload,resolutions:resolutionMap,summary:{conflicts:0,resolvedConflicts:(merged.resolutions||[]).length,changed:merged.changed,contributions:(sess.contributions||[]).length}})
     });
-    toast('Fusion creee en soumission inventaire - validation admin requise');
+    const subId=fin&&fin.submission&&fin.submission.id;
+    const dlg=$('#fragDlg');if(dlg&&dlg.open)dlg.close();
+    // Spec C : enchaine sur le Bilan de revue (flux B) sur la soumission assemblee (reconstruite serveur).
+    if(subId&&typeof sipsOpenInventoryReview==='function'){
+      try{const full=await sipsFetch('/api/submissions/'+encodeURIComponent(subId),{headers:sipsAdminHeaders()});
+        if(full&&full.submission){sipsOpenInventoryReview(full.submission);return;}}catch(e){}
+    }
+    toast('Manche assemblee en soumission inventaire - a comparer puis valider');
     await srvFragLoadSessions();
   }catch(e){toast('Erreur fusion serveur : '+e.message);}
 }
@@ -551,19 +501,4 @@ if($('#srvFragLoad'))$('#srvFragLoad').onclick=srvFragLoadBase;
 if($('#srvFragOffline'))$('#srvFragOffline').onclick=srvFragStartOfflinePart;
 if($('#srvFragReload'))$('#srvFragReload').onclick=srvFragLoadSessions;
 if($('#srvFragPreview'))$('#srvFragPreview').onclick=srvFragPreviewMine;
-if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSendMine;
-
-async function fragMergeFiles(){
-  if(!FRAGFILES.length){toast('Ajoute au moins une part');return;}
-  const dates=FRAGFILES.map(f=>f.date).filter(Boolean).sort();
-  const date=dates[dates.length-1]||new Date().toISOString().slice(0,10);
-  const agents=[],fragments={};
-  FRAGFILES.forEach(fr=>{agents.push(fr.agent);
-    fragments[fr.agent]={agent:fr.agent,status:'done',startedAt:fr.ts,savedAt:fr.ts,doneAt:fr.ts,sessionStart:fr.sessionStart,fresh:fr.fresh,st:fr.st};});
-  const sess={id:'fragsess_files_'+Date.now(),date,title:$('#fragMergeTitle')?$('#fragMergeTitle').value.trim():'',source:'files',agents,fragments};
-  const {rec,filled}=await fragArchiveMerged(sess);
-  FRAGFILES=[];
-  $('#fragDlg').close();
-  openArchive(rec);
-  toast('Fusion réussie · '+filled+' article(s) · '+agents.length+' compteurs');
-}
+if($('#srvFragSend'))$('#srvFragSend').onclick=srvFragSubmitMine;

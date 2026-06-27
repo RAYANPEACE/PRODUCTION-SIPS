@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "server": "node server/app.mjs",
-    "check:js": "node scripts/check-js.mjs"
+    "check:js": "node scripts/check-js.mjs",
+    "test:server": "node tests/server-security.test.js",
+    "test:stock": "node tests/stock-fifo.test.js",
+    "test:lot": "node tests/lot-gardefou.test.js"
   }
 }

@@ -1,6 +1,6 @@
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { readFile, writeFile, mkdir, stat, rename, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, rename, readdir, unlink, open } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,11 +8,14 @@ import crypto from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '..');
-const dataDir = resolve(__dirname, 'data');
+// dataDir configurable (SIPS_DATA_DIR) pour permettre des tests isoles sans
+// ecraser les vraies donnees ; defaut historique = server/data.
+const dataDir = process.env.SIPS_DATA_DIR
+  ? resolve(process.env.SIPS_DATA_DIR)
+  : resolve(__dirname, 'data');
 const dbPath = resolve(dataDir, 'sips-data.json');
 const backupDir = resolve(dataDir, 'backups');
 const port = Number(process.env.SIPS_PORT || 3000);
-const adminPin = process.env.SIPS_ADMIN_PIN || '1234';
 
 // ====== AUTH / ROLES ======
 // Source de verite des droits. Le client recoit `tabs` et `canSign` a la connexion.
@@ -130,10 +133,35 @@ async function readDb() {
   return db;
 }
 
+// Ecriture atomique et durable : fichier temporaire UNIQUE (jamais partage
+// entre deux ecritures concurrentes, cf. ancien `*.tmp` unique qui se corrompait),
+// fsync du contenu, rename atomique, puis fsync best-effort du repertoire.
 async function writeJson(path, value) {
-  const tmp = path + '.tmp';
-  await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  const tmp = path + '.' + process.pid + '.' + crypto.randomBytes(4).toString('hex') + '.tmp';
+  const data = JSON.stringify(value, null, 2);
+  const fh = await open(tmp, 'w');
+  try {
+    await fh.writeFile(data, 'utf8');
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
   await rename(tmp, path);
+  try {
+    const dir = await open(dirname(path), 'r');
+    try { await dir.sync(); } finally { await dir.close(); }
+  } catch { /* certains systemes de fichiers / Windows ne fsync pas un repertoire */ }
+}
+
+// Mutex global serialisant les transactions read-modify-write sur la base JSON.
+// Toutes les requetes mutantes (POST) passent par ce verrou : impossible que
+// deux requetes lisent le meme etat puis s'ecrasent (lost update). L'echelle du
+// serveur (LAN d'usine, quelques utilisateurs) rend cette serialisation indolore.
+let _dbLock = Promise.resolve();
+function withDbLock(fn) {
+  const run = _dbLock.then(fn, fn);
+  _dbLock = run.then(() => {}, () => {});
+  return run;
 }
 
 async function writeDb(db) {
@@ -182,6 +210,14 @@ function safeBackupName(file) {
   return file === basename(file) && /^sips-data-(daily|manual)-[\w.-]+\.json$/.test(file);
 }
 
+function pathInside(parent, target) {
+  const root = resolve(parent);
+  const child = resolve(target);
+  const a = process.platform === 'win32' ? root.toLowerCase() : root;
+  const b = process.platform === 'win32' ? child.toLowerCase() : child;
+  return b === a || b.startsWith(a + '/') || b.startsWith(a + '\\');
+}
+
 async function pruneDailyBackups() {
   const files = await listBackupFiles('sips-data-daily-');
   const keep = new Set(files.slice(0, 7));
@@ -222,7 +258,7 @@ function sendJson(res, status, body) {
     'cache-control': 'no-store',
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-sips-admin-pin,authorization'
+    'access-control-allow-headers': 'content-type,authorization'
   });
   res.end(data);
 }
@@ -261,31 +297,48 @@ async function authUser(req) {
   const db = await readDb();
   const user = db.users.find(u => u.id === payload.sub);
   if (!user || user.enabled === false) return null;
-  if ((user.passwordChangedAt || 0) > (payload.iat || 0)) return null;
+  // Invalidation atomique par tokenVersion (remplace le check passwordChangedAt
+  // a la seconde, qui ratait les changements survenus dans la meme seconde).
+  if ((user.tokenVersion || 0) !== (payload.tv || 0)) return null;
   return user;
 }
 
-async function requireAuth(req, res) {
+// opts.allowMustChange : true uniquement pour les routes du parcours de
+// changement de mot de passe (me / change-password / verify-password). Partout
+// ailleurs un compte mustChangePassword est bloque cote serveur (403), pas
+// seulement par l'UI.
+async function requireAuth(req, res, opts) {
   const user = await authUser(req);
   if (!user) {
     sendJson(res, 401, { ok: false, error: 'Authentification requise' });
+    return null;
+  }
+  if (user.mustChangePassword && !(opts && opts.allowMustChange)) {
+    sendJson(res, 403, { ok: false, error: 'Changement de mot de passe requis', mustChangePassword: true });
     return null;
   }
   return user;
 }
 
 async function isAdminRequest(req) {
-  const pin = req.headers['x-sips-admin-pin'];
-  if (pin && pin === adminPin) return true;
   const user = await authUser(req);
   return !!(user && user.role === 'admin');
 }
 
-// Accepte l'ancien PIN (compatibilite transitoire) OU un JWT de role admin.
+// Admin = JWT de role admin uniquement (le PIN de secours a ete retire : il
+// court-circuitait JWT/TTL/role/invalidation). Un admin mustChangePassword est
+// aussi bloque tant qu'il n'a pas choisi son mot de passe personnel.
 async function requireAdmin(req, res) {
-  if (await isAdminRequest(req)) return true;
-  sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
-  return false;
+  const user = await authUser(req);
+  if (!user || user.role !== 'admin') {
+    sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
+    return false;
+  }
+  if (user.mustChangePassword) {
+    sendJson(res, 403, { ok: false, error: 'Changement de mot de passe requis', mustChangePassword: true });
+    return false;
+  }
+  return true;
 }
 
 function publicUser(u) {
@@ -313,7 +366,10 @@ function sessionUser(u) {
 }
 async function issueToken(user) {
   const iat = Math.floor(Date.now() / 1000);
-  return jwtSign({ sub: user.id, role: user.role, nom: user.nom, iat, exp: iat + TOKEN_TTL_SEC });
+  // tv = tokenVersion : permet d'invalider tous les tokens d'un compte de facon
+  // atomique (changement/reset de mot de passe) sans dependre de la granularite
+  // seconde de iat/passwordChangedAt (cf. faille same-second race).
+  return jwtSign({ sub: user.id, role: user.role, nom: user.nom, tv: user.tokenVersion || 0, iat, exp: iat + TOKEN_TTL_SEC });
 }
 
 function audit(db, action, actor, details) {
@@ -361,6 +417,8 @@ function publicSubmission(s) {
     decidedBy: s.decidedBy || null,
     note: s.note || '',
     correctionRequested: !!s.correctionRequested,
+    recountRequested: !!s.recountRequested,
+    recountArticles: Array.isArray(s.recountArticles) ? s.recountArticles : null,
     correctionOf: s.correctionOf || null
   };
 }
@@ -400,19 +458,101 @@ function activeQualityLotConflict(db, lot) {
   return null;
 }
 
-function missingQualitySignatures(payload) {
-  const labels = {
-    operateur: 'operateur',
-    responsableQualite: 'responsable qualite'
+const QUALITY_VISA_LABELS = {
+  operateur: 'operateur',
+  responsableQualite: 'responsable qualite'
+};
+const QUALITY_VISA_ROLES = Object.keys(QUALITY_VISA_LABELS);
+
+function isImageSignature(value) {
+  return typeof value === 'string' && value.indexOf('data:image/') === 0;
+}
+
+function qualityVisaStampMaterial(role, visa) {
+  return {
+    v: 1,
+    role,
+    nom: String(visa && visa.nom || ''),
+    signature: String(visa && visa.signature || ''),
+    date: String(visa && visa.date || ''),
+    userId: String(visa && visa.userId || ''),
+    username: String(visa && visa.username || '')
   };
-  const visas = (payload && payload.visas) || {};
-  return Object.keys(labels)
-    .filter(key => !visas[key] || !visas[key].signature)
-    .map(key => labels[key]);
+}
+
+async function qualityVisaMac(role, visa) {
+  const secret = await jwtSecret();
+  return crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(qualityVisaStampMaterial(role, visa)))
+    .digest('hex');
+}
+
+async function stampQualityVisa(role, visa, user) {
+  const stamped = {
+    nom: user.nom,
+    signature: String(visa.signature),
+    // Securite : la date de signature opposable est posee par le SERVEUR uniquement
+    // (anti-antidatage). La date fournie par le client n'a qu'une valeur d'affichage
+    // et est conservee a part (clientDate), hors materiel HMAC -> non opposable.
+    date: new Date().toISOString(),
+    userId: user.id,
+    username: user.username,
+    role
+  };
+  if (visa.date) stamped.clientDate = String(visa.date);
+  stamped.serverStamp = {
+    v: 1,
+    alg: 'HMAC-SHA256',
+    by: 'sips-server',
+    sig: await qualityVisaMac(role, stamped)
+  };
+  return stamped;
+}
+
+async function validServerQualityVisa(payload, role) {
+  const visas = (payload && payload.visas && typeof payload.visas === 'object') ? payload.visas : {};
+  const visa = visas[role];
+  if (!visa || typeof visa !== 'object' || visa.role !== role || !isImageSignature(visa.signature)) return false;
+  const stamp = visa.serverStamp;
+  if (!stamp || stamp.v !== 1 || stamp.alg !== 'HMAC-SHA256' || stamp.by !== 'sips-server' || typeof stamp.sig !== 'string') {
+    return false;
+  }
+  const expected = await qualityVisaMac(role, visa);
+  const got = Buffer.from(stamp.sig, 'hex');
+  const want = Buffer.from(expected, 'hex');
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
+async function missingQualitySignatures(payload) {
+  const missing = [];
+  for (const role of QUALITY_VISA_ROLES) {
+    if (!(await validServerQualityVisa(payload, role))) missing.push(QUALITY_VISA_LABELS[role]);
+  }
+  return missing;
 }
 
 function canSignQuality(user) {
   return user && roleCanSign(user.role).some(role => role === 'operateur' || role === 'responsableQualite');
+}
+
+// Securite (faille A) : a la soumission, on ne fait JAMAIS confiance aux visas
+// fournis par le client. On ne conserve que les visas dont le ROLE est signable
+// par le compte authentifie, et on ecrase l'identite depuis le token. Les autres
+// (ex. responsableQualite forge par un operateur) sont supprimes ; ils devront
+// passer par /quality-sign. Mode offline preserve : le visa operateur legitime
+// voyage dans le payload et est estampille a l'arrivee.
+async function sanitizeQualityVisas(payload, user) {
+  if (!payload || typeof payload !== 'object') return;
+  const allowed = roleCanSign(user.role).filter(r => QUALITY_VISA_ROLES.indexOf(r) >= 0);
+  const incoming = (payload.visas && typeof payload.visas === 'object') ? payload.visas : {};
+  const clean = {};
+  for (const role of allowed) {
+    const v = incoming[role];
+    if (v && typeof v === 'object' && isImageSignature(v.signature)) clean[role] = await stampQualityVisa(role, v, user);
+  }
+  if (Object.keys(clean).length) payload.visas = clean;
+  else delete payload.visas;
 }
 
 function publicInventorySession(s) {
@@ -442,6 +582,185 @@ function publicInventorySession(s) {
   };
 }
 
+function cloneJson(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function objectMap(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function countInventoryEntries(st) {
+  const counts = objectMap(st && st.c);
+  return Object.keys(counts).filter(code => counts[code] && counts[code].counted).length;
+}
+
+function normalizeResolutionMap(value) {
+  const out = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const code of Object.keys(value)) {
+    const n = Number(value[code]);
+    if (Number.isInteger(n) && n >= 0) out[String(code)] = n;
+  }
+  return out;
+}
+
+// Spec C : la "manche" d'inventaire = au plus UNE session ouverte a la fois.
+// Une part qui arrive sans sessionId (comptage hors-ligne) se rattache a la
+// manche ouverte ; si aucune n'est ouverte, on l'ouvre (base = dernier inventaire valide).
+// R2-6 : assignments de recompte ciblé ACTIFS = articles renvoyes a un compteur precis
+// (recountArticles.byUser) par une soumission inventaire rejetee non encore resolue.
+// Renvoie { code: Set(byUser en minuscules) }. Vide => aucune manche de recompte active.
+function activeRecountAssignments(db) {
+  const out = {};
+  for (const s of (db.submissions || [])) {
+    if (s.type !== 'inventory' || s.status !== 'rejected' || s.recountResolvedAt) continue;
+    for (const a of (s.recountArticles || [])) {
+      const code = a && a.code, who = String((a && a.byUser) || '').trim().toLowerCase();
+      if (!code || !who) continue;
+      (out[code] = out[code] || new Set()).add(who);
+    }
+  }
+  return out;
+}
+// Purge : une assemblee (finalize) ou une validation d'inventaire supersede les recomptes
+// cibles en attente -> on les marque resolus pour qu'ils ne "collent" pas (faux blocages).
+function resolvePendingRecounts(db) {
+  const now = new Date().toISOString();
+  for (const s of (db.submissions || [])) {
+    if (s.type === 'inventory' && s.status === 'rejected'
+        && Array.isArray(s.recountArticles) && s.recountArticles.length && !s.recountResolvedAt) {
+      s.recountResolvedAt = now;
+    }
+  }
+}
+function findOrCreateOpenRound(db, actor) {
+  if (!Array.isArray(db.inventorySessions)) db.inventorySessions = [];
+  let sess = db.inventorySessions.find(s => (s.status || 'open') === 'open');
+  if (sess) return sess;
+  const baseRecord = latestInventoryRecord(db);
+  sess = {
+    id: 'isess_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+    title: '',
+    date: new Date().toISOString().slice(0, 10),
+    baseInventoryId: baseRecord ? baseRecord.id : null,
+    baseDate: baseRecord && baseRecord.payload ? (baseRecord.payload.date || '') : '',
+    baseSnapshot: baseRecord && baseRecord.payload ? (baseRecord.payload.st || null) : null,
+    status: 'open',
+    createdAt: new Date().toISOString(),
+    createdBy: actor ? { id: actor.id, name: actor.nom, role: actor.role } : { name: 'auto' },
+    autoOpened: true,
+    contributions: []
+  };
+  db.inventorySessions.push(sess);
+  audit(db, 'inventory_session.opened', actor ? actor.nom : 'auto', { id: sess.id, auto: true });
+  return sess;
+}
+
+function buildInventoryPayloadFromSession(sess, resolutionInput) {
+  const contributions = Array.isArray(sess.contributions) ? sess.contributions : [];
+  if (!contributions.length) {
+    return { ok: false, status: 400, error: 'Aucune contribution inventaire a fusionner' };
+  }
+  const resolutions = normalizeResolutionMap(resolutionInput);
+  const base = sess.baseSnapshot ? cloneJson(sess.baseSnapshot) : { c: {}, cfg: {} };
+  base.id = 'inv_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+  base.date = sess.date || base.date || new Date().toISOString().slice(0, 10);
+  base.agent = 'Fusion serveur - ' + (sess.title || sess.id);
+  base.sessionStart = Date.now();
+  const baseC = objectMap(base.c);
+  const baseCfg = objectMap(base.cfg);
+
+  const byCode = {};
+  for (const contribution of contributions) {
+    const payload = objectMap(contribution.payload);
+    const counts = objectMap(payload.counts);
+    const cfg = objectMap(payload.cfg);
+    for (const code of Object.keys(counts)) {
+      const entry = counts[code];
+      if (!entry || typeof entry !== 'object' || !entry.counted) continue;
+      byCode[code] = byCode[code] || [];
+      byCode[code].push({
+        agent: contribution.agent || payload.agent || contribution.username || 'Compteur',
+        byUser: contribution.username || '',
+        entry,
+        cfg: cfg[code] && typeof cfg[code] === 'object' ? cfg[code] : null
+      });
+    }
+  }
+
+  // Spec C : univers = codes connus de la base (pour cfg) UNION codes comptes ce tour.
+  // Un code compte par 1 -> sa valeur + estampille by ; par >1 -> conflit ;
+  // par PERSONNE -> { counted:false } (ecart nul, jamais la valeur de base).
+  const universe = new Set(Object.keys(baseC));
+  for (const code of Object.keys(byCode)) universe.add(code);
+  const resultC = {};
+  const resultCfg = {};
+  const conflicts = [];
+  const applied = [];
+  for (const code of [...universe].sort()) {
+    const rows = byCode[code];
+    if (!rows || !rows.length) { resultC[code] = { counted: false }; continue; }
+    const hasResolution = Object.prototype.hasOwnProperty.call(resolutions, code);
+    if (rows.length > 1 && !hasResolution) {
+      conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent) });
+      continue;
+    }
+    const idx = hasResolution ? resolutions[code] : 0;
+    if (!rows[idx]) {
+      conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent), invalidResolution: idx });
+      continue;
+    }
+    resultC[code] = { ...cloneJson(rows[idx].entry), counted: true, by: rows[idx].agent, byUser: rows[idx].byUser || '' };
+    if (rows[idx].cfg) resultCfg[code] = cloneJson(rows[idx].cfg);
+    else if (baseCfg[code]) resultCfg[code] = cloneJson(baseCfg[code]);
+    if (rows.length > 1) applied.push({ code, agent: rows[idx].agent, choices: rows.map(r => r.agent) });
+  }
+
+  if (conflicts.length) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'Conflits inventaire non resolus',
+      conflicts
+    };
+  }
+  base.c = resultC;
+  base.cfg = resultCfg;
+
+  const changed = Object.keys(byCode).length;
+  const filled = countInventoryEntries(base);
+  const payload = {
+    kind: 'inventory',
+    date: base.date,
+    agent: base.agent,
+    filled,
+    bilan: null,
+    detail: null,
+    st: base,
+    frag: {
+      source: 'server',
+      sessionId: sess.id,
+      title: sess.title || '',
+      baseInventoryId: sess.baseInventoryId || null,
+      baseDate: sess.baseDate || '',
+      agents: contributions.map(c => c.agent || c.username || 'Compteur'),
+      resolutions: applied
+    },
+    submittedAt: new Date().toISOString()
+  };
+  return {
+    ok: true,
+    payload,
+    summary: {
+      conflicts: 0,
+      resolvedConflicts: applied.length,
+      changed,
+      contributions: contributions.length
+    }
+  };
+}
+
 function fullInventorySession(s) {
   return {
     ...publicInventorySession(s),
@@ -451,6 +770,16 @@ function fullInventorySession(s) {
 }
 
 async function handleApi(req, res, url) {
+  // Les requetes mutantes (POST) sont serialisees pour garantir des transactions
+  // read-modify-write atomiques sur db.json. Les lectures (GET/OPTIONS) restent
+  // concurrentes : readDb lit un fichier coherent ecrit par rename atomique.
+  if (req.method === 'POST') {
+    return withDbLock(() => handleApiRoutes(req, res, url));
+  }
+  return handleApiRoutes(req, res, url);
+}
+
+async function handleApiRoutes(req, res, url) {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 204, { ok: true });
   }
@@ -487,6 +816,7 @@ async function handleApi(req, res, url) {
       passwordHash: await hashPassword(password),
       enabled: true,
       passwordChangedAt: Math.floor(Date.now() / 1000),
+      tokenVersion: 0,
       mustChangePassword: false,
       createdAt: new Date().toISOString(),
       createdBy: 'setup',
@@ -515,13 +845,13 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/auth/me') {
-    const user = await requireAuth(req, res);
+    const user = await requireAuth(req, res, { allowMustChange: true });
     if (!user) return;
     return sendJson(res, 200, { ok: true, user: sessionUser(user) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/verify-password') {
-    const user = await requireAuth(req, res);
+    const user = await requireAuth(req, res, { allowMustChange: true });
     if (!user) return;
     const body = await readBody(req);
     const ok = await verifyPassword(String(body.password || ''), user.passwordHash);
@@ -529,7 +859,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
-    const user = await requireAuth(req, res);
+    const user = await requireAuth(req, res, { allowMustChange: true });
     if (!user) return;
     const body = await readBody(req);
     const currentPassword = String(body.currentPassword || '');
@@ -549,6 +879,7 @@ async function handleApi(req, res, url) {
       dbUser.passwordHash = user.passwordHash;
       dbUser.passwordChangedAt = user.passwordChangedAt;
       dbUser.mustChangePassword = false;
+      dbUser.tokenVersion = (dbUser.tokenVersion || 0) + 1;
       audit(db, 'user.password_changed', user.nom, { id: user.id });
       await writeDb(db);
       return sendJson(res, 200, { ok: true, token: await issueToken(dbUser), user: sessionUser(dbUser) });
@@ -587,6 +918,7 @@ async function handleApi(req, res, url) {
       passwordHash: await hashPassword(password),
       enabled: true,
       passwordChangedAt: Math.floor(Date.now() / 1000),
+      tokenVersion: 0,
       mustChangePassword: true,
       createdAt: new Date().toISOString(),
       createdBy: actor ? actor.nom : 'admin',
@@ -628,6 +960,7 @@ async function handleApi(req, res, url) {
       if (String(body.password).length < 4) return sendJson(res, 400, { ok: false, error: 'Mot de passe trop court (4 caracteres minimum)' });
       user.passwordHash = await hashPassword(String(body.password));
       user.passwordChangedAt = Math.floor(Date.now() / 1000);
+      user.tokenVersion = (user.tokenVersion || 0) + 1;
       user.mustChangePassword = true;
     }
     if (body.nom !== undefined) {
@@ -640,6 +973,80 @@ async function handleApi(req, res, url) {
   }
 
   // ====== INVENTAIRE FRAGMENTE SERVEUR ======
+  // Spec C : contribution SANS sessionId -> rattachee a la manche ouverte (creee si aucune).
+  if (req.method === 'POST' && url.pathname === '/api/inventory-rounds/contribution') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const body = await readBody(req);
+    const payload = body.payload || {};
+    const freshCodes = Array.isArray(payload.freshCodes)
+      ? [...new Set(payload.freshCodes.map(c => String(c)).filter(Boolean))] : [];
+    const counts = {};
+    const src = (payload.counts && typeof payload.counts === 'object') ? payload.counts
+              : (payload.st && payload.st.c) ? payload.st.c : {};
+    for (const code of freshCodes) if (src[code] && src[code].counted) counts[code] = src[code];
+    const countedCodes = Object.keys(counts);
+    if (!freshCodes.length || !countedCodes.length) {
+      return sendJson(res, 400, { ok: false, error: 'Aucun article recompte dans cette part' });
+    }
+    const db = await readDb();
+    const actor = await authUser(req);
+    const sess = findOrCreateOpenRound(db, actor);
+    // Securite (anti-corruption) : une part capturee hors-ligne sur une base A ne doit
+    // pas etre rattachee a une manche ouverte sur une autre base B (comptes perimes).
+    // Le client envoie baseInventoryId ; en cas de mismatch, on rejette (la part reste
+    // sur l'appareil, l'utilisateur recharge la session courante). writeDb n'est PAS
+    // appele -> aucune manche fantome persistee.
+    if (payload.baseInventoryId && sess.baseInventoryId
+        && String(payload.baseInventoryId) !== String(sess.baseInventoryId)) {
+      return sendJson(res, 409, { ok: false, error: 'Part perimee : elle vise un autre inventaire de base que la manche en cours. Recharge la session courante avant de renvoyer.' });
+    }
+    // R2-6 : isolation du recompte cible. Un article renvoye a UN compteur precis ne peut
+    // pas etre soumis par un autre (anti-pollution de l'assemblage). Les codes non assignes
+    // et ceux assignes au compteur courant passent (manche normale inchangee).
+    const assign = activeRecountAssignments(db);
+    const meId = [user.username, user.nom].filter(Boolean).map(x => String(x).toLowerCase());
+    const blocked = countedCodes.filter(code => assign[code] && !meId.some(u => assign[code].has(u)));
+    if (blocked.length) {
+      return sendJson(res, 403, { ok: false, error: 'Recompte cible : ' + blocked.join(', ') + ' est/sont reserve(s) a un autre compteur. Tu ne peux soumettre que tes articles assignes.' });
+    }
+    const rec = {
+      id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
+      userId: user.id, username: user.username,
+      agent: String(payload.agent || user.nom || '').trim() || user.nom,
+      counted: countedCodes.length, freshCount: countedCodes.length,
+      submittedAt: new Date().toISOString(), note: String(body.note || '').trim(),
+      payload: {
+        baseInventoryId: sess.baseInventoryId || null, baseDate: sess.baseDate || '',
+        agent: String(payload.agent || user.nom || '').trim() || user.nom,
+        freshCodes: countedCodes, counts, cfg: payload.cfg || {}
+      }
+    };
+    sess.contributions = sess.contributions || [];
+    const existing = sess.contributions.findIndex(c => c.userId === user.id);
+    // Anti-perte (parts multiples du meme compteur, hors-ligne/retries) : on FUSIONNE
+    // avec la part precedente au lieu de l'ecraser. Union des codes ; la nouvelle valeur
+    // gagne par code (correction d'un article possible) ; les articles disjoints d'une
+    // part anterieure ne disparaissent plus.
+    if (existing >= 0) {
+      const prev = sess.contributions[existing];
+      const prevPayload = (prev && prev.payload) || {};
+      const mergedCounts = Object.assign({}, prevPayload.counts || {}, counts);
+      const mergedCodes = [...new Set([...(prevPayload.freshCodes || []), ...countedCodes])];
+      rec.payload.counts = mergedCounts;
+      rec.payload.freshCodes = mergedCodes;
+      rec.counted = mergedCodes.length;
+      rec.freshCount = mergedCodes.length;
+      sess.contributions[existing] = rec;
+    } else {
+      sess.contributions.push(rec);
+    }
+    sess.updatedAt = rec.submittedAt;
+    audit(db, 'inventory_session.contribution', user.nom, { id: sess.id, counted: countedCodes.length });
+    await writeDb(db);
+    return sendJson(res, existing >= 0 ? 200 : 201, { ok: true, round: publicInventorySession(sess), contribution: rec });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/inventory-sessions') {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -688,7 +1095,14 @@ async function handleApi(req, res, url) {
     const db = await readDb();
     const sess = db.inventorySessions.find(s => s.id === inventorySessionDetail[1]);
     if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
-    return sendJson(res, 200, { ok: true, session: fullInventorySession(sess) });
+    // Securite : seuls les admins (assemblage/finalisation) voient les contributions
+    // DETAILLEES (comptes) des autres. Un compteur recoit les metadonnees + la base
+    // (pour charger sa zone) ; les comptes d'autrui restent caches (anti-biais).
+    const sessAdmin = await isAdminRequest(req);
+    const sessOut = sessAdmin
+      ? fullInventorySession(sess)
+      : Object.assign({}, publicInventorySession(sess), { baseSnapshot: sess.baseSnapshot || null });
+    return sendJson(res, 200, { ok: true, session: sessOut });
   }
 
   const inventoryContribution = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/contributions$/);
@@ -756,19 +1170,21 @@ async function handleApi(req, res, url) {
     if (!(await requireAdmin(req, res))) return;
     const actor = await authUser(req);
     const body = await readBody(req);
-    const payload = body.payload || {};
-    if (!payload.st || !payload.st.c) {
-      return sendJson(res, 400, { ok: false, error: 'Inventaire fusionne manquant' });
-    }
-    if (body.summary && Number(body.summary.conflicts || 0) > 0) {
-      return sendJson(res, 409, { ok: false, error: 'Conflits inventaire non resolus' });
-    }
     const db = await readDb();
     const sess = db.inventorySessions.find(s => s.id === inventoryFinalize[1]);
     if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
     if ((sess.status || 'open') !== 'open') {
       return sendJson(res, 409, { ok: false, error: 'Session inventaire deja finalisee' });
     }
+    const merge = buildInventoryPayloadFromSession(sess, body.resolutions || {});
+    if (!merge.ok) {
+      return sendJson(res, merge.status || 400, {
+        ok: false,
+        error: merge.error || 'Inventaire fusionne invalide',
+        conflicts: merge.conflicts || undefined
+      });
+    }
+    const payload = merge.payload;
     const finalizedAt = new Date().toISOString();
     const hash = submissionHash('inventory', payload);
     const sub = {
@@ -785,14 +1201,18 @@ async function handleApi(req, res, url) {
     db.submissions.push(sub);
     sess.status = 'finalized';
     sess.finalizedAt = finalizedAt;
-    sess.finalizedBy = body.actor || (actor ? actor.nom : 'admin');
+    // Securite (meme classe que R1-1) : attribution depuis le token, pas de body.actor.
+    sess.finalizedBy = (actor && actor.nom) || 'admin';
     sess.submissionId = sub.id;
-    sess.finalSummary = body.summary || {};
+    sess.finalSummary = merge.summary;
+    // R2-6 : l'assemblee supersede les recomptes cibles en attente -> on les purge.
+    resolvePendingRecounts(db);
     audit(db, 'inventory_session.finalized', sess.finalizedBy, {
       id: sess.id,
       submissionId: sub.id,
       contributions: (sess.contributions || []).length,
-      conflicts: body.summary && body.summary.conflicts
+      conflicts: merge.summary.conflicts,
+      resolvedConflicts: merge.summary.resolvedConflicts
     });
     await writeDb(db);
     return sendJson(res, 200, { ok: true, session: publicInventorySession(sess), submission: publicSubmission(sub) });
@@ -803,16 +1223,44 @@ async function handleApi(req, res, url) {
     const status = url.searchParams.get('status');
     const type = url.searchParams.get('type');
     const includePayload = url.searchParams.get('include') === 'payload';
+    const admin = await isAdminRequest(req);
+    const user = await authUser(req);
+    // Securite : aucune lecture (meme metadonnees) sans authentification. Empeche
+    // l'enumeration anonyme des soumissions (auteurs, statuts, flags recompte).
+    if (!user && !admin) {
+      return sendJson(res, 401, { ok: false, error: 'Connexion requise' });
+    }
     if (includePayload) {
-      const user = await authUser(req);
       const qualitySignerRead = type === 'quality' && ['submitted', 'rejected'].indexOf(status) >= 0 && canSignQuality(user);
-      if (!qualitySignerRead && !(await isAdminRequest(req))) {
+      // Recomptage : un compte connecte peut lire SES PROPRES inventaires rejetes (avec payload.st).
+      const invOwnerRead = type === 'inventory' && status === 'rejected' && !!user;
+      if (!qualitySignerRead && !invOwnerRead && !admin) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
     }
+    const forMe = url.searchParams.get('forMe') === '1';
     let rows = db.submissions;
     if (status) rows = rows.filter(s => s.status === status);
     if (type) rows = rows.filter(s => s.type === type);
+    // Spec C : recompte cible -> un compteur liste les soumissions rejetees dont un
+    // article lui est attribue (byUser), meme s'il n'en est pas l'auteur. On ne
+    // renvoie que SES articles cibles, sans le payload complet d'autrui.
+    if (type === 'inventory' && status === 'rejected' && forMe && !admin) {
+      const me = [user && user.username, user && user.nom].filter(Boolean).map(x => String(x).toLowerCase());
+      rows = (user && me.length)
+        ? rows.filter(s => Array.isArray(s.recountArticles)
+            && s.recountArticles.some(a => me.includes(String(a.byUser || '').toLowerCase())))
+        : [];
+      rows = rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return sendJson(res, 200, { ok: true, submissions: rows.map(s => ({
+        ...publicSubmission(s),
+        recountArticles: (s.recountArticles || []).filter(a => me.includes(String(a.byUser || '').toLowerCase()))
+      })) });
+    }
+    // Un non-admin ne voit QUE ses propres soumissions inventaire rejetees.
+    if (type === 'inventory' && status === 'rejected' && !admin) {
+      rows = user ? rows.filter(s => s.author && s.author.id === user.id) : [];
+    }
     rows = rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return sendJson(res, 200, { ok: true, submissions: rows.map(includePayload ? fullSubmission : publicSubmission) });
   }
@@ -827,18 +1275,24 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/submissions') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
     const body = await readBody(req);
     if (!body.type || !body.payload) {
       return sendJson(res, 400, { ok: false, error: 'type et payload requis' });
     }
+    // L'auteur est derive du compte authentifie, jamais du corps de la requete.
+    const author = { id: user.id, name: user.nom, role: user.role };
     const db = await readDb();
     const type = String(body.type);
+    // Faille A : normaliser/estampiller les visas qualite avant tout (hash inclus).
+    if (type === 'quality') await sanitizeQualityVisas(body.payload, user);
     const hash = submissionHash(type, body.payload);
     const activeRecord = db.records.find(r => r.hash === hash && recordStatus(r) !== 'cancelled');
     const existing = db.submissions.find(s => s.hash === hash && s.status === 'submitted')
       || (activeRecord && db.submissions.find(s => s.id === activeRecord.sourceSubmissionId));
     if (existing) {
-      audit(db, 'submission.duplicate', body.author, { id: existing.id, type });
+      audit(db, 'submission.duplicate', user.nom, { id: existing.id, type });
       await writeDb(db);
       return sendJson(res, 200, { ok: true, duplicate: true, submission: publicSubmission(existing) });
     }
@@ -846,7 +1300,7 @@ async function handleApi(req, res, url) {
       const lot = qualityLot(body.payload);
       const lotConflict = activeQualityLotConflict(db, lot);
       if (lotConflict) {
-        audit(db, 'submission.duplicate_lot', body.author, { id: lotConflict.row.id, type, lot });
+        audit(db, 'submission.duplicate_lot', user.nom, { id: lotConflict.row.id, type, lot });
         await writeDb(db);
         return sendJson(res, 409, {
           ok: false,
@@ -860,14 +1314,14 @@ async function handleApi(req, res, url) {
       type,
       hash,
       status: 'submitted',
-      author: body.author || null,
+      author,
       payload: body.payload,
       note: body.note || '',
       correctionOf: body.payload && body.payload.correctionOf || null,
       createdAt: new Date().toISOString()
     };
     db.submissions.push(rec);
-    audit(db, 'submission.created', body.author, { id: rec.id, type: rec.type });
+    audit(db, 'submission.created', user.nom, { id: rec.id, type: rec.type });
     await writeDb(db);
     return sendJson(res, 201, { ok: true, submission: publicSubmission(rec) });
   }
@@ -878,11 +1332,11 @@ async function handleApi(req, res, url) {
     if (!user) return;
     const body = await readBody(req);
     const role = String(body.role || '');
-    if (roleCanSign(user.role).indexOf(role) < 0 || ['operateur', 'responsableQualite'].indexOf(role) < 0) {
+    if (roleCanSign(user.role).indexOf(role) < 0 || QUALITY_VISA_ROLES.indexOf(role) < 0) {
       return sendJson(res, 403, { ok: false, error: 'Ce compte ne peut pas signer ce visa qualite' });
     }
     const signature = String((body.visa && body.visa.signature) || '');
-    if (!signature || signature.indexOf('data:image/') !== 0) {
+    if (!isImageSignature(signature)) {
       return sendJson(res, 400, { ok: false, error: 'Signature manquante' });
     }
     const db = await readDb();
@@ -892,13 +1346,15 @@ async function handleApi(req, res, url) {
     if (sub.status !== 'submitted') return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
     sub.payload = sub.payload || {};
     sub.payload.visas = sub.payload.visas || {};
-    sub.payload.visas[role] = {
-      nom: user.nom,
-      signature,
-      date: String((body.visa && body.visa.date) || new Date().toISOString()),
-      userId: user.id,
-      username: user.username
-    };
+    // Faille I : append-once. Un visa serveur valide n'est jamais ecrase.
+    // Une entree legacy/corrompue peut etre remplacee par un visa estampille.
+    const prior = sub.payload.visas[role];
+    if (prior && await validServerQualityVisa(sub.payload, role)) {
+      return sendJson(res, 409, { ok: false, error: 'Visa ' + role + ' deja signe' });
+    }
+    sub.payload.visas[role] = await stampQualityVisa(role, { signature, date: body.visa && body.visa.date }, user);
+    // Faille J : le hash d'integrite doit couvrir les visas signes cote serveur.
+    sub.hash = submissionHash(sub.type, sub.payload);
     sub.qualitySignedAt = new Date().toISOString();
     sub.qualitySignedBy = user.nom;
     audit(db, 'quality.signature', user.nom, { id: sub.id, role });
@@ -906,7 +1362,7 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, {
       ok: true,
       submission: fullSubmission(sub),
-      missing: missingQualitySignatures(sub.payload)
+      missing: await missingQualitySignatures(sub.payload)
     });
   }
 
@@ -922,21 +1378,35 @@ async function handleApi(req, res, url) {
       return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
     }
     if (action === 'validate' && sub.type === 'quality') {
-      const missing = missingQualitySignatures(sub.payload);
+      const missing = await missingQualitySignatures(sub.payload);
       if (missing.length) {
         return sendJson(res, 400, { ok: false, error: 'Validation qualite impossible : signature(s) manquante(s) ' + missing.join(', ') });
       }
+      sub.hash = submissionHash(sub.type, sub.payload);
     }
     sub.status = action === 'validate' ? 'validated' : 'rejected';
     sub.decidedAt = new Date().toISOString();
-    sub.decidedBy = body.actor || 'admin';
+    // Securite : l'attribution de la decision vient du token authentifie, JAMAIS du
+    // corps de requete (anti-forge / integrite d'audit). body.actor est ignore.
+    const decider = await authUser(req);
+    sub.decidedBy = (decider && decider.nom) || 'admin';
     sub.decisionNote = body.note || '';
     sub.correctionRequested = sub.status === 'rejected' && sub.type === 'quality' && !!body.correction;
+    sub.recountRequested = sub.status === 'rejected' && sub.type === 'inventory' && !!body.recountRequested;
+    // Spec C : recompte CIBLE par article -> chaque article repart vers SON compteur (byUser).
+    if (sub.status === 'rejected' && sub.type === 'inventory' && Array.isArray(body.recountArticles)) {
+      sub.recountArticles = body.recountArticles
+        .filter(x => x && x.code)
+        .map(x => ({ code: String(x.code), by: String(x.by || '').trim(), byUser: String(x.byUser || '').trim() }));
+      if (sub.recountArticles.length) sub.recountRequested = true;
+    }
+    // R2-6 : un inventaire VALIDE supersede les recomptes cibles en attente -> purge.
+    if (sub.status === 'validated' && sub.type === 'inventory') resolvePendingRecounts(db);
     if (sub.status === 'validated') {
       db.records.push({
         id: 'rec_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
         sourceSubmissionId: sub.id,
-        hash: sub.hash || submissionHash(sub.type, sub.payload),
+        hash: sub.type === 'quality' ? submissionHash(sub.type, sub.payload) : (sub.hash || submissionHash(sub.type, sub.payload)),
         type: sub.type,
         status: 'validated',
         payload: sub.payload,
@@ -955,7 +1425,15 @@ async function handleApi(req, res, url) {
     const status = url.searchParams.get('status');
     if (!(await isAdminRequest(req))) {
       const user = await authUser(req);
-      if (!(type === 'quality' && canSignQuality(user))) {
+      if (!user) return sendJson(res, 401, { ok: false, error: 'Connexion requise' });
+      // Comptes non-admin connectes : lecture seule des records VALIDES d'un type
+      // precis (mouvements officiels sortie/entree/production/inventory), pour que
+      // le personnel voie les mouvements valides. La qualite garde sa regle dediee
+      // (signataires qualite). L'admin reste requis pour tout le reste (annules,
+      // dump sans type, etc.).
+      const okQuality = type === 'quality' && canSignQuality(user);
+      const okValidatedRead = status === 'validated' && !!type && type !== 'quality';
+      if (!(okQuality || okValidatedRead)) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
     }
@@ -993,7 +1471,35 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/audit') {
     if (!(await requireAdmin(req, res))) return;
     const db = await readDb();
-    return sendJson(res, 200, { ok: true, audit: db.audit.slice().reverse() });
+    const limit = Number(url.searchParams.get('limit')) || 0;
+    let rows = db.audit.slice().reverse();
+    if (limit > 0) rows = rows.slice(0, limit);
+    return sendJson(res, 200, { ok: true, audit: rows, total: db.audit.length });
+  }
+
+  // Suppression CIBLEE du journal (admin) : par ids (entree par entree) OU par
+  // date (entrees jusqu'au jour beforeDate inclus). Jamais de purge globale :
+  // sans critere -> 400. La suppression est elle-meme journalisee (audit.pruned).
+  if (req.method === 'POST' && url.pathname === '/api/audit/delete') {
+    if (!(await requireAdmin(req, res))) return;
+    const body = await readBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
+    const beforeDate = body.beforeDate ? String(body.beforeDate) : null; // 'YYYY-MM-DD'
+    if ((!ids || !ids.length) && !beforeDate) {
+      return sendJson(res, 400, { ok: false, error: 'Suppression ciblee requise : ids (entrees) ou beforeDate (periode). Pas de purge globale.' });
+    }
+    const db = await readDb();
+    const n0 = db.audit.length;
+    if (ids && ids.length) {
+      const set = new Set(ids);
+      db.audit = db.audit.filter(e => !set.has(e.id));
+    } else {
+      db.audit = db.audit.filter(e => String(e.at || '').slice(0, 10) > beforeDate);
+    }
+    const removed = n0 - db.audit.length;
+    audit(db, 'audit.pruned', body.actor || 'admin', { removed, mode: (ids && ids.length) ? 'ids' : 'beforeDate', beforeDate: beforeDate || null, count: (ids && ids.length) || null });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, removed });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/backup') {
@@ -1018,7 +1524,7 @@ async function handleApi(req, res, url) {
     const file = decodeURIComponent(backupDownload[1]);
     if (!safeBackupName(file)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
     const target = resolve(backupDir, file);
-    if (!target.startsWith(backupDir)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
+    if (!pathInside(backupDir, target)) return sendJson(res, 400, { ok: false, error: 'Nom de sauvegarde invalide' });
     try {
       await stat(target);
     } catch {
@@ -1036,12 +1542,40 @@ async function handleApi(req, res, url) {
   return sendJson(res, 404, { ok: false, error: 'Route API inconnue' });
 }
 
+const STATIC_ROOT_FILES = new Set([
+  'index.html',
+  'sw.js',
+  'manifest.webmanifest',
+  'icon-192.png',
+  'icon-512.png',
+  'xlsx.full.min.js',
+  'pdf-lib.min.js',
+  'pdf.min.js',
+  'pdf.worker.min.js'
+]);
+const STATIC_ROOT_DIRS = new Set(['css', 'domain', 'js']);
+
 async function serveStatic(req, res, url) {
-  let pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('Bad request');
+  }
   if (pathname === '/') pathname = '/index.html';
+  const parts = pathname.split('/').filter(Boolean);
+  const rootPart = parts[0] || '';
+  const allowed = parts.length === 1
+    ? STATIC_ROOT_FILES.has(rootPart)
+    : STATIC_ROOT_DIRS.has(rootPart);
+  if (!allowed || parts.some(part => part === '..' || part.startsWith('.'))) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('Forbidden');
+  }
   const target = normalize(resolve(rootDir, '.' + pathname));
-  if (!target.startsWith(rootDir)) {
-    res.writeHead(403);
+  if (!pathInside(rootDir, target)) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
     return res.end('Forbidden');
   }
   try {
@@ -1105,8 +1639,4 @@ if (tls) {
   });
 } else {
   console.log('HTTPS desactive : aucun certificat dans server/certs/ (mode hors-ligne PWA indisponible). Voir SERVER_HTTPS.md.');
-}
-
-if (!process.env.SIPS_ADMIN_PIN) {
-  console.log('  PIN admin par defaut: 1234 (changer avec SIPS_ADMIN_PIN)');
 }

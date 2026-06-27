@@ -55,6 +55,7 @@ const STRIPE={carton:'s-cart',sac:'s-sac',cartvide:'s-cv',bobine:'s-bob',vrac:'s
 let CFG=loadCfg();                 // {code:{...params}}
 let ST=freshCounts();              // remplacé au chargement IndexedDB
 let RO=false;                      // mode consultation (lecture seule)
+let INV_RECOUNT_OF=null;           // {id,date} de la soumission rejetee en cours de recomptage (B)
 function mergeAndMigrate(){
   if(!ST.id)ST.id='inv_'+Date.now();
   if(ST.sessionStart==null)ST.sessionStart=Date.now();  // début de la session de comptage en cours
@@ -442,10 +443,18 @@ function renderBlockSaisies(r,blk){const w=document.createElement('div');
 function blockMeta(r,blk,bi,isFin,redraw){
   const w=document.createElement('div');w.className='blk-meta';
   const dr=document.createElement('div');dr.className='blk-date';
-  dr.innerHTML=`<label>${isFin?'Date de production':'Date de péremption'}</label><input type="date" value="${blk.date||''}"><span class="blk-delay" data-delay></span>`;
+  const todayBtn=isFin?`<button type="button" class="blk-today" data-today>aujourd’hui</button>`:'';
+  dr.innerHTML=`<label>${isFin?'Date de production':'Date de péremption'}</label><input type="date" value="${blk.date||''}">${todayBtn}<span class="blk-delay" data-delay></span>`;
   const di=dr.querySelector('input');const dl=dr.querySelector('[data-delay]');
-  const updD=()=>{const info=isFin?prodInfo(blk.date):expInfo(blk.date);dl.className='blk-delay'+(info?' '+info.cls:'');dl.textContent=info?info.txt:'';};
+  // E1/E3 : produit fini (date prod) ou matiere perissable (date peremption) avec une
+  // saisie mais sans date -> champ signalé (rouge). (Bouton "aujourd'hui" : finis seulement,
+  // une peremption n'est jamais le jour meme.)
+  const needsDate=isFin||isPerishableMp(r);
+  const updMissing=()=>{const need=needsDate&&blockHasInput(r,blk)&&!String(blk.date||'').trim();dr.classList.toggle('missing',!!need);};
+  const updD=()=>{const info=isFin?prodInfo(blk.date):expInfo(blk.date);dl.className='blk-delay'+(info?' '+info.cls:'');dl.textContent=info?info.txt:'';updMissing();};
   di.addEventListener('change',ev=>{blk.date=ev.target.value;updD();saveCounts();});updD();
+  const tb=dr.querySelector('[data-today]');
+  if(tb)tb.onclick=()=>{blk.date=todayStr();di.value=blk.date;updD();saveCounts();};
   const ph=document.createElement('div');ph.className='lot-photo';buildLotPhoto(ph,r,blk,bi,redraw);
   w.append(dr,ph);return w;}
 function buildBlocks(r,b){
@@ -580,6 +589,12 @@ function idb(){return new Promise((res,rej)=>{if(_db)return res(_db);
   rq.onsuccess=()=>{_db=rq.result;res(_db);};rq.onerror=()=>rej(rq.error);});}
 function idbPut(rec,countChange){if(countChange===undefined)countChange=true;return idb().then(db=>new Promise((res,rej)=>{
   const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=function(){if(countChange)try{var c=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;localStorage.setItem('lep_changes_since_backup',String(c+1));}catch(e){}res();};t.onerror=()=>rej(t.error);}));}
+function idbPutMany(recs){return idb().then(db=>new Promise((res,rej)=>{
+  const t=db.transaction('inv','readwrite'),store=t.objectStore('inv');
+  recs.forEach(rec=>store.put(rec));
+  t.oncomplete=()=>res();
+  t.onabort=t.onerror=()=>rej(t.error||new Error('Transaction import annulee'));
+}));}
 function idbGet(id){return idb().then(db=>new Promise((res,rej)=>{
   const rq=db.transaction('inv','readonly').objectStore('inv').get(id);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);}));}
 function idbAll(){return idb().then(db=>new Promise((res,rej)=>{
@@ -794,29 +809,57 @@ async function importAll(text){
   const lockedIds=new Set();
   localRecs.forEach(r=>{if(r&&r.locked)lockedIds.add(r.id);});
   const nLocked=lockedIds.size;
-  let toAdd=0, skippedExisting=0, skippedLocked=0;
+  let toAdd=0, skippedExisting=0, skippedLocked=0, skippedDuplicate=0;
+  const toImport=[], importIds=new Set();
   if(Array.isArray(data.idb))for(const rec of data.idb){
     if(!rec||!rec.id)continue;
     if(lockedIds.has(rec.id)){skippedLocked++;continue;}
     if(localIds.has(rec.id)){skippedExisting++;continue;}
+    if(importIds.has(rec.id)){skippedDuplicate++;continue;}
+    importIds.add(rec.id);toImport.push(rec);
     toAdd++;
   }
-  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"");
+  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"")+(skippedDuplicate?("\nDoublons dans le fichier : "+skippedDuplicate):"");
   if(!confirm(msg))return;
+  const protectedKeys=new Set(['lep_usr','lep_changes_since_backup','lep_backup_count','lep_last_backup_ts']);
+  const lsUpdates=[];
+  if(data.ls)Object.keys(data.ls).forEach(k=>{if(!protectedKeys.has(k))lsUpdates.push([k,data.ls[k]]);});
+  const allLsUpdates=lsUpdates.concat([['lep_changes_since_backup','0']]);
+  const oldLs=new Map();
+  allLsUpdates.forEach(pair=>{
+    const k=pair[0];
+    if(!oldLs.has(k))oldLs.set(k,localStorage.getItem(k));
+  });
+  function rollbackLS(){
+    oldLs.forEach((v,k)=>{try{if(v==null)localStorage.removeItem(k);else localStorage.setItem(k,v);}catch(e){}});
+  }
   try{
-    const protectedKeys=new Set(['lep_usr','lep_changes_since_backup','lep_backup_count','lep_last_backup_ts']);
-    if(data.ls)Object.keys(data.ls).forEach(k=>{if(protectedKeys.has(k))return;try{localStorage.setItem(k,data.ls[k]);}catch(e){}});
-    let imported=0;
-    if(Array.isArray(data.idb))for(const rec of data.idb){
-      if(!rec||!rec.id)continue;
-      if(lockedIds.has(rec.id)||localIds.has(rec.id))continue;
-      try{await idbPut(rec);imported++;}catch(e){}
-    }
-    localStorage.setItem('lep_changes_since_backup','0');
-    alert("Import : "+imported+" ajoutee(s).\nRechargement en cours...");location.reload();
-  }catch(e){alert("Echec de l’import.");}
+    allLsUpdates.forEach(pair=>localStorage.setItem(pair[0],pair[1]));
+    await idbPutMany(toImport);
+    alert("Import : "+toImport.length+" ajoutee(s).\nRechargement en cours...");location.reload();
+  }catch(e){rollbackLS();alert("Echec de l’import : aucune donnee n'a ete modifiee.");}
+}
+/* Recomptage non destructif (B) : recharge le snapshot d une soumission inventaire rejetee,
+   pre-rempli (jamais zero), dans un NOUVEAU comptage modifiable. La prochaine soumission portera
+   recountOf={id,date} pour lier la chaine de recomptage. */
+function sipsReloadRecount(s){
+  const p=s&&s.payload||{};
+  if(!p.st||!p.st.c){toast('Soumission sans detail de comptage');return;}
+  if(FRAG)fragExitState();
+  archiveCurrent();
+  RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
+  ST=JSON.parse(JSON.stringify(p.st));mergeAndMigrate();
+  ST.id='inv_'+Date.now();           // nouvelle fiche : ne pas ecraser l originale rejetee
+  ST.sessionStart=Date.now();
+  INV_RECOUNT_OF={stId:ST.id,id:s.id,date:p.date||''};
+  $('#agent').value=ST.agent||'';$('#date').value=ST.date||todayStr();
+  saveCounts();
+  const dlg=$('#histDlg');if(dlg&&dlg.open)dlg.close();
+  render();window.scrollTo(0,0);
+  toast('Recomptage charge — corrige les articles fautifs puis Soumets');
 }
 async function openHistory(){
+  const dlg=$('#histDlg');
   const list=$('#histList');list.innerHTML='Chargement…';
   let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('batch_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
   list.innerHTML='';
@@ -827,32 +870,73 @@ async function openHistory(){
   const fiB=document.createElement('input');fiB.type='file';fiB.accept='.txt,.json,text/plain';fiB.style.display='none';fiB.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
   const impB=document.createElement('button');impB.style.cssText='width:100%;padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impB.textContent='Restaurer une sauvegarde locale';impB.onclick=function(){fiB.click();};
   bk.append(expB,expLB,fiB,impB);list.append(bk);
-  const serverRows=await sipsRecords('inventory');
-  if(serverRows.length){
-    const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
-    h.textContent='Valides serveur';list.append(h);
-    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
-      const rec=row.payload||{};
-      const it=document.createElement('div');it.className='hist-item locked';
-      const when=row.validatedAt||row.createdAt||rec.submittedAt||'';
-      const bilan=rec.bilan||{};
-      it.innerHTML='<div class="info"><b>'+esc(rec.date||'—')+'</b><span>OFFICIEL serveur - '+esc(rec.agent||'—')+' - '+(rec.filled||0)+' art. - '+(bilan.nbAlertes||0)+' alerte(s) - '+(when?new Date(when).toLocaleDateString('fr-FR'):'')+'</span></div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{if(!rec.st){toast('Inventaire serveur sans detail consultable');return;}histDlg.close();openArchive({st:rec.st,date:rec.date,agent:rec.agent,filled:rec.filled,savedAt:Date.parse(when)||Date.now(),locked:true,server:true});};
-      it.append(open);list.append(it);
-    });
+  if(dlg&&!dlg.open)dlg.showModal();
+  // Section "A recompter" : recomptages demandes a CE compteur (ses inventaires rejetes recountRequested).
+  const recountHost=document.createElement('div');list.append(recountHost);
+  if(typeof SESSION!=='undefined'&&SESSION){
+    sipsFetch('/api/submissions?status=rejected&type=inventory&include=payload').then(function(data){
+      if(dlg&&!dlg.open)return;
+      const rows=(data&&data.submissions||[]).filter(function(s){return s&&s.recountRequested;});
+      if(!rows.length)return;
+      const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--red);margin:0 0 6px;text-transform:uppercase';
+      h.textContent='↩ A recompter';recountHost.append(h);
+      rows.sort(function(a,b){return String(b.createdAt||'').localeCompare(String(a.createdAt||''));}).forEach(function(s){
+        const p=s.payload||{};
+        const it=document.createElement('div');it.className='hist-item';
+        it.style.cssText='border:1px solid #f0c0c0;background:#fdf3f3';
+        it.innerHTML='<div class="info"><b>'+esc(p.date||'—')+'</b><span>'+esc(p.agent||'—')+' · '+(p.filled||0)+' art. · '+esc(s.decisionNote||'Recomptage demande')+'</span></div>';
+        const open=document.createElement('button');open.textContent='Reprendre';open.onclick=function(){sipsReloadRecount(s);};
+        it.append(open);recountHost.append(it);
+      });
+    }).catch(function(){});
   }
-  const fi=document.createElement('input');fi.type='file';fi.accept='.txt,.json,text/plain';fi.style.display='none';
-  fi.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importInventory(rd.result);};rd.readAsText(f);};
-  const imp=document.createElement('button');imp.style.cssText='width:100%;margin-bottom:10px;padding:10px;border-radius:8px;border:1.5px solid #c5e4d2;color:var(--green);background:#e7f3ec;font-weight:700;font-size:14px';
-  imp.textContent='Importer un inventaire reçu (.txt)';imp.onclick=function(){fi.click();};
-  list.append(fi,imp);
+  // Spec C : "A recompter (articles cibles)" - articles precis renvoyes a CE compteur (forMe).
+  const targetHost=document.createElement('div');list.append(targetHost);
+  if(typeof SESSION!=='undefined'&&SESSION){
+    sipsFetch('/api/submissions?status=rejected&type=inventory&forMe=1').then(function(data){
+      if(dlg&&!dlg.open)return;
+      const rows=(data&&data.submissions||[]).filter(function(s){return s&&(s.recountArticles||[]).length;});
+      if(!rows.length)return;
+      const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--red);margin:10px 0 6px;text-transform:uppercase';
+      h.textContent='↩ A recompter (articles cibles)';targetHost.append(h);
+      rows.sort(function(a,b){return String(b.createdAt||'').localeCompare(String(a.createdAt||''));}).forEach(function(s){
+        const arts=(s.recountArticles||[]).map(function(a){const r=REFS.find(function(x){return x.code===a.code;});return a.code+(r?(' '+r.des):'');});
+        const it=document.createElement('div');it.className='hist-item';it.style.cssText='border:1px solid #f0c0c0;background:#fdf3f3';
+        it.innerHTML='<div class="info"><b>'+arts.length+' article(s) cible(s)</b><span>'+esc(arts.join(' · '))+' · '+esc(s.decisionNote||s.note||'Recompte demande')+'</span></div>';
+        const open=document.createElement('button');open.textContent='Recompter';open.onclick=function(){
+          if(dlg&&dlg.open)dlg.close();
+          if(TAB!=='comptage')switchTab('comptage');else render();
+          window.scrollTo(0,0);
+          toast('Recompte cible : '+arts.join(', ')+' — compte ces articles puis « Fragmenté » › « Envoyer ma part »');
+        };
+        it.append(open);targetHost.append(it);
+      });
+    }).catch(function(){});
+  }
+  const serverHost=document.createElement('div');list.append(serverHost);
+  sipsRecords('inventory',{timeoutMs:1200}).then(serverRows=>{
+    if(dlg&&!dlg.open)return;
+    if(serverRows.length){
+      const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
+      h.textContent='Valides serveur';serverHost.append(h);
+      serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+        const rec=row.payload||{};
+        const it=document.createElement('div');it.className='hist-item locked';
+        const when=row.validatedAt||row.createdAt||rec.submittedAt||'';
+        const bilan=rec.bilan||{};
+        it.innerHTML='<div class="info"><b>'+esc(rec.date||'—')+'</b><span>OFFICIEL serveur - '+esc(rec.agent||'—')+' - '+(rec.filled||0)+' art. - '+(bilan.nbAlertes||0)+' alerte(s) - '+(when?new Date(when).toLocaleDateString('fr-FR'):'')+'</span></div>';
+        const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{if(!rec.st){toast('Inventaire serveur sans detail consultable');return;}histDlg.close();openArchive({st:rec.st,date:rec.date,agent:rec.agent,filled:rec.filled,savedAt:Date.parse(when)||Date.now(),locked:true,server:true});};
+        it.append(open);serverHost.append(it);
+      });
+    }
+  });
   if(!recs.length){
     const p=document.createElement('p');p.style.cssText='color:#6a7280;font-size:13px;margin:4px 0 0;line-height:1.5';
-    p.textContent='Aucun inventaire local archive pour l\u2019instant. Importe un fichier recu avec le bouton ci-dessus, ou une fiche sera creee quand tu soumets / demarres un inventaire.';
+    p.textContent='Aucun inventaire local archive pour l\u2019instant. Une fiche sera creee quand tu soumets ou demarres un inventaire.';
     list.append(p);
   }
   else{
-    const localH=document.createElement('div');localH.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(serverRows.length?'10px':'0')+' 0 6px;text-transform:uppercase';
+    const localH=document.createElement('div');localH.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:0 0 6px;text-transform:uppercase';
     localH.textContent='Historique local';list.append(localH);
     const clear=document.createElement('button');clear.className='del';clear.style.cssText='width:100%;margin-bottom:10px;padding:9px;border-radius:8px';
     clear.textContent='Vider tout l\'historique';
@@ -890,7 +974,6 @@ async function openHistory(){
       it.append(del);list.append(it);
     });
   }
-  $('#histDlg').showModal();
 }
 function reprendreArchive(rec){
   if(rec&&rec.locked){toast('Inventaire validé (verrouillé) — déverrouille-le d’abord pour le modifier.');return;}
@@ -957,10 +1040,6 @@ function bindChange(sel,fn){const el=$(sel);if(el)el.onchange=fn;}
 bindClick('#histBtn',openHistory);
 bindClick('#roClose',closeArchive);
 bindClick('#fragBtn',()=>openFragDlg());
-bindClick('#fragExportMine',()=>shareFragment());
-bindClick('#fragImportFiles',()=>{const f=$('#fragFileIn');if(f)f.click();});
-bindChange('#fragFileIn',e=>{const fs=[...e.target.files];fs.forEach(f=>{const rd=new FileReader();rd.onload=()=>fragAddFile(rd.result);rd.readAsText(f);});e.target.value='';});
-bindClick('#fragMergeFiles',()=>fragMergeFiles());
 bindClick('#newInv',async()=>{
   const keep=!confirm('Nouvel inventaire.\n\nOK = vider les comptages (les réglages et l\'historique sont gardés).\nAnnuler = repartir des derniers chiffres.');
   await archiveCurrent();
@@ -975,16 +1054,25 @@ bindClick('#newInv',async()=>{
 bindClick('#resumeValidated',async()=>{
   if(RO){toast('Mode consultation — non modifiable');return;}
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
+  // Pool = inventaires VALIDES SERVEUR (officiels, payload.st) + verrouilles LOCAUX (repli transition).
+  // Meme logique d'appariement que findBilanPair : a date egale, le serveur l'emporte.
   let all=[];try{all=await idbAll();}catch(e){}
-  const validated=all.filter(r=>r&&r.locked&&r.st);
+  const localV=all.filter(r=>r&&r.locked&&r.st).map(r=>({date:r.date||'',agent:r.agent||'',st:r.st,validatedAt:r.validatedAt||0,server:false}));
+  let serverV=[];
+  try{
+    const rows=await sipsRecords('inventory',{timeoutMs:1200});
+    serverV=(rows||[]).filter(r=>r&&r.payload&&r.payload.st&&r.payload.st.c)
+      .map(r=>({date:(r.payload.date||''),agent:(r.payload.agent||''),st:r.payload.st,validatedAt:Date.parse(r.validatedAt||r.createdAt||'')||0,server:true}));
+  }catch(e){serverV=[];}
+  const validated=serverV.concat(localV);
   if(!validated.length){toast('Aucun inventaire validé à reprendre');return;}
   // Dernier validé à la date du comptage en cours (ou avant) ; sinon le plus récent.
   const ref=ST.date||'';
   let pool=ref?validated.filter(r=>(r.date||'')<=ref):[];
   if(!pool.length)pool=validated;
-  pool.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.validatedAt||0)-(a.validatedAt||0)));
+  pool.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.server?1:0)-(a.server?1:0))||((b.validatedAt||0)-(a.validatedAt||0)));
   const rec=pool[0];
-  if(!confirm('Reprendre le dernier inventaire validé ('+(rec.date||'—')+(rec.agent?(' · '+rec.agent):'')+') ?\n\nSes chiffres sont copiés dans un nouveau comptage modifiable daté d’aujourd’hui. L’inventaire validé d’origine reste intact et verrouillé.'))return;
+  if(!confirm('Reprendre le dernier inventaire validé ('+(rec.date||'—')+(rec.agent?(' · '+rec.agent):'')+(rec.server?' · serveur':'')+') ?\n\nSes chiffres sont copiés dans un nouveau comptage modifiable daté d’aujourd’hui. L’inventaire validé d’origine reste intact et verrouillé.'))return;
   await archiveCurrent();
   RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
   ST=InventoryDomain.createInventoryFromLastValidated(rec.st);
@@ -1003,15 +1091,61 @@ function showSummary(){$('#out').innerHTML=buildSummaryHTML();$('#dlg').showModa
 function inventoryServerPayload(){
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   let bilan=null,detail=null;try{const b=buildBilan();bilan={total:Math.round(b.total*1000)/1000,nbAlertes:b.alertes.length,nbCounted:b.rows.filter(r=>r.counted).length};detail={};b.rows.forEach(r=>{if(r.counted)detail[r.code]={n:r.nom,t:r.theo,p:r.phys,e:r.ecart};});}catch(e){}
-  return {kind:'inventory',date:ST.date||todayStr(),agent:ST.agent||'',filled:filled,bilan:bilan,detail:detail,st:snapshot(),submittedAt:new Date().toISOString()};
+  const out={kind:'inventory',date:ST.date||todayStr(),agent:ST.agent||'',filled:filled,bilan:bilan,detail:detail,st:snapshot(),submittedAt:new Date().toISOString()};
+  if(INV_RECOUNT_OF&&INV_RECOUNT_OF.stId===ST.id)out.recountOf={id:INV_RECOUNT_OF.id,date:INV_RECOUNT_OF.date};
+  return out;
+}
+/* Matière périssable (date de bloc = péremption) : matières en sacs/caisses ou aromes. */
+function isPerishableMp(r){return !!r&&(r.g==='vrac'||r.g==='tare');}
+/* Garde-fou « date manquante » (E1 finis = date de prod ; E3 matieres = peremption).
+   Renvoie les articles comptes ayant un lot saisi sans date. `entries` par defaut
+   = ST.c ; le flux fragmente passe le sous-ensemble counts d'une part. */
+function inventoryLotsMissingDate(entries){
+  entries=entries||ST.c;
+  return InventoryDomain.lotsMissingDate(entries,REFS,{isFini:isFini,isPerishableMp:isPerishableMp,blockHasInput:blockHasInput,ensureBlocks:ensureBlocks});
+}
+/* Ouvre le modal bloquant listant les articles sans date (par type) ; chaque ligne
+   défile vers la carte concernée dans l'onglet Comptage. */
+function openLotWarn(list){
+  const dlg=$('#lotWarn');const ul=$('#lotWarnList');if(!dlg||!ul)return;
+  ul.innerHTML='';
+  (list||[]).forEach(it=>{
+    const li=document.createElement('li');li.style.cursor='pointer';
+    const dateWord=it.kind==='mp'?'date de péremption':'date de production';
+    li.innerHTML='<b>'+esc(it.des)+'</b> <small>('+it.nbLots+' lot'+(it.nbLots>1?'s':'')+' sans '+dateWord+')</small>';
+    li.onclick=async()=>{
+      try{dlg.close();}catch(_){}
+      try{const d=$('#dlg');if(d&&d.open)d.close();}catch(_){}
+      if(typeof switchTab==='function')await switchTab('comptage');
+      setTimeout(()=>{const card=$(`.card[data-code="${it.code}"]`);if(card)scrollCardIntoView(card);},80);
+    };
+    ul.append(li);
+  });
+  dlg.showModal();
 }
 async function submitInventoryServer(){
   if(RO){toast('Mode consultation — non modifiable');return;}
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à soumettre');return;}
-  await archiveCurrent();
-  await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
+  const miss=inventoryLotsMissingDate();
+  if(miss.length){openLotWarn(miss);return;}
+  // Retour immediat sur le bouton (comme les mouvements) : "Envoi..." + desactive
+  // pendant les ~3s, pour que l'utilisateur voie qu'une action est en cours.
+  const b=$('#submitInvBtn');const bt=b?b.textContent:'';
+  if(b){if(b.disabled)return;b.disabled=true;b.textContent='Envoi…';}
+  try{
+    await archiveCurrent();
+    const r=await sipsSubmit('inventory',inventoryServerPayload(),'Inventaire '+(ST.date||todayStr()));
+    // Ferme la feuille de resume apres un envoi parti/mis en file : sinon on reste
+    // bloque sur le resume et le message de confirmation passe DERRIERE ce dialog
+    // modal (couche superieure). On re-affiche un message clair une fois ferme.
+    if(r&&(r.ok||r.queued)){
+      INV_RECOUNT_OF=null;
+      const dlg=$('#dlg');if(dlg&&dlg.open)dlg.close();
+      toast(r.ok?'Inventaire soumis au serveur':'Inventaire ajouté en attente (hors ligne)');
+    }
+  }finally{if(b){b.disabled=false;b.textContent=bt;}}
 }
 async function shareJSON(){
   archiveCurrent();
@@ -1027,15 +1161,14 @@ async function shareJSON(){
   download(name,content,'text/plain');toast('Partage indisponible ici \u2014 fichier enregistré');
 }
 bindClick('#submitInvBtn',submitInventoryServer);
-bindClick('#shareBtn',shareJSON);
-$('#dlBtn').onclick=()=>{archiveCurrent();download(exportName(),buildJSON(),'text/plain');toast('Fichier enregistré');};
-bindClick('#validBtn',validateCurrent);
 /* Valide et verrouille l'inventaire EN COURS (l'archive + locked), puis ouvre un comptage vierge */
 async function validateCurrent(){
   if(RO){toast('Mode consultation — non modifiable');return;}
   if(FRAG){toast('Quitte d’abord le mode fragmenté');return;}
   const filled=REFS.filter(r=>ST.c[r.code].counted).length;
   if(!filled){toast('Aucun article compté à valider');return;}
+  const miss=inventoryLotsMissingDate();
+  if(miss.length){openLotWarn(miss);return;}
   if(!confirm('Valider et VERROUILLER cet inventaire ('+(ST.date||'—')+(ST.agent?(' · '+ST.agent):'')+') ?\n\nIl devient la référence (Bilan, Capacité, Plan), figé en lecture seule (déverrouillable depuis l’Historique) et protégé contre l’écrasement. Un nouveau comptage vierge sera ouvert.'))return;
   if(!ST.id)ST.id='inv_'+Date.now();
   try{const ex=await idbGet(ST.id);if(ex&&ex.locked)ST.id='inv_'+Date.now();}catch(e){}
