@@ -5,6 +5,11 @@ import { createReadStream } from 'node:fs';
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import {
+  buildInventoryContributionRecord,
+  normalizeInventoryContributionPayload,
+  upsertInventoryContribution
+} from './inventory-session-service.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, '..');
@@ -1002,13 +1007,7 @@ async function handleApiRoutes(req, res, url) {
     if (!user) return;
     const body = await readBody(req);
     const payload = body.payload || {};
-    const freshCodes = Array.isArray(payload.freshCodes)
-      ? [...new Set(payload.freshCodes.map(c => String(c)).filter(Boolean))] : [];
-    const counts = {};
-    const src = (payload.counts && typeof payload.counts === 'object') ? payload.counts
-              : (payload.st && payload.st.c) ? payload.st.c : {};
-    for (const code of freshCodes) if (src[code] && src[code].counted) counts[code] = src[code];
-    const countedCodes = Object.keys(counts);
+    const { freshCodes, counts, countedCodes } = normalizeInventoryContributionPayload(payload);
     if (!freshCodes.length || !countedCodes.length) {
       return sendJson(res, 400, { ok: false, error: 'Aucun article recompte dans cette part' });
     }
@@ -1037,41 +1036,19 @@ async function handleApiRoutes(req, res, url) {
     if (blocked.length) {
       return sendJson(res, 403, { ok: false, error: 'Recompte cible : ' + blocked.join(', ') + ' est/sont reserve(s) a un autre compteur. Tu ne peux soumettre que tes articles assignes.' });
     }
-    const rec = {
+    const rec = buildInventoryContributionRecord({
       id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
-      userId: user.id, username: user.username,
-      agent: String(payload.agent || user.nom || '').trim() || user.nom,
-      counted: countedCodes.length, freshCount: countedCodes.length,
-      submittedAt: new Date().toISOString(), note: String(body.note || '').trim(),
-      payload: {
-        baseInventoryId: sess.baseInventoryId || null, baseDate: sess.baseDate || '',
-        agent: String(payload.agent || user.nom || '').trim() || user.nom,
-        freshCodes: countedCodes, counts, cfg: payload.cfg || {}
-      }
-    };
-    sess.contributions = sess.contributions || [];
-    const existing = sess.contributions.findIndex(c => c.userId === user.id);
+      user, payload, session: sess, note: body.note,
+      countedCodes, counts, submittedAt: new Date().toISOString()
+    });
     // Anti-perte (parts multiples du meme compteur, hors-ligne/retries) : on FUSIONNE
     // avec la part precedente au lieu de l'ecraser. Union des codes ; la nouvelle valeur
     // gagne par code (correction d'un article possible) ; les articles disjoints d'une
     // part anterieure ne disparaissent plus.
-    if (existing >= 0) {
-      const prev = sess.contributions[existing];
-      const prevPayload = (prev && prev.payload) || {};
-      const mergedCounts = Object.assign({}, prevPayload.counts || {}, counts);
-      const mergedCodes = [...new Set([...(prevPayload.freshCodes || []), ...countedCodes])];
-      rec.payload.counts = mergedCounts;
-      rec.payload.freshCodes = mergedCodes;
-      rec.counted = mergedCodes.length;
-      rec.freshCount = mergedCodes.length;
-      sess.contributions[existing] = rec;
-    } else {
-      sess.contributions.push(rec);
-    }
-    sess.updatedAt = rec.submittedAt;
+    const upsert = upsertInventoryContribution(sess, rec, { mergeSameUser: true });
     audit(db, 'inventory_session.contribution', user.nom, { id: sess.id, counted: countedCodes.length });
     await writeDb(db);
-    return sendJson(res, existing >= 0 ? 200 : 201, { ok: true, round: publicInventorySession(sess), contribution: rec });
+    return sendJson(res, upsert.created ? 201 : 200, { ok: true, round: publicInventorySession(sess), contribution: rec });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/inventory-sessions') {
@@ -1158,20 +1135,7 @@ async function handleApiRoutes(req, res, url) {
     if (!user) return;
     const body = await readBody(req);
     const payload = body.payload || {};
-    const freshCodes = Array.isArray(payload.freshCodes)
-      ? [...new Set(payload.freshCodes.map(c => String(c)).filter(Boolean))]
-      : [];
-    const counts = {};
-    if (payload.counts && typeof payload.counts === 'object') {
-      for (const code of freshCodes) {
-        if (payload.counts[code] && payload.counts[code].counted) counts[code] = payload.counts[code];
-      }
-    } else if (payload.st && payload.st.c && typeof payload.st.c === 'object') {
-      for (const code of freshCodes) {
-        if (payload.st.c[code] && payload.st.c[code].counted) counts[code] = payload.st.c[code];
-      }
-    }
-    const countedCodes = Object.keys(counts);
+    const { freshCodes, counts, countedCodes } = normalizeInventoryContributionPayload(payload);
     if (!freshCodes.length || !countedCodes.length) {
       return sendJson(res, 400, { ok: false, error: 'Aucun article recompte dans ce fragment' });
     }
@@ -1184,32 +1148,15 @@ async function handleApiRoutes(req, res, url) {
     if (payload.baseInventoryId && payload.baseInventoryId !== sess.baseInventoryId) {
       return sendJson(res, 409, { ok: false, error: 'Base inventaire differente de la session serveur' });
     }
-    const rec = {
+    const rec = buildInventoryContributionRecord({
       id: 'icontrib_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex'),
-      userId: user.id,
-      username: user.username,
-      agent: String(payload.agent || user.nom || '').trim() || user.nom,
-      counted: countedCodes.length,
-      freshCount: countedCodes.length,
-      submittedAt: new Date().toISOString(),
-      note: String(body.note || '').trim(),
-      payload: {
-        baseInventoryId: sess.baseInventoryId || null,
-        baseDate: sess.baseDate || '',
-        agent: String(payload.agent || user.nom || '').trim() || user.nom,
-        freshCodes: countedCodes,
-        counts,
-        cfg: payload.cfg || {}
-      }
-    };
-    sess.contributions = sess.contributions || [];
-    const existing = sess.contributions.findIndex(c => c.userId === user.id);
-    if (existing >= 0) sess.contributions[existing] = rec;
-    else sess.contributions.push(rec);
-    sess.updatedAt = rec.submittedAt;
+      user, payload, session: sess, note: body.note,
+      countedCodes, counts, submittedAt: new Date().toISOString()
+    });
+    const upsert = upsertInventoryContribution(sess, rec);
     audit(db, 'inventory_session.contribution', user.nom, { id: sess.id, counted: countedCodes.length });
     await writeDb(db);
-    return sendJson(res, existing >= 0 ? 200 : 201, { ok: true, session: publicInventorySession(sess), contribution: rec });
+    return sendJson(res, upsert.created ? 201 : 200, { ok: true, session: publicInventorySession(sess), contribution: rec });
   }
 
   const inventoryFinalize = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/finalize$/);
