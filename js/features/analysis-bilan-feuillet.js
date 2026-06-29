@@ -473,23 +473,7 @@ async function findBilanPair(){
   return {pair:pool[0],posterior:0};
 }
 function bilanApplyMovements(baseDate,endDate,prodRecs,entreeRecs,sortieRecs){
-  const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
-  const inWin=d=>baseDate&&String(d||'')>baseDate&&String(d||'')<=String(endDate||todayStr());
-  const add={},conso={},en={},so={};
-  (prodRecs||[]).forEach(p=>{
-    if(!inWin(p&&p.date))return;
-    (p.blocks||[]).forEach(bk=>{
-      const n=num(bk&&bk.n);if(!bk||!bk.p||n<=0)return;
-      const code=desToCode[bk.p];if(code)add[code]=(add[code]||0)+n;
-      (RECF[bk.p]||[]).forEach(m=>{if(m&&m.code)conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});
-    });
-  });
-  const addMov=(arr,obj)=>(arr||[]).forEach(r=>{
-    if(!inWin(r&&r.date))return;
-    [].concat(r.finis||[],r.mp||[]).forEach(x=>{if(!x||!x.a)return;const c=desToCode[x.a];if(c&&num(x.q)>0)obj[c]=(obj[c]||0)+num(x.q);});
-  });
-  addMov(entreeRecs,en);addMov(sortieRecs,so);
-  return {add:add,conso:conso,en:en,so:so,desToCode:desToCode,today:String(endDate||todayStr())};
+  return stockApplyMovements(baseDate,prodRecs,entreeRecs,sortieRecs,{endDate:String(endDate||todayStr()),refs:REFS,recipes:RECF,num:num,round2:round2});
 }
 async function bilanExpectedLots(pair){
   if(!pair||!pair.date)return {};

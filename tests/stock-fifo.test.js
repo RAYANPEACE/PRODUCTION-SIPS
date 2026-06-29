@@ -1,8 +1,7 @@
 /* ====== tests/stock-fifo.test.js ======
    Tests purs (sans navigateur, sans serveur) des fonctions FIFO/lots de
-   js/features/stock-sheet.js (Spec D). On charge le fichier dans un contexte VM
-   avec des stubs minimaux (round2, num) ; les fonctions sont des declarations
-   globales -> elles deviennent accessibles sur le contexte.
+   domain/stock.js. On charge aussi stock-sheet.js pour verifier la compatibilite
+   des scripts classiques.
 
    Lancer : node tests/stock-fifo.test.js
 */
@@ -12,7 +11,8 @@ import { dirname, resolve } from 'node:path';
 import vm from 'node:vm';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const code = readFileSync(resolve(__dirname, '..', 'js', 'features', 'stock-sheet.js'), 'utf8');
+const stockDomainCode = readFileSync(resolve(__dirname, '..', 'domain', 'stock.js'), 'utf8');
+const stockSheetCode = readFileSync(resolve(__dirname, '..', 'js', 'features', 'stock-sheet.js'), 'utf8');
 
 const ctx = {
   round2: n => Math.round((n + Number.EPSILON) * 100) / 100,
@@ -20,7 +20,8 @@ const ctx = {
   REFS: [], RECF: {}, ETAT: {}, ETAT_DATE: '', console
 };
 vm.createContext(ctx);
-vm.runInContext(code, ctx);
+vm.runInContext(stockDomainCode, ctx);
+vm.runInContext(stockSheetCode, ctx);
 
 let passed = 0, failed = 0;
 function check(label, cond) {

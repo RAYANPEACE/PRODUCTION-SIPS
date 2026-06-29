@@ -15,6 +15,7 @@ Remplacer les echanges de fichiers WhatsApp par une base centrale locale (serveu
 Branche de travail : **`inventaire-serveur`** (33+ commits devant `main`, **non mergee**). Contient le durcissement securite Phases 0-5 + le verrou strict hors-ligne + les 3 lots ci-dessous.
 
 Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gate Codex**) :
+- **2026-06-29 - structure stock/lots** : extraction pure `domain/stock.js` (lots FIFO/FEFO + flux mouvements) reutilisee par Stock, Bilan et Plan ; `stock-sheet.js` ne porte plus la mecanique dupliquee. Tests : `check:js`, `test:server` 71/71, `test:stock` 29/29, `test:lot` 11/11.
 - **2026-06-29 - droits magasinier + estimation Plan** : `magasinier` voit Comptage/Production/Stock/Sorties/Entrees ; l'estimation de charge compte demarrage au lancement, reprise reduite le lendemain, fin seulement si debord jour suivant, transitions produit/machine separees. Tests : `check:js`, `test:server` 71/71, `test:stock` 29/29.
 - **Spec B — inventaire comparer-avant-valider** : soumettre -> Comparer au stock (Bilan de revue, onglet Serveur) AVANT validation -> Valider OU Demander recomptage non destructif (pre-rempli, jamais zero, lie par `recountOf`). `buildBilanFrom`, `findBilanPair` serveur+repli. Retrait du Valider local + export/import fichier d'UN inventaire.
 - **Lot nettoyage referentiel + Journal** : « Quitter mode admin » masque en session ; etat de stock = import Excel `.xlsx` seul (collage retire) ; « Dernier valide » lit le serveur ; bouton donnees de test retire ; **vue Journal (audit)** onglet Serveur (lecture + suppression CIBLEE par entree/periode, jamais de purge globale).
@@ -26,7 +27,7 @@ Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gat
 
 - **Revue adversariale cross-model (Codex, 2026-06-27)** : 3 revues (securite serveur, inventaire B/C, modele par lot E1-E3). 9 findings reels, **8 corriges** (commit d68b38c) — R1-1 actor depuis token, R1-2 date visa serveur, R1-3 auth GET /api/submissions, R1-4 detail session role-split, R2-5 rejet part offline base differente, R2-7 fusion parts same-user, R3-9 garde-fou entree MP perissable, R3-8 lot synthetique negatif. **R2-6 FAIT** (commit 680a2ea, spec `...2026-06-27-recompte-cible-enforcement-design.md`) : enforcement serveur du recompte cible — un article assigne (recountArticles.byUser) ne peut plus etre soumis par un autre (403) ; cycle de vie explicite (`activeRecountAssignments` + `resolvePendingRecounts` sur finalize ET validate inventaire = pas de blocage collant). Aussi : `finalizedBy` derive du token (meme classe que R1-1). **Les 9 findings de la revue adversariale sont corriges.**
 
-Etat technique : **SW v149**, `npm run test:server` = **71/71**, `npm run test:stock` = **29/29**, `npm run test:lot` = **11/11**, `npm run check:js` OK.
+Etat technique : **SW v150**, `npm run test:server` = **71/71**, `npm run test:stock` = **29/29**, `npm run test:lot` = **11/11**, `npm run check:js` OK.
 
 ## A faire avant de merger `main` (dans l'ordre)
 

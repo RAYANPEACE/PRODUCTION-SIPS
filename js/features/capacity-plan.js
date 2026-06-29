@@ -177,23 +177,13 @@ async function refreshLiveStock(){
   }
   LIVEMETA.hasBase=!!baseDate;LIVEMETA.baseDate=baseDate||null;LIVEMETA.baseKind=baseKind;
   // Flux postérieurs à la date de base, jusqu'à aujourd'hui
-  const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
-  const today=new Date().toISOString().slice(0,10);
-  // Sans inventaire daté, on ne projette aucun flux (impossible de savoir lesquels sont « postérieurs »)
-  const inWin=r=>{if(!baseDate)return false;const d=String(r.date||'');return d>baseDate&&d<=today;};
-  const prod=real.filter(r=>String(r.id).indexOf('prod_')===0&&inWin(r));
-  const entr=real.filter(r=>String(r.id).indexOf('entree_')===0&&inWin(r));
-  const sort=real.filter(r=>String(r.id).indexOf('sortie_')===0&&inWin(r));
-  LIVEMETA.nbMov=prod.length+entr.length+sort.length;
-  const add={},conso={},en={},so={};
-  prod.forEach(r=>(r.blocks||[]).forEach(bk=>{const n=num(bk.n);if(!bk.p||n<=0)return;
-    const code=desToCode[bk.p];if(code)add[code]=(add[code]||0)+n;
-    (RECF[bk.p]||[]).forEach(m=>{if(m&&m.code)conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});}));
-  const addMov=(arr,obj)=>arr.forEach(r=>[].concat(r.finis||[],r.mp||[]).forEach(x=>{if(!x||!x.a)return;
-    const c=desToCode[x.a];if(c&&num(x.q)>0)obj[c]=(obj[c]||0)+num(x.q);}));
-  addMov(entr,en);addMov(sort,so);
+  const prod=real.filter(r=>String(r.id).indexOf('prod_')===0);
+  const entr=real.filter(r=>String(r.id).indexOf('entree_')===0);
+  const sort=real.filter(r=>String(r.id).indexOf('sortie_')===0);
+  const fl=stockApplyMovements(baseDate,prod,entr,sort,{refs:REFS,recipes:RECF,num:num,round2:round2});
+  LIVEMETA.nbMov=fl.nbMov;
   REFS.forEach(r=>{const c=r.code;
-    LIVESTOCK[c]=num(baseMap[c])+(add[c]||0)+(en[c]||0)-(so[c]||0)-(conso[c]||0);});
+    LIVESTOCK[c]=num(baseMap[c])+(fl.add[c]||0)+(fl.en[c]||0)-(fl.so[c]||0)-(fl.conso[c]||0);});
 }
 /* Note explicative affichée sur Capacité / Plan */
 function liveStockNote(){
