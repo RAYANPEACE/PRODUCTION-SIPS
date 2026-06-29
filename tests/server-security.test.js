@@ -152,6 +152,10 @@ async function main() {
     const setup = await api('POST', '/api/auth/setup', { body: { username: 'chef', nom: 'Chef', password: 'chefpass' } });
     const adminToken = setup.json && setup.json.token;
     check('setup cree le 1er admin et renvoie un token', !!adminToken);
+    const loginUsers = await api('GET', '/api/auth/login-users');
+    const loginUser = loginUsers.json && loginUsers.json.users && loginUsers.json.users[0];
+    check('[AUTH] la liste de connexion est publique et expose le compte actif', loginUsers.status === 200 && loginUser && loginUser.username === 'chef');
+    check('[AUTH] la liste de connexion ne renvoie pas de hash mot de passe', loginUser && !('passwordHash' in loginUser));
 
     // ---- [A] submissions non authentifiees ----
     const anon = await api('POST', '/api/submissions', { body: { type: 'prod', payload: { x: 1 } } });
@@ -237,9 +241,13 @@ async function main() {
     const hashSub = db.submissions.find(s => s.id === hashId);
     const hashRecord = db.records.find(r => r.sourceSubmissionId === hashId);
     const expectedFinalHash = submissionHash('quality', hashSub.payload);
+    const rqReadsQualityRecord = await api('GET', '/api/records?type=quality&status=validated', { token: rq2 });
+    const rqQualityArchived = rqReadsQualityRecord.json && (rqReadsQualityRecord.json.records || []).find(r => r.sourceSubmissionId === hashId);
     check('[J] validation qualite accepte une soumission legacy a hash perime apres recalcul', validateHash.status === 200);
     check('[J] le hash du record qualite couvre le payload final signe',
       !!hashRecord && hashRecord.hash === expectedFinalHash && hashRecord.hash !== staleBeforeSign && hashSub.hash === expectedFinalHash);
+    check('[J] la fiche qualite validee est archivee et lisible par le responsable qualite',
+      rqReadsQualityRecord.status === 200 && !!rqQualityArchived && rqQualityArchived.payload && rqQualityArchived.payload.visas && rqQualityArchived.payload.visas.responsableQualite);
 
     // ---- [B] ecritures concurrentes : aucune contribution perdue ----
     const sess = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-21', title: 'Concurrence' } });
@@ -325,11 +333,15 @@ async function main() {
     const opNoStatus = await api('GET', '/api/records?type=sortie', { token: opRead });
     const anonRecords = await api('GET', '/api/records?type=sortie&status=validated', {});
     const magQuality = await api('GET', '/api/records?type=quality&status=validated', { token: magRead });
+    const magMe = await api('GET', '/api/auth/me', { token: magRead });
+    const magTabs = (magMe.json && magMe.json.user && magMe.json.user.tabs) || [];
     check('[N] un compte non-admin connecte lit les records sortie VALIDES',
       opSeesValidated.status === 200 && Array.isArray(opSeesValidated.json.records) && opSeesValidated.json.records.some(r => r.type === 'sortie'));
     check('[N] un compte non-admin ne peut PAS lister les records sans filtre de statut (admin requis)', opNoStatus.status === 401);
     check('[N] lecture des records refusee sans authentification', anonRecords.status === 401);
     check('[N] la qualite reste reservee aux signataires qualite (magasinier refuse)', magQuality.status === 401);
+    check('[N] le magasinier voit comptage, production, stock, sorties et entrees',
+      ['comptage', 'prod', 'stock', 'sorties', 'entree'].every(t => magTabs.includes(t)));
 
     // ---- [B1] reject inventaire avec recountRequested conserve la soumission + pose le flag ----
     const invCounter = await makeUser(adminToken, 'magasinier', 'recb1');
@@ -402,7 +414,40 @@ async function main() {
     check('[C1] la manche ouverte regroupe les 2 parts', c1r2.json && c1r2.json.round && (c1r2.json.round.contributions || []).length === 2);
     await api('POST', '/api/inventory-sessions/' + c1RoundId + '/finalize', { token: adminToken, body: {} });
 
-    // ---- [C2] assemblage : non compte = counted:false (jamais la base) + estampille by ----
+    // ---- [C1b] si plusieurs manches ouvertes existent deja, une part rejoint la plus recente ----
+    const c1bOld = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-24', title: 'Ancienne session' } });
+    const c1bNew = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-25', title: 'Session courante' } });
+    const c1bUser = await makeUser(adminToken, 'operateur', 'c1buser');
+    const c1bPart = await api('POST', '/api/inventory-rounds/contribution', { token: c1bUser,
+      body: { payload: { agent: 'Courant', freshCodes: ['190001'], counts: { '190001': { counted: true, blocks: [{ qty: 3 }] } } } } });
+    check('[C1b] contribution rattachee a la session ouverte la plus recente',
+      c1bPart.json && c1bPart.json.round && c1bNew.json && c1bPart.json.round.id === c1bNew.json.session.id);
+    const c1bOldDetail = await api('GET', '/api/inventory-sessions/' + c1bOld.json.session.id, { token: adminToken });
+    check('[C1b] ancienne session ouverte non polluee',
+      c1bOldDetail.json && c1bOldDetail.json.session && (c1bOldDetail.json.session.contributions || []).length === 0);
+
+    const c1cUser = await makeUser(adminToken, 'operateur', 'c1cuser');
+    const c1cPart = await api('POST', '/api/inventory-rounds/contribution', { token: c1cUser,
+      body: { payload: { agent: 'Ancien vise', sessionId: c1bOld.json.session.id, freshCodes: ['190004'], counts: { '190004': { counted: true, blocks: [{ qty: 4 }] } } } } });
+    check('[C1c] sessionId explicite respecte meme si une session plus recente est ouverte',
+      c1cPart.json && c1cPart.json.round && c1cPart.json.round.id === c1bOld.json.session.id);
+
+    const c1dNonAdminCancel = await api('POST', '/api/inventory-sessions/' + c1bOld.json.session.id + '/cancel', { token: c1bUser, body: {} });
+    const c1dCancel = await api('POST', '/api/inventory-sessions/' + c1bOld.json.session.id + '/cancel', { token: adminToken, body: { reason: 'test' } });
+    const c1dOpen = await api('GET', '/api/inventory-sessions', { token: adminToken });
+    const c1dAfterCancelPart = await api('POST', '/api/inventory-rounds/contribution', { token: c1cUser,
+      body: { payload: { agent: 'Ancien vise', sessionId: c1bOld.json.session.id, freshCodes: ['190005'], counts: { '190005': { counted: true, blocks: [{ qty: 5 }] } } } } });
+    check('[C1d] annulation session refusee a un non-admin', c1dNonAdminCancel.status === 401);
+    check('[C1d] admin peut annuler une session ouverte', c1dCancel.status === 200 && c1dCancel.json.session.status === 'cancelled');
+    check('[C1d] session annulee disparait des sessions ouvertes',
+      c1dOpen.json && c1dOpen.json.sessions && !c1dOpen.json.sessions.some(s => s.id === c1bOld.json.session.id));
+    check('[C1d] contribution vers session annulee refusee', c1dAfterCancelPart.status === 409);
+
+    dbC = await readTestDb(dataDir);
+    (dbC.inventorySessions || []).forEach(s => { if ((s.status || 'open') === 'open') s.status = 'finalized'; });
+    await writeTestDb(dataDir, dbC);
+
+    // ---- [C2] assemblage : base conservee + article modifie estampille by ----
     await seedValidatedInventory(adminToken, { '190001': 100, '190009': 50 });
     const c2a = await makeUser(adminToken, 'operateur', 'c2a');
     await api('POST', '/api/inventory-rounds/contribution', { token: c2a,
@@ -412,8 +457,8 @@ async function main() {
     const c2Sub = c2Fin.json && c2Fin.json.submission && await api('GET', '/api/submissions/' + c2Fin.json.submission.id, { token: adminToken });
     const c2c = c2Sub && c2Sub.json && c2Sub.json.submission && c2Sub.json.submission.payload && c2Sub.json.submission.payload.st.c;
     check('[C2] article compte estampille by=compteur', !!c2c && c2c['190001'].counted === true && c2c['190001'].by === 'Ahmed');
-    check('[C2] article non compte = counted:false', !!c2c && c2c['190009'] && c2c['190009'].counted === false);
-    check('[C2] article non compte ne garde PAS la valeur de base', !!c2c && c2c['190009'] && !c2c['190009'].blocks);
+    check('[C2] article non modifie conserve la valeur de base', !!c2c && c2c['190009'] && c2c['190009'].counted === true && c2c['190009'].blocks[0].qty === 50);
+    check('[C2] article non modifie ne prend PAS le compteur du jour', !!c2c && c2c['190009'] && !c2c['190009'].by);
 
     // ---- [C3] conflit (meme code, 2 compteurs) -> finalize refuse sans resolution ----
     await seedValidatedInventory(adminToken, { '190001': 100 });

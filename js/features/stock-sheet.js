@@ -260,6 +260,24 @@ function stockNote(meta){
     + meta.nbMov + ' mouvement(s) pris en compte. Source : ' + badge + '.';
 }
 
+function stockLotAlertHTML(x, lots){
+  if(!lots||!lots.length)return '';
+  let red=false,yellow=false;
+  const isMp=x.lotKind==='mp';
+  lots.forEach(l=>{
+    if(l.imprecise){yellow=true;return;}
+    const info=isMp
+      ? ((typeof expInfo==='function')?expInfo(l.date):null)
+      : ((typeof prodInfo==='function')?prodInfo(l.date):null);
+    if(!info)return;
+    if(info.cls==='exp-ko')red=true;
+    else if(info.cls==='exp-warn'||info.cls==='exp-soon')yellow=true;
+  });
+  if(red)return '<span class="stock-lot-alert red" title="Lot perime, trop ancien ou incoherent">⚠</span>';
+  if(yellow)return '<span class="stock-lot-alert yellow" title="Lot proche de la limite ou date manquante">⚠</span>';
+  return '';
+}
+
 function stockSheetHTML(data){
   const fams = [['mp', 'Matieres premieres', '#1f7a4d'], ['emballage', 'Emballages', '#1b5faa'], ['fini', 'Produits finis', '#8a6d3b'], ['autre', 'Autres', '#6a7280']];
   let h = '<div class="bil-pair ' + (data.meta.hasBase ? 'ok' : 'warn') + '">' + stockNote(data.meta) + '</div>';
@@ -280,7 +298,7 @@ function stockSheetHTML(data){
       const isMp = x.lotKind === 'mp';
       const visibleLots = x.lots ? x.lots.filter(l => Math.abs(l.rest) > 1e-9 || l.imprecise) : [];
       if (visibleLots.length) {
-        h += '<div class="bl-st"><button class="b-sec" data-stk-toggle="' + esc(x.code) + '" style="font-size:11px;padding:2px 8px">Lots (' + visibleLots.length + ')</button></div>';
+        h += '<div class="bl-st">' + stockLotAlertHTML(x, visibleLots) + '<button class="b-sec" data-stk-toggle="' + esc(x.code) + '" style="font-size:11px;padding:2px 8px">Lots (' + visibleLots.length + ')</button></div>';
         h += '<div class="stk-lots" id="stklots-' + esc(x.code) + '" style="display:none;flex-basis:100%;margin-top:4px;padding-left:6px">'
           + visibleLots.map(l => {
             let lbl, note = '';
@@ -295,7 +313,12 @@ function stockSheetHTML(data){
                 note = ' <em style="color:' + col + '">' + esc(info.txt) + '</em>';
               }
             } else {
-              lbl = 'lot du <b>' + esc(l.date) + '</b>';
+              lbl = 'produit le <b>' + esc(l.date) + '</b>';
+              const info = (typeof prodInfo === 'function') ? prodInfo(l.date) : null;
+              if (info) {
+                const col = info.cls === 'exp-ko' ? 'var(--red)' : 'var(--green)';
+                note = ' <em style="color:' + col + '">' + esc(info.txt) + '</em>';
+              }
             }
             const rNeg = l.rest < 0 ? ' style="color:var(--red)"' : '';
             return '<div style="font-size:12px;color:#556">' + lbl + ' — restant <b' + rNeg + '>' + fmtq(l.rest) + '</b>' + note + '</div>';

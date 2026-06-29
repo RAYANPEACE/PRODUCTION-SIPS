@@ -69,7 +69,7 @@ function authDialog(cfg){
     var h='<div class="dlg-h"><b>'+esc(cfg.title)+'</b></div><div class="dlg-b">';
     if(cfg.intro)h+='<p style="margin:0 0 12px;font-size:13px;color:#5a6472;line-height:1.5">'+esc(cfg.intro)+'</p>';
     if(cfg.withNom)h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Votre nom</label><input id="authNom" autocomplete="name" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="Prénom Nom"></div>';
-    h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Identifiant</label><input id="authUser" autocomplete="username" autocapitalize="none" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="identifiant"></div>';
+    h+='<div id="authUserBox" style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Identifiant</label><input id="authUser" autocomplete="username" autocapitalize="none" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="identifiant"></div>';
     h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Mot de passe</label><input id="authPass" type="password" autocomplete="current-password" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="••••••"></div>';
     h+='<div id="authErr" style="display:none;color:#c0392b;font-size:13px;margin-bottom:10px"></div>';
     h+='<div class="dlg-actions" style="gap:8px"><button class="b-go" id="authOk" style="flex:1;padding:12px;border-radius:9px;border:none;font-weight:700;font-size:14px;background:var(--green);color:#fff">'+esc(cfg.okLabel)+'</button></div>';
@@ -80,10 +80,31 @@ function authDialog(cfg){
     var err=dlg.querySelector('#authErr');
     function showErr(m){err.textContent=m;err.style.display='';}
     function val(id){var el=dlg.querySelector(id);return el?(el.value||'').trim():'';}
+    function usernameVal(){
+      var sel=dlg.querySelector('#authUserSelect');
+      if(sel&&sel.value&&sel.value!=='__manual')return sel.value.trim();
+      return val('#authUser');
+    }
+    if(!cfg.withNom){
+      sipsFetch('/api/auth/login-users',{timeoutMs:1800}).then(function(r){
+        var users=(r&&r.users||[]).filter(function(u){return u&&u.username;});
+        var box=dlg.querySelector('#authUserBox');if(!box||!users.length)return;
+        var last='';try{last=localStorage.getItem('sips_last_username')||'';}catch(e){}
+        var opts=users.map(function(u){
+          var label=(u.nom&&u.nom!==u.username)?(u.nom+' (@'+u.username+')'):('@'+u.username);
+          return '<option value="'+esc(u.username)+'"'+(u.username===last?' selected':'')+'>'+esc(label)+'</option>';
+        }).join('');
+        box.innerHTML='<label style="font-size:12px;font-weight:700;display:block;margin-bottom:4px">Identifiant</label>'
+          +'<select id="authUserSelect" autocomplete="username" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box;background:#fbfcfb">'+opts+'<option value="__manual">Saisie manuelle</option></select>'
+          +'<input id="authUser" autocomplete="username" autocapitalize="none" style="display:none;width:100%;margin-top:8px;padding:10px;border:1.5px solid var(--line);border-radius:8px;font-size:14px;box-sizing:border-box" placeholder="identifiant">';
+        var sel=dlg.querySelector('#authUserSelect'),manual=dlg.querySelector('#authUser');
+        sel.onchange=function(){manual.style.display=sel.value==='__manual'?'block':'none';if(sel.value==='__manual')manual.focus();};
+      }).catch(function(){});
+    }
     var okBtn=dlg.querySelector('#authOk');
     okBtn.onclick=async function(){
       var nom=cfg.withNom?val('#authNom'):'';
-      var username=val('#authUser');
+      var username=usernameVal();
       var password=dlg.querySelector('#authPass').value||'';
       if((cfg.withNom&&!nom)||!username||!password){showErr('Tous les champs sont requis.');return;}
       okBtn.disabled=true;
@@ -91,6 +112,7 @@ function authDialog(cfg){
         var body=cfg.withNom?{nom:nom,username:username,password:password}:{username:username,password:password};
         var r=await sipsFetch(cfg.endpoint,{method:'POST',body:JSON.stringify(body)});
         SESSION=r.user;SESSION_TOKEN=r.token;authStore();applySession();authMarkVerified();markAuthConfigured();
+        try{localStorage.setItem('sips_last_username',username);}catch(e){}
         dlg.close();dlg.remove();
         if(SESSION&&SESSION.mustChangePassword){await authChangePasswordDialog(true);}
         resolve(true);

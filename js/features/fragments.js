@@ -227,7 +227,7 @@ async function srvFragLoadSessions(){
 function srvFragRenderSessions(){
   const host=$('#srvFragList');if(!host)return;
   if(!SRV_FRAG_SESSIONS.length){
-    host.innerHTML='<div style="font-size:12.5px;color:#6a7280;padding:4px 0">Aucune session ouverte. Un admin peut creer la session ci-dessus.</div>';
+    host.innerHTML='<div style="font-size:12.5px;color:#6a7280;padding:4px 0">Aucune session ouverte. Si un compteur envoie une part, une session du jour sera creee automatiquement.</div>';
     return;
   }
   host.innerHTML=SRV_FRAG_SESSIONS.map((s,i)=>{
@@ -237,9 +237,22 @@ function srvFragRenderSessions(){
     return '<label class="frag-sess" style="cursor:pointer"><input type="radio" name="srvFragPick" value="'+esc(s.id)+'" '+(i===0?'checked':'')+'>'
       +'<div class="fs-info"><b>'+esc(s.title||('Inventaire '+(s.date||'')))+'</b>'
       +'<span>'+frDate(s.date)+' - '+esc(base)+' - '+n+' part(s), '+c+' article(s) recompte(s)</span></div>'
-      +'<div class="fs-acts">'+(ADMIN?'<button type="button" data-srvmerge="'+esc(s.id)+'">Analyser / fusionner</button>':'')+'</div></label>';
+      +'<div class="fs-acts">'+(ADMIN?'<button type="button" data-srvmerge="'+esc(s.id)+'">Analyser / fusionner</button><button type="button" data-srvcancel="'+esc(s.id)+'">Annuler</button>':'')+'</div></label>';
   }).join('');
   host.querySelectorAll('[data-srvmerge]').forEach(b=>b.onclick=ev=>{ev.preventDefault();srvFragAnalyze(b.dataset.srvmerge);});
+  host.querySelectorAll('[data-srvcancel]').forEach(b=>b.onclick=ev=>{ev.preventDefault();srvFragCancelSession(b.dataset.srvcancel);});
+}
+async function srvFragCancelSession(id){
+  const sess=SRV_FRAG_SESSIONS.find(s=>s.id===id);
+  const n=sess&&sess.contributions? sess.contributions.length:0;
+  const msg='Annuler cette session inventaire ?\n\n'+(sess&&sess.title?sess.title+'\n':'')+n+' part(s) deja recue(s). Elle disparaitra des sessions ouvertes.';
+  if(!confirm(msg))return;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword('annuler une session inventaire')))return;
+  try{
+    await sipsFetch('/api/inventory-sessions/'+encodeURIComponent(id)+'/cancel',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({reason:'Annule depuis interface'})});
+    toast('Session inventaire annulee');
+    await srvFragLoadSessions();
+  }catch(e){toast('Erreur annulation session : '+e.message);}
 }
 function srvFragClearInheritedTimestamps(st){
   if(!st||!st.c)return st;
@@ -312,6 +325,24 @@ function srvFragPayloadRows(payload){
     return {code:code,des:r?r.des:'Article',q:srvFragEntryTotal(code,{entry:payload.counts[code],cfg:payload.cfg&&payload.cfg[code]})};
   });
 }
+function srvFragPayloadHash(payload){
+  return localSig('frag-contribution',payload);
+}
+function srvFragCloseDialog(){
+  const dlg=$('#fragDlg');if(dlg&&dlg.open)dlg.close();
+}
+function srvFragNotice(title,msg){
+  srvFragCloseDialog();
+  const dlg=document.createElement('dialog');
+  dlg.style.cssText='border:none;border-radius:12px;padding:0;max-width:92vw;width:420px;box-shadow:0 20px 60px rgba(0,0,0,.35)';
+  dlg.innerHTML='<div class="dlg-h"><b>'+esc(title)+'</b><button data-close>x</button></div>'
+    +'<div class="dlg-b"><p style="font-size:18px;font-weight:800;line-height:1.35;margin:0 0 8px">'+esc(msg)+'</p>'
+    +'<div class="dlg-actions"><button class="b-go" data-ok>OK</button></div></div>';
+  document.body.appendChild(dlg);dlg.showModal();
+  const close=()=>{dlg.close();dlg.remove();};
+  dlg.querySelector('[data-close]').onclick=close;
+  dlg.querySelector('[data-ok]').onclick=close;
+}
 function srvFragPreviewMine(){
   const payload=srvFragContributionPayload();
   const rows=srvFragPayloadRows(payload);
@@ -343,22 +374,32 @@ async function srvFragCreateSession(){
 // ouverte (sans sessionId) ; si le serveur est injoignable, elle va dans la file
 // d'attente locale (auto-envoi a la reconnexion). Aucune session a selectionner.
 async function srvFragSubmitMine(){
+  const btn=$('#srvFragSend');if(btn&&btn.disabled)return;
+  if(btn){btn.disabled=true;btn.textContent='Envoi...';}
   const payload=srvFragContributionPayload();
-  if(!payload.freshCodes.length){toast('Compte au moins un article avant d envoyer ta part');return;}
+  const done=()=>{if(btn){btn.disabled=false;btn.textContent='Envoyer ma part';}};
+  if(!payload.freshCodes.length){done();toast('Compte au moins un article avant d envoyer ta part');return;}
+  const hash=srvFragPayloadHash(payload);
+  if(ST.serverFragmentLastSentHash===hash){
+    done();srvFragNotice('Part deja envoyee','Cette part a deja ete envoyee. Modifie un comptage pour renvoyer une nouvelle version.');return;
+  }
   // E1/E3 : garde-fou date sur MA part (produits finis = date de prod ; matieres perissables = peremption).
   if(typeof inventoryLotsMissingDate==='function'){
     const miss=inventoryLotsMissingDate(payload.counts);
-    if(miss.length){if(typeof openLotWarn==='function')openLotWarn(miss);else toast('Date manquante pour '+miss.length+' article(s) (production / peremption).');return;}
+    if(miss.length){done();if(typeof openLotWarn==='function')openLotWarn(miss);else toast('Date manquante pour '+miss.length+' article(s) (production / peremption).');return;}
   }
-  if(typeof sipsRequiresLogin==='function'&&sipsRequiresLogin()){toast('Connexion requise pour envoyer ta part au serveur.');return;}
+  if(typeof sipsRequiresLogin==='function'&&sipsRequiresLogin()){done();toast('Connexion requise pour envoyer ta part au serveur.');return;}
   try{
     await sipsFetch('/api/inventory-rounds/contribution',{method:'POST',body:JSON.stringify({payload:payload})});
-    toast('Part envoyee au serveur : '+payload.freshCodes.length+' article(s)');
+    ST.serverFragmentLastSentHash=hash;ST.serverFragmentLastSentAt=new Date().toISOString();
+    await idbPut({id:'current',date:ST.date,agent:ST.agent,savedAt:Date.now(),st:ST},false).catch(()=>{});
+    done();srvFragNotice('Part envoyee','Ta part a bien ete recue par le serveur : '+payload.freshCodes.length+' article(s).');
     await srvFragLoadSessions();
   }catch(e){
-    if(e.status){toast('Erreur serveur : '+e.message);return;}
+    if(e.status){done();toast('Erreur serveur : '+e.message);return;}
     const q=sipsQueue('frag-contribution',payload,'');
-    toast(q?'Serveur indisponible : part ajoutee en attente (envoi auto au retour)':'Part deja en attente');
+    done();
+    srvFragNotice(q?'Part en attente':'Part deja en attente',q?'Serveur indisponible : la part partira automatiquement au retour du serveur.':'Cette meme part est deja en attente d envoi.');
   }
 }
 function srvFragBuildMerged(sess,resolutions){
@@ -446,7 +487,7 @@ function srvFragInventoryPayload(sess,merged){
   return {kind:'inventory',date:snap.date||todayStr(),agent:snap.agent||'',filled:filled,bilan:bilan,detail:detail,st:snap,
     frag:{source:'server',sessionId:sess.id,title:sess.title||'',baseInventoryId:sess.baseInventoryId||null,baseDate:sess.baseDate||'',agents:(sess.contributions||[]).map(c=>c.agent||'Compteur'),resolutions:merged.resolutions||[]}};
 }
-/* Spec C : vue de couverture d une manche -> qui a compte quoi vs non comptes vs conflits. */
+/* Vue de couverture d une manche -> qui a compte quoi vs base conservee vs conflits. */
 function srvRoundCoverage(sess){
   const by={};
   (sess.contributions||[]).forEach(c=>{((c.payload&&c.payload.freshCodes)||[]).forEach(code=>{(by[code]=by[code]||[]).push(c.agent||'Compteur');});});

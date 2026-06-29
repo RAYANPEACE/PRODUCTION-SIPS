@@ -19,10 +19,10 @@ const port = Number(process.env.SIPS_PORT || 3000);
 
 // ====== AUTH / ROLES ======
 // Source de verite des droits. Le client recoit `tabs` et `canSign` a la connexion.
-const TAB_IDS = ['accueil', 'comptage', 'prod', 'qualite', 'ref', 'bilan', 'feuillet', 'capacite', 'plan', 'sorties', 'entree', 'analyse', 'serveur'];
+const TAB_IDS = ['accueil', 'comptage', 'prod', 'qualite', 'stock', 'ref', 'bilan', 'feuillet', 'capacite', 'plan', 'sorties', 'entree', 'analyse', 'serveur'];
 const ROLES = {
   admin: { label: 'Chef d\'usine', tabs: TAB_IDS.slice(), canSign: ['responsableProd'] },
-  magasinier: { label: 'Magasinier', tabs: ['accueil', 'comptage', 'sorties', 'entree'], canSign: [] },
+  magasinier: { label: 'Magasinier', tabs: ['accueil', 'comptage', 'prod', 'stock', 'sorties', 'entree'], canSign: [] },
   operateur: { label: 'Operateur', tabs: ['accueil', 'comptage', 'prod', 'sorties', 'entree'], canSign: ['operateur'] },
   preparateur: { label: 'Preparateur melanges', tabs: ['accueil', 'comptage', 'qualite', 'prod'], canSign: ['operateur'] },
   responsableQualite: { label: 'Responsable qualite', tabs: ['accueil', 'qualite'], canSign: ['responsableQualite'] }
@@ -636,7 +636,9 @@ function resolvePendingRecounts(db) {
 }
 function findOrCreateOpenRound(db, actor) {
   if (!Array.isArray(db.inventorySessions)) db.inventorySessions = [];
-  let sess = db.inventorySessions.find(s => (s.status || 'open') === 'open');
+  let sess = db.inventorySessions
+    .filter(s => (s.status || 'open') === 'open')
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
   if (sess) return sess;
   const baseRecord = latestInventoryRecord(db);
   sess = {
@@ -655,6 +657,14 @@ function findOrCreateOpenRound(db, actor) {
   db.inventorySessions.push(sess);
   audit(db, 'inventory_session.opened', actor ? actor.nom : 'auto', { id: sess.id, auto: true });
   return sess;
+}
+
+function findOpenRoundForContribution(db, payload, actor) {
+  const explicitId = String(payload && payload.sessionId || '').trim();
+  if (explicitId) {
+    return (db.inventorySessions || []).find(s => s.id === explicitId) || null;
+  }
+  return findOrCreateOpenRound(db, actor);
 }
 
 function buildInventoryPayloadFromSession(sess, resolutionInput) {
@@ -689,9 +699,9 @@ function buildInventoryPayloadFromSession(sess, resolutionInput) {
     }
   }
 
-  // Spec C : univers = codes connus de la base (pour cfg) UNION codes comptes ce tour.
-  // Un code compte par 1 -> sa valeur + estampille by ; par >1 -> conflit ;
-  // par PERSONNE -> { counted:false } (ecart nul, jamais la valeur de base).
+  // Inventaire fragmente = base officielle + modifications recues.
+  // Un code compte par 1 -> sa nouvelle valeur + estampille by ; par >1 -> conflit ;
+  // par PERSONNE -> on conserve la valeur de base (si elle etait vide, elle reste vide).
   const universe = new Set(Object.keys(baseC));
   for (const code of Object.keys(byCode)) universe.add(code);
   const resultC = {};
@@ -700,7 +710,11 @@ function buildInventoryPayloadFromSession(sess, resolutionInput) {
   const applied = [];
   for (const code of [...universe].sort()) {
     const rows = byCode[code];
-    if (!rows || !rows.length) { resultC[code] = { counted: false }; continue; }
+    if (!rows || !rows.length) {
+      resultC[code] = baseC[code] ? cloneJson(baseC[code]) : { counted: false };
+      if (baseCfg[code]) resultCfg[code] = cloneJson(baseCfg[code]);
+      continue;
+    }
     const hasResolution = Object.prototype.hasOwnProperty.call(resolutions, code);
     if (rows.length > 1 && !hasResolution) {
       conflicts.push({ code, count: rows.length, agents: rows.map(r => r.agent) });
@@ -842,6 +856,15 @@ async function handleApiRoutes(req, res, url) {
     audit(db, 'user.login', user.nom, { id: user.id });
     await writeDb(db);
     return sendJson(res, 200, { ok: true, token: await issueToken(user), user: sessionUser(user) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/auth/login-users') {
+    const db = await readDb();
+    const users = db.users
+      .filter(u => u && u.enabled !== false)
+      .map(u => ({ username: u.username, nom: u.nom || u.username, role: u.role || '' }))
+      .sort((a, b) => String(a.nom || a.username).localeCompare(String(b.nom || b.username), 'fr'));
+    return sendJson(res, 200, { ok: true, users });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/auth/me') {
@@ -991,7 +1014,11 @@ async function handleApiRoutes(req, res, url) {
     }
     const db = await readDb();
     const actor = await authUser(req);
-    const sess = findOrCreateOpenRound(db, actor);
+    const sess = findOpenRoundForContribution(db, payload, actor);
+    if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
+    if ((sess.status || 'open') !== 'open') {
+      return sendJson(res, 409, { ok: false, error: 'Session inventaire deja finalisee' });
+    }
     // Securite (anti-corruption) : une part capturee hors-ligne sur une base A ne doit
     // pas etre rattachee a une manche ouverte sur une autre base B (comptes perimes).
     // Le client envoie baseInventoryId ; en cas de mismatch, on rejette (la part reste
@@ -1103,6 +1130,26 @@ async function handleApiRoutes(req, res, url) {
       ? fullInventorySession(sess)
       : Object.assign({}, publicInventorySession(sess), { baseSnapshot: sess.baseSnapshot || null });
     return sendJson(res, 200, { ok: true, session: sessOut });
+  }
+
+  const inventorySessionCancel = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/cancel$/);
+  if (req.method === 'POST' && inventorySessionCancel) {
+    if (!(await requireAdmin(req, res))) return;
+    const actor = await authUser(req);
+    const body = await readBody(req);
+    const db = await readDb();
+    const sess = db.inventorySessions.find(s => s.id === inventorySessionCancel[1]);
+    if (!sess) return sendJson(res, 404, { ok: false, error: 'Session inventaire introuvable' });
+    if ((sess.status || 'open') !== 'open') {
+      return sendJson(res, 409, { ok: false, error: 'Session inventaire deja fermee' });
+    }
+    sess.status = 'cancelled';
+    sess.cancelledAt = new Date().toISOString();
+    sess.cancelledBy = (actor && actor.nom) || 'admin';
+    sess.cancelReason = String(body.reason || '').trim();
+    audit(db, 'inventory_session.cancelled', sess.cancelledBy, { id: sess.id, reason: sess.cancelReason });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, session: publicInventorySession(sess) });
   }
 
   const inventoryContribution = url.pathname.match(/^\/api\/inventory-sessions\/([^/]+)\/contributions$/);

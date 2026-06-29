@@ -262,6 +262,30 @@ function convCond(code,ecart){
 }
 
 /* Calcul du bilan : union des codes (état + articles), physique = inventaire chargé */
+function bilanLotsForRow(r,grp){
+  if(!r||!ST.c[r.code]||!ST.c[r.code].counted)return [];
+  if(grp!=='mp'&&grp!=='fini')return [];
+  const e=ST.c[r.code];
+  if(typeof ensureBlocks==='function')ensureBlocks(r,e);
+  const lots=[];
+  (e.blocks||[]).forEach((b,bi)=>{
+    if(typeof blockHasInput==='function'&&!blockHasInput(r,b))return;
+    const q=blockTotal(r,b,b.cfg||pOf(r));
+    if(Math.abs(q)<=1e-9)return;
+    const date=String((b&&b.date)||'');
+    let cls='pr-ok',txt='';
+    if(!date){cls='pr-warn';txt=grp==='mp'?'date de peremption manquante':'date de production manquante';}
+    else if(grp==='mp'){
+      const info=expInfo(date);
+      if(info){txt=info.txt;cls=(info.cls==='exp-ko'||info.cls==='exp-warn')?'pr-ko':(info.cls==='exp-soon'?'pr-warn':'pr-ok');}
+    }else{
+      const info=prodInfo(date);
+      if(info){txt=info.txt;cls=info.cls==='exp-ko'?'pr-ko':'pr-ok';}
+    }
+    lots.push({n:bi+1,date:date,q:q,cls:cls,txt:txt});
+  });
+  return lots;
+}
 function buildBilan(){
   const codes=new Set();REFS.forEach(r=>codes.add(r.code));Object.keys(ETAT).forEach(c=>codes.add(c));
   const byCode={};REFS.forEach(r=>byCode[r.code]=r);
@@ -272,12 +296,14 @@ function buildBilan(){
     let phys=null;
     if(r&&ST.c[code]&&ST.c[code].counted)phys=round2(total(r));
     const cat=(r&&r.cat)||SEED_CAT[code]||'autre';
-    const row={code:code,nom:r?r.des:code,cat:cat,grp:grpDe(cat),unite:r?r.u:'',theo:theo,phys:phys,counted:phys!=null,ecart:null,pct:null,flags:[],ok:true};
+    const grp=grpDe(cat);
+    const row={code:code,nom:r?r.des:code,cat:cat,grp:grp,unite:r?r.u:'',theo:theo,phys:phys,counted:phys!=null,ecart:null,pct:null,flags:[],ok:true,lots:[]};
     if(phys!=null){
       const e=theo-phys;totEc+=e;
       const pct=theo?(e/theo*100):null;
       row.ecart=Math.round(e*1000)/1000;row.pct=pct;
       row.flags=reglesAlerte(cat,e,pct,theo,phys);row.ok=!row.flags.length;
+      row.lots=bilanLotsForRow(r,grp);
     }
     rows.push(row);
   });
@@ -306,6 +332,32 @@ function ecartHTML(a,withCond){
   return '<span class="bc-ec"><b style="color:'+col+'">'+(arrow?arrow+' ':'')+fsign(a.ecart)+' '+esc(a.unite)+'</b> <span class="bc-pct">('+spc(a.pct)+' %)</span>'+(cond?'<div class="bc-cond">≈ '+cond+'</div>':'')+'</span>';
 }
 
+function lotDateKey(d){return d||'sans date';}
+function lotMapFrom(list,qtyField){
+  const m={};(list||[]).forEach(l=>{const k=lotDateKey(l.date);m[k]=round2((m[k]||0)+num(l[qtyField]));});return m;
+}
+function lotDiffsHTML(a){
+  if(!a.lotDiffs||!a.lotDiffs.length)return '';
+  return '<div class="lot-diffs"><b>FIFO/FEFO à vérifier</b> '+a.lotDiffs.map(d=>esc(d.date)+' : prévu '+fmtq(d.expected)+' / compté '+fmtq(d.actual)).join(' · ')+'</div>';
+}
+function lotDetailHTML(a){
+  if(!a.lots||!a.lots.length)return '';
+  let h='<div class="lot-detail">';
+  h+=a.lots.map(l=>'<span class="lot-chip '+l.cls+'"><b>'+fmtq(l.q)+' '+esc(a.unite||'')+'</b><small>lot '+l.n+(l.date?' · '+esc(l.date):'')+(l.txt?' · '+esc(l.txt):'')+'</small></span>').join('');
+  h+=lotDiffsHTML(a);
+  h+='</div>';
+  return h;
+}
+function applyBilanLotDiffs(r,expected){
+  if(!expected)return r;
+  (r.rows||[]).forEach(a=>{
+    const exp=expected[a.code];if(!exp||!a.lots||!a.lots.length)return;
+    const em=lotMapFrom(exp,'rest'),am=lotMapFrom(a.lots,'q');
+    const keys=Array.from(new Set(Object.keys(em).concat(Object.keys(am))));
+    a.lotDiffs=keys.map(k=>({date:k,expected:round2(em[k]||0),actual:round2(am[k]||0)})).filter(d=>Math.abs(d.expected-d.actual)>1e-6);
+  });
+  return r;
+}
 function fullTablesHTML(r){
   const fams=[['mp','Matières premières — ingrédients (sachets)','#1f7a4d'],['emballage','Emballages (films, cartons, sacs, zippers…)','#1b5faa'],['fini','Produits finis (code 39…)','#8a6d3b'],['autre','Autres','#6a7280']];
   let h='';
@@ -321,7 +373,7 @@ function fullTablesHTML(r){
         +'<div class="bl-id"><span class="bl-code">'+x.code+'</span> '+esc(x.nom)+(x.by?' <span class="bl-by" style="color:var(--mute);font-size:11px">· compté par '+esc(x.by)+'</span>':'')+'</div>'
         +'<div class="bl-tp">théo <b>'+fmtq(x.theo)+'</b> · phys <b>'+(x.counted?fmtq(x.phys):'—')+'</b></div>'
         +'<div class="bl-ec">'+ecartHTML(x,true)+'</div>'
-        +'<div class="bl-st">'+pill+'</div></div>';
+        +'<div class="bl-st">'+pill+'</div>'+lotDetailHTML(x)+'</div>';
     });
     h+='</div></section>';
   });
@@ -353,6 +405,34 @@ function perimHTML(){
   arts.forEach(a=>{
     h+='<div class="perim-art"><div class="perim-nom"><b>'+esc(a.r.des)+'</b> <small>'+a.r.code+'</small></div>';
     a.lots.forEach(l=>{h+='<div class="perim-lot '+l.st.cls+'"><span class="pl-q">'+fmt(l.q)+' '+esc(a.r.u||'')+'</span><span class="pl-d">lot '+l.n+' · '+l.st.txt+'</span></div>';});
+    h+='</div>';
+  });
+  h+='</div>';return h;
+}
+function prodAgeHTML(){
+  const arts=[];
+  REFS.forEach(r=>{
+    if(r.cat!=='fini'&&r.g!=='fini')return;
+    const blocks=(ST.c[r.code]&&ST.c[r.code].blocks)||[];
+    const lots=[];let worst=0;
+    blocks.forEach((b,bi)=>{
+      if(typeof blockHasInput==='function'&&!blockHasInput(r,b))return;
+      const st=prodInfo(b.date);if(!st)return;
+      const q=blockTotal(r,b,b.cfg||pOf(r));
+      const rank=st.cls==='exp-ko'?2:1;
+      if(rank<2)return;
+      lots.push({n:bi+1,q:q,st:st,rank:rank});
+      if(rank>worst)worst=rank;
+    });
+    if(lots.length){lots.sort((a,b)=>b.rank-a.rank);arts.push({r:r,lots:lots,worst:worst});}
+  });
+  if(!arts.length)return '';
+  arts.sort((a,b)=>b.worst-a.worst);
+  const nbU=arts.reduce((s,a)=>s+a.lots.filter(l=>l.rank>=2).length,0);
+  let h='<div class="perim-box prod-age-box"><h3>Produits finis - age de production'+(nbU?' <span class="perim-cnt">'+nbU+' a surveiller</span>':'')+'</h3>';
+  arts.forEach(a=>{
+    h+='<div class="perim-art"><div class="perim-nom"><b>'+esc(a.r.des)+'</b> <small>'+a.r.code+'</small></div>';
+    a.lots.forEach(l=>{h+='<div class="perim-lot '+(l.rank>=2?'pr-ko':'pr-ok')+'"><span class="pl-q">'+fmt(l.q)+' '+esc(a.r.u||'')+'</span><span class="pl-d">lot '+l.n+' - '+esc(l.st.txt)+'</span></div>';});
     h+='</div>';
   });
   h+='</div>';return h;
@@ -392,6 +472,62 @@ async function findBilanPair(){
   }
   return {pair:pool[0],posterior:0};
 }
+function bilanApplyMovements(baseDate,endDate,prodRecs,entreeRecs,sortieRecs){
+  const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
+  const inWin=d=>baseDate&&String(d||'')>baseDate&&String(d||'')<=String(endDate||todayStr());
+  const add={},conso={},en={},so={};
+  (prodRecs||[]).forEach(p=>{
+    if(!inWin(p&&p.date))return;
+    (p.blocks||[]).forEach(bk=>{
+      const n=num(bk&&bk.n);if(!bk||!bk.p||n<=0)return;
+      const code=desToCode[bk.p];if(code)add[code]=(add[code]||0)+n;
+      (RECF[bk.p]||[]).forEach(m=>{if(m&&m.code)conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});
+    });
+  });
+  const addMov=(arr,obj)=>(arr||[]).forEach(r=>{
+    if(!inWin(r&&r.date))return;
+    [].concat(r.finis||[],r.mp||[]).forEach(x=>{if(!x||!x.a)return;const c=desToCode[x.a];if(c&&num(x.q)>0)obj[c]=(obj[c]||0)+num(x.q);});
+  });
+  addMov(entreeRecs,en);addMov(sortieRecs,so);
+  return {add:add,conso:conso,en:en,so:so,desToCode:desToCode,today:String(endDate||todayStr())};
+}
+async function bilanExpectedLots(pair){
+  if(!pair||!pair.date)return {};
+  let invs=[],prod=[],ent=[],sort=[];
+  if(pair.server){
+    try{invs=(await sipsRecords('inventory',{timeoutMs:1200})).filter(r=>r&&r.payload&&r.payload.st&&r.payload.st.c).map(r=>({date:r.payload.date||'',st:r.payload.st,savedAt:Date.parse(r.validatedAt||r.createdAt||'')||0}));}catch(e){invs=[];}
+    try{prod=(await sipsRecords('production',{timeoutMs:1200})).map(r=>r.payload||{});}catch(e){prod=[];}
+    try{ent=(await sipsRecords('entree',{timeoutMs:1200})).map(r=>r.payload||{});}catch(e){ent=[];}
+    try{sort=(await sipsRecords('sortie',{timeoutMs:1200})).map(r=>r.payload||{});}catch(e){sort=[];}
+  }else{
+    let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
+    invs=recs.filter(r=>r&&r.locked&&r.st&&r.st.c&&r.id!=='current'
+      &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
+      &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
+      .map(r=>({date:r.date||'',st:r.st,savedAt:r.savedAt||0}));
+    prod=recs.filter(r=>String(r.id).indexOf('prod_')===0);
+    ent=recs.filter(r=>String(r.id).indexOf('entree_')===0);
+    sort=recs.filter(r=>String(r.id).indexOf('sortie_')===0);
+  }
+  const prevs=invs.filter(x=>String(x.date||'')<String(pair.date||'')).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||((b.savedAt||0)-(a.savedAt||0)));
+  const prev=prevs[0];if(!prev||!prev.st)return {};
+  if(typeof stockBaseMap!=='function'||typeof buildFinishedLots!=='function'||typeof buildMpLots!=='function'||typeof applyFifo!=='function')return {};
+  const bm=stockBaseMap(prev.st);
+  const fl=bilanApplyMovements(prev.date,pair.date,prod,ent,sort);
+  const out={};
+  REFS.forEach(r=>{
+    const c=r.code,grp=grpDe((r&&r.cat)||SEED_CAT[c]||'');
+    const bl=(bm.baseLots[c]&&bm.baseLots[c].length)?bm.baseLots[c]:bm.baseMap[c];
+    if(grp==='fini'){
+      const lots=buildFinishedLots(c,bl,prev.date,prod,ent,fl.desToCode,fl.today);
+      applyFifo(lots,(fl.so[c]||0)+(fl.conso[c]||0));out[c]=lots.filter(l=>Math.abs(l.rest)>1e-9||l.imprecise);
+    }else if(typeof isPerishableMp==='function'&&isPerishableMp(r)){
+      const lots=buildMpLots(c,bl,prev.date,ent,fl.desToCode,fl.today);
+      applyFifo(lots,(fl.so[c]||0)+(fl.conso[c]||0));out[c]=lots.filter(l=>Math.abs(l.rest)>1e-9||l.imprecise);
+    }
+  });
+  return out;
+}
 async function renderBilan(){
   const app=$('#app');
   // Référence physique = dernier inventaire VALIDÉ (≤ date de l'état de stock si renseignée). Jamais le brouillon :
@@ -400,6 +536,7 @@ async function renderBilan(){
   {const f=await findBilanPair();pair=f.pair;posterior=f.posterior;}
   ST=pair?JSON.parse(JSON.stringify(pair.st)):freshCounts();mergeAndMigrate();RO=true;
   const r=buildBilan();
+  applyBilanLotDiffs(r,await bilanExpectedLots(pair));
   r.srcDate=pair?(pair.date||''):'';
   r.srcAgent=pair?(pair.agent||''):'';
   const counted=r.rows.filter(x=>x.counted).length;
@@ -412,7 +549,6 @@ async function renderBilan(){
   h+='<div class="bil-src">Référence physique : <b>'+(r.srcDate||'—')+'</b>'+(r.srcAgent?(' · '+esc(r.srcAgent)):'')+' — <b>'+counted+'</b> / '+r.rows.length+' article(s) compté(s)</div>';
   if(!counted)h+='<div class="bil-note">Aucun article compté dans l\u2019inventaire chargé : tout est reporté au théorique. Compte des articles (onglet Comptage) ou ouvre un inventaire via l\u2019Historique.</div>';
   h+='<div class="bil-reco '+(recoOk?'ok':'ko')+'">'+r.reco+'<span class="meta">'+r.alertes.length+' à vérifier / '+r.rows.length+' articles</span></div>';
-  h+=perimHTML();
   if(r.alertes.length){
     h+='<div class="bil-alert"><h3>'+r.alertes.length+' article(s) à vérifier</h3><div class="bil-cards">';
     r.alertes.forEach(a=>{
@@ -422,6 +558,8 @@ async function renderBilan(){
   }else if(counted){
     h+='<div class="bil-okbox">Aucune anomalie détectée — inventaire cohérent avec l\u2019état de stock.</div>';
   }
+  h+=perimHTML();
+  h+=prodAgeHTML();
   h+='<button id="bilToggle" class="bil-toggle">Voir tous les produits</button>';
   h+='<div id="bilFull" class="bil-full" style="display:none">'+fullTablesHTML(r)+'</div>';
   h+='<div class="bil-foot">Total des écarts (articles comptés, unités mêlées, indicatif) : <b>'+fsign(Math.round(r.total*1000)/1000)+'</b>.<br>Convention : écart = théorique − physique ; ▲ surplus (physique &gt; théo), ▼ manque (physique &lt; théo).</div>';
@@ -479,6 +617,87 @@ if(window.pdfjsLib&&pdfjsLib.GlobalWorkerOptions){pdfjsLib.GlobalWorkerOptions.w
 const FEU_BLEU=[0,0,0.8];
 let FEU={buf:null,name:'',rows:null,xRight:0,npages:0,codes:0,missing:[]};
 
+function feuDateKey(){
+  if(ST&&ST.date)return ST.date;
+  const d=new Date(),p=n=>(n<10?'0':'')+n;
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+function feuFileName(base,date){
+  const b=String(base||'feuillet').replace(/\.pdf$/i,'').replace(/[\\/:*?"<>|]+/g,'_');
+  return b+'_'+date+'_rempli.pdf';
+}
+function feuFrDate(s){
+  if(!s)return '-';
+  const m=String(s).split('-');
+  return m.length===3?m[2]+'/'+m[1]+'/'+m[0]:String(s);
+}
+async function feuArchive(bytes,name,fontName){
+  const id='feuillet_'+Date.now();
+  const fileId=id+'_pdf';
+  await idbFilePut({
+    id:fileId,
+    kind:'feuillet-pdf',
+    name:name,
+    date:feuDateKey(),
+    mime:'application/pdf',
+    savedAt:Date.now(),
+    data:Array.from(bytes||[])
+  });
+  const rec={
+    id:id,
+    kind:'feuillet',
+    date:feuDateKey(),
+    name:name,
+    sourceName:FEU.name||'',
+    agent:(ST&&ST.agent)||'',
+    savedAt:Date.now(),
+    codes:FEU.codes||0,
+    missing:clone(FEU.missing||[]),
+    font:fontName||'',
+    fileId:fileId,
+    bytes:bytes&&bytes.byteLength||0
+  };
+  await idbPut(rec,false);
+  feuLoadArchive();
+}
+async function feuPdfBlob(rec){
+  let data=rec&&rec.pdf;
+  if(!data&&rec&&rec.fileId){
+    const file=await idbFileGet(rec.fileId);
+    data=file&&file.data;
+  }
+  if(data instanceof Uint8Array||data instanceof ArrayBuffer)return new Blob([data],{type:'application/pdf'});
+  if(Array.isArray(data))return new Blob([new Uint8Array(data)],{type:'application/pdf'});
+  if(data&&typeof data==='object'){
+    const ks=Object.keys(data).filter(k=>/^\d+$/.test(k)).sort((a,b)=>Number(a)-Number(b));
+    if(ks.length)return new Blob([new Uint8Array(ks.map(k=>data[k]))],{type:'application/pdf'});
+  }
+  return null;
+}
+async function feuLoadArchive(){
+  const host=$('#feuHist');if(!host)return;
+  let rows=[];
+  try{rows=(await idbAll()).filter(r=>String(r.id||'').indexOf('feuillet_')===0).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));}catch(e){}
+  host.innerHTML='';
+  if(!rows.length){host.innerHTML='<p class="feu-empty">Aucun feuillet rempli archive pour le moment.</p>';return;}
+  rows.slice(0,20).forEach(rec=>{
+    const it=document.createElement('div');it.className='hist-item feu-arch';
+    it.innerHTML='<div class="info"><b>'+esc(rec.name||('feuillet_'+(rec.date||'')))+'</b><span>'+feuFrDate(rec.date)+' - '+esc(rec.agent||'sans operateur')+' - '+(rec.codes||0)+' ligne(s)</span></div>';
+    const open=document.createElement('button');open.textContent='Ouvrir';open.onclick=async()=>{
+      const blob=await feuPdfBlob(rec);if(!blob){toast('Feuillet illisible');return;}
+      const url=URL.createObjectURL(blob);
+      const w=window.open(url,'_blank');
+      if(!w){const a=document.createElement('a');a.href=url;a.download=rec.name||'feuillet.pdf';a.click();}
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    };
+    const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer ce feuillet archive ?')){if(rec.fileId)try{await idbFileDel(rec.fileId);}catch(e){}await idbDel(rec.id);feuLoadArchive();}};
+    it.append(open,del);host.append(it);
+  });
+  if(rows.length>20){
+    const p=document.createElement('p');p.className='feu-empty';p.textContent=(rows.length-20)+' ancien(s) feuillet(s) masque(s).';host.append(p);
+  }
+}
+
 /* Police des chiffres Lot1 : Helvetica (standard pdf-lib). */
 async function feuFont(pdfDoc){
   return {font:await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica),nom:'Helvetica'};
@@ -534,8 +753,8 @@ async function feuGenerate(){
       pages[pno-1].drawText(txt,{x:FEU.xRight-w,y:by,size:10,font:ff.font,color:col});
     }
     const bytes=await pdfDoc.save();
-    const base=(FEU.name||'feuillet').replace(/\.pdf$/i,'');
-    const name=base+'_rempli.pdf';
+    const name=feuFileName(FEU.name||'feuillet',feuDateKey());
+    try{await feuArchive(bytes,name,ff.nom);}catch(_){}
     let file=null;try{file=new File([bytes],name,{type:'application/pdf'});}catch(_){}
     if(file&&navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
       try{await navigator.share({files:[file],title:'Feuillet rempli',text:'Feuillet d\u2019inventaire — Lot1 rempli ('+ff.nom+')'});toast('Partage ouvert');return;}
@@ -580,8 +799,9 @@ function renderFeuillet(){
     h+='<button id="feuGen" class="bil-reco ko" style="width:100%;border:none;cursor:pointer;justify-content:center">Générer le PDF rempli</button>';
     h+='<p class="feu-note">Si Trebuchet MS (<code>trebuc.ttf</code>) est présent dans l\u2019app, il est utilisé automatiquement ; sinon Helvetica de remplacement.</p>';
   }
-  h+='</div></div>';
+  h+='</div><div class="pf-sec feu-history"><div class="pf-h">Feuillets remplis archives</div><div id="feuHist" class="feu-hist">Chargement...</div></div></div>';
   app.innerHTML=h;
   const pk=$('#feuPick');if(pk)pk.onclick=feuPick;
   const gn=$('#feuGen');if(gn)gn.onclick=feuGenerate;
+  feuLoadArchive();
 }

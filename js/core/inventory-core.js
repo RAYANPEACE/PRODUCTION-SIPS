@@ -211,6 +211,7 @@ function buildCard(r){
       <div class="stripe ${STRIPE[r.m]}"></div>
       <div class="ttl"><b>${r.des}</b></div>
       <div class="readout" data-ro></div>
+      <span class="counted-by" data-by style="display:none"></span>
       <span class="hasphoto" data-photo style="display:none" title="Photo jointe">📷</span>
       <div class="chev">▶</div></div><div class="body"></div>`;
   const topEl=card.querySelector('.top');
@@ -371,7 +372,7 @@ function expInfo(s){
   const now=new Date();now.setHours(0,0,0,0);const days=Math.round((d-now)/86400000);
   if(days<0){const md=monthsDays(-days);return {cls:'exp-ko',txt:'⚠ périmé depuis '+fmtMD(md.m,md.j)};}
   if(days===0)return {cls:'exp-ko',txt:'⚠ périme aujourd\u2019hui'};
-  const md=monthsDays(days);let cls='exp-ok';if(days<=30)cls='exp-warn';else if(days<=90)cls='exp-soon';
+  const md=monthsDays(days);let cls='exp-ok';if(days<=30)cls='exp-warn';else if(days<=183)cls='exp-soon';
   return {cls:cls,txt:'périme dans '+fmtMD(md.m,md.j)};
 }
 function prodInfo(s){
@@ -379,7 +380,7 @@ function prodInfo(s){
   const now=new Date();now.setHours(0,0,0,0);const days=Math.round((now-d)/86400000);
   if(days<0)return {cls:'exp-soon',txt:'production à venir ('+(-days)+' j)'};
   if(days===0)return {cls:'exp-ok',txt:'produit aujourd\u2019hui'};
-  const md=monthsDays(days);return {cls:'exp-ok',txt:'produit il y a '+fmtMD(md.m,md.j)};
+  const md=monthsDays(days);return {cls:days>=90?'exp-ko':'exp-ok',txt:'produit depuis '+fmtMD(md.m,md.j),days:days};
 }
 function buildLotPhoto(host,r,l,i,redraw){
   host.innerHTML='';
@@ -556,6 +557,8 @@ function refresh(){
     const ro=card.querySelector('[data-ro]');const t=total(r);const counted=ST.c[r.code].counted;
     if(counted){filled++;ro.className='readout';ro.innerHTML=`<small>TOTAL</small> ${fmt(t)} <small>${r.du||r.u}</small>`;}
     else{ro.className='badge th';ro.textContent='= théorique';}
+    const by=card.querySelector('[data-by]');
+    if(by){const who=(ST.c[r.code]&&ST.c[r.code].by)||'';by.textContent=who?'compté par '+who:'';by.style.display=who?'inline-flex':'none';}
     if(r.m==='tare'){const nets=card.querySelectorAll('[data-wnet]');
       (ST.c[r.code].weighings||[]).forEach((w,i)=>{if(nets[i]){const nv=tareNet(w,pOf(r));
         nets[i].textContent=fmt(nv);nets[i].style.color=nv<0?'var(--red)':'var(--green)';}});}
@@ -584,8 +587,11 @@ function loadCfg(){try{return JSON.parse(localStorage.getItem('inv_cfg'))||{};}c
 
 let _db=null;
 function idb(){return new Promise((res,rej)=>{if(_db)return res(_db);
-  const rq=indexedDB.open('inv_db',1);
-  rq.onupgradeneeded=()=>{const db=rq.result;if(!db.objectStoreNames.contains('inv'))db.createObjectStore('inv',{keyPath:'id'});};
+  const rq=indexedDB.open('inv_db',2);
+  rq.onupgradeneeded=()=>{const db=rq.result;
+    if(!db.objectStoreNames.contains('inv'))db.createObjectStore('inv',{keyPath:'id'});
+    if(!db.objectStoreNames.contains('files'))db.createObjectStore('files',{keyPath:'id'});
+  };
   rq.onsuccess=()=>{_db=rq.result;res(_db);};rq.onerror=()=>rej(rq.error);});}
 function idbPut(rec,countChange){if(countChange===undefined)countChange=true;return idb().then(db=>new Promise((res,rej)=>{
   const t=db.transaction('inv','readwrite');t.objectStore('inv').put(rec);t.oncomplete=function(){if(countChange)try{var c=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;localStorage.setItem('lep_changes_since_backup',String(c+1));}catch(e){}res();};t.onerror=()=>rej(t.error);}));}
@@ -601,12 +607,21 @@ function idbAll(){return idb().then(db=>new Promise((res,rej)=>{
   const rq=db.transaction('inv','readonly').objectStore('inv').getAll();rq.onsuccess=()=>res(rq.result||[]);rq.onerror=()=>rej(rq.error);}));}
 function idbDel(id){return idb().then(db=>new Promise((res,rej)=>{
   const t=db.transaction('inv','readwrite');t.objectStore('inv').delete(id);t.oncomplete=res;t.onerror=()=>rej(t.error);}));}
+function idbFilePut(rec){return idb().then(db=>new Promise((res,rej)=>{
+  const t=db.transaction('files','readwrite');t.objectStore('files').put(rec);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);}));}
+function idbFileGet(id){return idb().then(db=>new Promise((res,rej)=>{
+  const rq=db.transaction('files','readonly').objectStore('files').get(id);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);}));}
+function idbFileAll(){return idb().then(db=>new Promise((res,rej)=>{
+  const rq=db.transaction('files','readonly').objectStore('files').getAll();rq.onsuccess=()=>res(rq.result||[]);rq.onerror=()=>rej(rq.error);}));}
+function idbFileDel(id){return idb().then(db=>new Promise((res,rej)=>{
+  const t=db.transaction('files','readwrite');t.objectStore('files').delete(id);t.oncomplete=res;t.onerror=()=>rej(t.error);}));}
 function localRecordKind(r){
   const id=String((r&&r.id)||'');
   if(id.indexOf('sortie_')===0)return 'sortie';
   if(id.indexOf('entree_')===0)return 'entree';
   if(id.indexOf('prod_')===0)return 'prod';
   if(id.indexOf('batch_')===0)return 'quality';
+  if(id.indexOf('feuillet_')===0)return 'feuillet';
   if(r&&r.st&&id!=='current'&&id.indexOf('fragsess_')!==0)return 'inv';
   return '';
 }
@@ -769,7 +784,8 @@ function shareOrDownload(filename,text,title){
 function _resetBackupCounters(){var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;localStorage.setItem('lep_changes_since_backup','0');localStorage.setItem('lep_last_backup_ts',String(Date.now()));localStorage.setItem('lep_backup_count',String(bc+1));}
 async function exportAll(){
   try{toast('Préparation de la sauvegarde…');const recs=await idbAll();
-    const data={type:'lep-backup',v:1,ts:Date.now(),ls:collectLS(),idb:recs};
+    let files=[];try{files=await idbFileAll();}catch(e){}
+    const data={type:'lep-backup',v:2,ts:Date.now(),ls:collectLS(),idb:recs,files:files};
     var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_LEP_'+suffix+'.txt';
     await shareOrDownload(fn,JSON.stringify(data),'Sauvegarde complète LEP');
     _resetBackupCounters();
@@ -777,7 +793,8 @@ async function exportAll(){
 }
 async function exportAllDownload(){
   try{toast('Preparation...');var recs=await idbAll();
-    var data={type:'lep-backup',v:1,ts:Date.now(),ls:collectLS(),idb:recs};
+    var files=[];try{files=await idbFileAll();}catch(e){}
+    var data={type:'lep-backup',v:2,ts:Date.now(),ls:collectLS(),idb:recs,files:files};
     var bc=parseInt(localStorage.getItem('lep_backup_count'))||0;var suffix=(bc%2===0)?'A':'B';var fn='sauvegarde_LEP_'+suffix+'.txt';
     var blob=new Blob([JSON.stringify(data)],{type:'text/plain'});
     var url=URL.createObjectURL(blob);
@@ -805,7 +822,9 @@ async function importAll(text){
   if(!data||data.type!=='lep-backup'){alert('Ce fichier n\u2019est pas une sauvegarde complète (utilise « Importer un inventaire reçu » pour un inventaire seul).');return;}
   // Fusion intelligente : charger ids locaux, verifier verrous, compter ajouts/sauts
   const localRecs=await idbAll();
+  let localFiles=[];try{localFiles=await idbFileAll();}catch(e){}
   const localIds=new Set(localRecs.map(r=>r.id).filter(id=>id));
+  const localFileIds=new Set(localFiles.map(r=>r.id).filter(id=>id));
   const lockedIds=new Set();
   localRecs.forEach(r=>{if(r&&r.locked)lockedIds.add(r.id);});
   const nLocked=lockedIds.size;
@@ -819,7 +838,13 @@ async function importAll(text){
     importIds.add(rec.id);toImport.push(rec);
     toAdd++;
   }
-  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"")+(skippedDuplicate?("\nDoublons dans le fichier : "+skippedDuplicate):"");
+  const filesToImport=[], fileIds=new Set();
+  if(Array.isArray(data.files))for(const file of data.files){
+    if(!file||!file.id)continue;
+    if(localFileIds.has(file.id)||fileIds.has(file.id))continue;
+    fileIds.add(file.id);filesToImport.push(file);
+  }
+  const msg="Importer cette sauvegarde ?\n\nAjouts : "+toAdd+"\nFichiers lourds : "+filesToImport.length+"\nExistants (non touches) : "+skippedExisting+(skippedLocked?("\nValides locaux (proteges) : "+skippedLocked):"")+(skippedDuplicate?("\nDoublons dans le fichier : "+skippedDuplicate):"");
   if(!confirm(msg))return;
   const protectedKeys=new Set(['lep_usr','lep_changes_since_backup','lep_backup_count','lep_last_backup_ts']);
   const lsUpdates=[];
@@ -836,7 +861,8 @@ async function importAll(text){
   try{
     allLsUpdates.forEach(pair=>localStorage.setItem(pair[0],pair[1]));
     await idbPutMany(toImport);
-    alert("Import : "+toImport.length+" ajoutee(s).\nRechargement en cours...");location.reload();
+    for(const file of filesToImport){await idbFilePut(file);}
+    alert("Import : "+toImport.length+" ajoutee(s), "+filesToImport.length+" fichier(s).\nRechargement en cours...");location.reload();
   }catch(e){rollbackLS();alert("Echec de l’import : aucune donnee n'a ete modifiee.");}
 }
 /* Recomptage non destructif (B) : recharge le snapshot d une soumission inventaire rejetee,
@@ -861,7 +887,7 @@ function sipsReloadRecount(s){
 async function openHistory(){
   const dlg=$('#histDlg');
   const list=$('#histList');list.innerHTML='Chargement…';
-  let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('batch_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
+  let recs=(await idbAll()).filter(r=>r.id!=='current'&&r.id!==ST.id&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('batch_')!==0&&String(r.id).indexOf('feuillet_')!==0).sort((a,b)=>b.savedAt-a.savedAt);
   list.innerHTML='';
   const bk=document.createElement('div');bk.style.cssText='border:1px solid #d4e3f3;border-radius:10px;padding:10px;margin-bottom:12px;background:#f6f9fd';
   bk.innerHTML='<div style="font-weight:700;font-size:13px;margin-bottom:8px">💾 Sauvegarde complète <span style="font-weight:400;color:#6a7280">(réglages, machines, référentiels, inventaires, photos)</span></div>';
@@ -1010,6 +1036,9 @@ $('#date').addEventListener('input',refresh);
 function unfreezeCard(code){const en=ST.c[code];if(!en)return false;let ch=false;
   if(en._phys!=null){delete en._phys;ch=true;}
   if(Array.isArray(en.weighings))en.weighings.forEach(w=>{if(w&&w.net!=null){delete w.net;ch=true;}});
+  if(Array.isArray(en.blocks))en.blocks.forEach(b=>{
+    if(Array.isArray(b&&b.weighings))b.weighings.forEach(w=>{if(w&&w.net!=null){delete w.net;ch=true;}});
+  });
   return ch;}
 ['input','change'].forEach(ev=>document.addEventListener(ev,e=>{
   if(RO||!e.target)return;

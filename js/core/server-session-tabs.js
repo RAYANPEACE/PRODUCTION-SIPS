@@ -585,7 +585,7 @@ function renderRecf(body){
 function renderMachines(body){
   const prodOpts=sel=>Object.keys(RECF).map(p=>`<option value="${esc(p)}"${p===sel?' selected':''}>${esc(p)}</option>`).join('');
   const freqOpts=sel=>['once','parprod'].map(f=>`<option value="${f}"${f===sel?' selected':''}>${f==='once'?'une fois':'par produit'}</option>`).join('');
-  let h='<p class="ref-hint">Cadence : soit <b>pistes × sachets/min</b> (débit calculé via «\u00a0sachets/u.b.\u00a0»), soit un <b>débit direct</b> par produit (sacs/h). Les <b>temps morts</b> (démarrage, bobine, fin…) s\u2019ajoutent : «\u00a0une fois\u00a0» (par lancement) ou «\u00a0par produit\u00a0». La charge s\u2019affiche dans le Plan.</p>';
+  let h='<p class="ref-hint">Cadence : soit <b>pistes × sachets/min</b> (débit calculé via «\u00a0sachets/u.b.\u00a0»), soit un <b>débit direct</b> par produit (sacs/h). Dans le Plan, <b>Démarrage</b> sert au lancement du jour, <b>Fin</b> réserve seulement une fin de journée quand la production déborde, et <b>Changement/Bobine</b> sert aux transitions entre produits.</p>';
   h+='<div class="prodcfg"><label>Heures/quart<input id="pcHq" inputmode="decimal" value="'+esc(PRODCFG.heuresQuart)+'"></label>'
     +'<label>Quarts/jour<input id="pcQj" inputmode="decimal" value="'+esc(PRODCFG.quartsJour)+'"></label>'
     +'<label class="pc-par"><input type="checkbox" id="pcPar"'+(PRODCFG.parallele?' checked':'')+'> machines en parallèle</label></div>';
@@ -645,21 +645,23 @@ function renderMachines(body){
   $('#machAdd').onclick=()=>{MACHINES.push({id:'m'+Date.now(),nom:'Nouvelle machine',pistes:'',cadence:'',arrets:clone(SEED_ARRETS),prods:[]});save();renderRef();};
 }
 function planChargeHTML(items){
-  const byM={};const nonEst=[];
-  items.forEach(it=>{if(it.n<=0)return;const pd=prodDebit(it.produit);
-    if(!pd||pd.eff<=0){nonEst.push(it.produit);return;}
-    const h=it.n/pd.eff;const k=pd.m.id;byM[k]=byM[k]||{m:pd.m,prodH:0,nb:0,lines:[]};byM[k].prodH+=h;byM[k].nb++;byM[k].lines.push({p:it.produit,n:it.n,h:h});});
-  const ms=Object.keys(byM).map(k=>byM[k]);
+  const est=(typeof planEstimateItems==='function')?planEstimateItems(items):null;
+  const ms=est?est.ms:[];
+  const nonEst=est?est.nonEst:[];
   if(!ms.length&&!nonEst.length)return '';
-  ms.forEach(m=>{m.downMin=arretsMin(m.m,m.nb);m.totH=m.prodH+m.downMin/60;});
-  const hq=num(PRODCFG.heuresQuart)>0?num(PRODCFG.heuresQuart):8;const qj=num(PRODCFG.quartsJour)>0?num(PRODCFG.quartsJour):1;
-  const totalH=ms.length?(PRODCFG.parallele?Math.max.apply(null,ms.map(m=>m.totH)):ms.reduce((s,m)=>s+m.totH,0)):0;
   let h='<div class="charge-box"><h4 class="plan-sub">⏱ Charge de production estimée</h4>';
   ms.forEach(m=>{h+='<div class="charge-m"><div class="cm-h"><b>'+esc(m.m.nom)+'</b><span>'+fmtH(m.totH)+'</span></div>';
     m.lines.forEach(l=>{h+='<div class="cm-l">'+esc(l.p)+' — '+fmt(l.n)+' u · '+fmtH(l.h)+'</div>';});
-    if(m.downMin>0)h+='<div class="cm-l cm-down">+ temps morts : '+fmtH(m.downMin/60)+'</div>';
+    const bits=[];
+    if(m.startupMin>0)bits.push('démarrage '+fmtH(m.startupMin/60));
+    if(m.restartMin>0)bits.push('reprise/bascule '+fmtH(m.restartMin/60));
+    if(m.changeMin>0)bits.push('changement produit/bobine '+fmtH(m.changeMin/60));
+    if(m.endDayMin>0)bits.push('fin de journée '+fmtH(m.endDayMin/60));
+    if(m.otherMin>0)bits.push('autres préparatifs '+fmtH(m.otherMin/60));
+    if(bits.length)h+='<div class="cm-l cm-down">+ temps non productifs : '+bits.join(' · ')+'</div>';
     h+='</div>';});
-  if(ms.length)h+='<div class="charge-tot">Total : <b>'+fmtH(totalH)+'</b> ≈ <b>'+(Math.round(totalH/hq*10)/10)+'</b> quart(s)'+(qj>1?' ≈ '+(Math.round(totalH/hq/qj*10)/10)+' j':'')+' <small>'+(PRODCFG.parallele?'(parallèle : machine la plus chargée)':'(séquentiel : somme)')+'</small></div>';
+  if(ms.length)h+='<div class="charge-tot">Total : <b>'+fmtH(est.totalH)+'</b> ≈ <b>'+(Math.round(est.quarters*10)/10)+'</b> quart(s)'+(est.workDays>0?' ≈ '+(Math.round(est.workDays*10)/10)+' j':'')+' <small>('+esc(est.modeText)+')</small></div>'
+    +'<div class="cm-note">Démarrage compté au lancement, reprise plus courte le lendemain, fin de journée seulement quand une production déborde sur le jour suivant.</div>';
   if(nonEst.length)h+='<div class="charge-non">Non estimé (machine ou débit manquant) : '+nonEst.map(esc).join(', ')+'</div>';
   h+='</div>';return h;
 }

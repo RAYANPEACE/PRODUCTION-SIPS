@@ -2,6 +2,12 @@
 function todayStr(){const d=new Date();const p=n=>(n<10?'0':'')+n;return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 function frDate(s){if(!s)return '—';const m=String(s).split('-');return m.length===3?m[2]+'/'+m[1]+'/'+m[0]:s;}
 let PF=null;
+const HIST_MAX=80;
+const HIST_FILTERS={
+  production:{mode:'all',value:''},
+  sortie:{mode:'all',value:''},
+  entree:{mode:'all',value:''}
+};
 function embType(p){const a=REFS.find(x=>x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
 function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',perso:[],photos:[]};}
 function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
@@ -101,12 +107,67 @@ function migrateProdRec(rec){
   const blocks=[b];pr.slice(1).forEach(x=>{const nb=freshBlock();nb.p=x.p;nb.n=x.n;blocks.push(nb);});
   return blocks;
 }
+function histRecDate(row,isServer){
+  const rec=isServer?(row&&row.payload||{}):row;
+  return String((rec&&rec.date)||'');
+}
+function histMatchDate(date,filter){
+  if(!filter||filter.mode==='all'||!filter.value)return true;
+  if(filter.mode==='month')return date.indexOf(filter.value)===0;
+  if(filter.mode==='year')return date.indexOf(filter.value)===0;
+  if(filter.mode==='date')return date===filter.value;
+  return true;
+}
+function histApply(rows,key,isServer){
+  const filter=HIST_FILTERS[key]||HIST_FILTERS.production;
+  return (rows||[]).filter(r=>histMatchDate(histRecDate(r,isServer),filter));
+}
+function histClip(rows){
+  rows=rows||[];
+  return {rows:rows.slice(0,HIST_MAX),hidden:Math.max(0,rows.length-HIST_MAX),total:rows.length};
+}
+function histFilterText(filter){
+  if(!filter||filter.mode==='all'||!filter.value)return 'Tout';
+  if(filter.mode==='month')return 'Mois '+filter.value;
+  if(filter.mode==='year')return 'Annee '+filter.value;
+  return 'Date '+frDate(filter.value);
+}
+function bindHistFilter(host,key,loader){
+  const sel=host.querySelector('.hist-filter-mode'),val=host.querySelector('.hist-filter-value');
+  if(!sel||!val)return;
+  const sync=()=>{
+    const f=HIST_FILTERS[key];
+    val.style.display=f.mode==='all'?'none':'block';
+    val.type=f.mode==='date'?'date':(f.mode==='month'?'month':'number');
+    val.placeholder=f.mode==='year'?'annee':'';
+    val.min=f.mode==='year'?'2000':'';
+    val.max=f.mode==='year'?'2100':'';
+    val.value=f.value||'';
+  };
+  sel.onchange=()=>{const f=HIST_FILTERS[key];f.mode=sel.value;f.value='';sync();loader();};
+  val.onchange=()=>{HIST_FILTERS[key].value=val.value;loader();};
+  sync();
+}
+function histFilterHTML(key){
+  const f=HIST_FILTERS[key]||HIST_FILTERS.production;
+  return '<div class="hist-filter"><select class="hist-filter-mode">'
+    +'<option value="all"'+(f.mode==='all'?' selected':'')+'>Tout</option>'
+    +'<option value="month"'+(f.mode==='month'?' selected':'')+'>Mois</option>'
+    +'<option value="year"'+(f.mode==='year'?' selected':'')+'>Annee</option>'
+    +'<option value="date"'+(f.mode==='date'?' selected':'')+'>Date</option>'
+    +'</select><input class="hist-filter-value" value="'+esc(f.value||'')+'"><span>'+esc(histFilterText(f))+'</span></div>';
+}
 function renderProdHist(host,recs,serverRows){
   host.innerHTML='';
+  host.innerHTML=histFilterHTML('production');
+  bindHistFilter(host,'production',loadProdHist);
+  recs=histApply(recs,'production',false).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+  serverRows=histApply(serverRows,'production',true).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));
+  const srvClip=histClip(serverRows),locClip=histClip(recs);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
-    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+    srvClip.rows.forEach(row=>{
       const rec=row.payload||{};
       const blocks=prodRecBlocks(rec);
       const np=blocks.filter(b=>b.p&&num(b.n)>0).length;
@@ -116,12 +177,13 @@ function renderProdHist(host,recs,serverRows){
       const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
       it.append(open);host.append(it);
     });
+    if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' production(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
   }
   if(recs.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(serverRows.length?'10px':'0')+' 0 6px;text-transform:uppercase';
     h.textContent='Historique local';host.append(h);
   }
-  recs.forEach(rec=>{
+  locClip.rows.forEach(rec=>{
     const blocks=migrateProdRec(rec);
     const np=blocks.filter(b=>b.p&&num(b.n)>0).length;
     const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
@@ -131,7 +193,8 @@ function renderProdHist(host,recs,serverRows){
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer cette production ?')){await idbDel(rec.id);loadProdHist();}};
     it.append(open,del);host.append(it);
   });
-  if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune production enregistree.</p>';}
+  if(locClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=locClip.hidden+' production(s) locale(s) masquee(s) par la limite d affichage.';host.append(p);}
+  if(!recs.length&&!serverRows.length){const p=document.createElement('p');p.className='hist-empty';p.textContent='Aucune production enregistree pour ce filtre.';host.append(p);}
 }
 // Local tout de suite, serveur en arriere-plan (voir renderMovHist/loadMovHist).
 async function loadProdHist(){
@@ -231,10 +294,15 @@ function renderMov(kind,focusSel){
 function renderMovHist(host,kind,recs,serverRows){
   const c=MOVCFG[kind];
   host.innerHTML='';
+  host.innerHTML=histFilterHTML(kind);
+  bindHistFilter(host,kind,()=>loadMovHist(kind));
+  recs=histApply(recs,kind,false).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+  serverRows=histApply(serverRows,kind,true).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));
+  const srvClip=histClip(serverRows),locClip=histClip(recs);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
-    serverRows.sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).forEach(row=>{
+    srvClip.rows.forEach(row=>{
       const rec=row.payload||{};
       const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
       const it=document.createElement('div');it.className='hist-item locked';
@@ -242,12 +310,13 @@ function renderMovHist(host,kind,recs,serverRows){
       const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
       it.append(open);host.append(it);
     });
+    if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' ligne(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
   }
   if(recs.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:10px 0 6px;text-transform:uppercase';
     h.textContent='Historique local';host.append(h);
   }
-  recs.forEach(rec=>{
+  locClip.rows.forEach(rec=>{
     const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
     const it=document.createElement('div');it.className='hist-item';
     it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span></div>';
@@ -255,7 +324,8 @@ function renderMovHist(host,kind,recs,serverRows){
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer ?')){await idbDel(rec.id);loadMovHist(kind);}};
     it.append(open,del);host.append(it);
   });
-  if(!recs.length&&!serverRows.length){host.innerHTML='<p style="color:#6a7280;font-size:13px;margin:0">Aucune '+(kind==='entree'?'entree':'sortie')+' enregistree.</p>';}
+  if(locClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=locClip.hidden+' ligne(s) locale(s) masquee(s) par la limite d affichage.';host.append(p);}
+  if(!recs.length&&!serverRows.length){const p=document.createElement('p');p.className='hist-empty';p.textContent='Aucune '+(kind==='entree'?'entree':'sortie')+' enregistree pour ce filtre.';host.append(p);}
 }
 // Affiche l'historique LOCAL tout de suite (sans attendre le serveur), puis ajoute
 // les records serveur quand ils arrivent. Evite l'ecran vide de plusieurs secondes
@@ -305,10 +375,13 @@ function sipsSubmissionDetailHTML(s){
       +sipsLines('Productions',p.blocks,[['p','Produit'],['n','Qte'],['w_emb','Dechet emb.'],['w_film','Dechet film'],['w_mel','Melange kg']]);
   }
   if(s.type==='inventory'){
-    const detail=Object.keys(p.detail||{}).map(code=>Object.assign({code:code},p.detail[code]));
+    const detail=Object.keys(p.detail||{}).map(code=>{
+      const src=p.st&&p.st.c&&p.st.c[code]||{};
+      return Object.assign({code:code,by:src.by||''},p.detail[code]);
+    });
     return sipsKV([['Date',frDate(p.date)],['Compteur',p.agent],['Articles comptes',p.filled],['Recomptage de',p.recountOf&&p.recountOf.id],['Alertes bilan',p.bilan&&p.bilan.nbAlertes],['Ecart total',p.bilan&&p.bilan.total]])
       +(s.recountRequested?'<p style="color:var(--red);font-size:12px;margin:6px 0 0">Recomptage demande</p>':'')
-      +sipsLines('Articles comptes',detail.slice(0,80),[['code','Code'],['n','Article'],['p','Physique'],['t','Theorique'],['e','Ecart']]);
+      +sipsLines('Articles comptes',detail.slice(0,80),[['code','Code'],['n','Article'],['by','Compté par'],['p','Physique'],['t','Theorique'],['e','Ecart']]);
   }
   return '<pre style="white-space:pre-wrap;font-size:12px;background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0 0">'+esc(JSON.stringify(p,null,2).slice(0,2000))+'</pre>';
 }
