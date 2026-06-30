@@ -33,7 +33,7 @@ function qIsMP(code){
 }
 
 function qMPsFromRecipe(produit){
-  var recipe=RECF[produit];
+  var recipe=typeof recipeForProduct==='function'?recipeForProduct(produit):RECF[produit];
   if(!recipe)return [];
   return recipe.filter(function(ing){return qIsMP(ing.code);}).map(function(ing){
     return {designation:ing.des,code:ing.code||'',refFournisseur:'',dateProd:'',dateExp:''};
@@ -152,7 +152,16 @@ function qClearServerQualityState(){
 function qSignerName(){
   return SESSION?(SESSION.nom||''):(USR&&USR.nom)||'';
 }
+function qNormalizeVisas(visas){
+  var base=freshQS().visas;
+  visas=visas||{};
+  ['operateur','responsableProd','responsableQualite'].forEach(function(role){
+    base[role]=Object.assign({},base[role],visas[role]||{});
+  });
+  return base;
+}
 function qApplyAccountVisaNames(){
+  QS.visas=qNormalizeVisas(QS.visas);
   ['operateur','responsableProd','responsableQualite'].forEach(function(role){
     if(qCanEditVisa(role)){
       var name=qSignerName();
@@ -223,6 +232,8 @@ async function renderQualite(){
   var app=$('#app');
   var h='<div class="q-wrap">';
   h+='<h2 class="q-title">Suivi Qualité — Fiche de Lot</h2>';
+  if(!QS_SERVER_VIEW&&!QS_SERVER_PENDING_ID&&SESSION&&qRequiredQualityRoles().some(function(role){return qCanSignRole(role);}))
+    h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Les fiches serveur a signer apparaissent dans l historique en bas de cet onglet. Ouvrez la fiche, tracez votre signature, puis enregistrez la signature serveur.</p>';
   if(QS_SERVER_VIEW)h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Consultation officielle serveur : lecture seule. Utilisez PDF pour exporter, ou Nouvelle fiche pour reprendre la saisie locale.</p>';
   if(QS_CORRECTION_OF)h+='<p class="ref-hint" style="background:#fff3f0;border:1px solid #efc9c0;border-radius:8px;padding:8px 10px"><b>Correction demandee</b> : '+esc(QS_CORRECTION_NOTE||'Motif non renseigne')+'<br><small>Ancienne soumission : '+esc(QS_CORRECTION_OF.id||'')+'. Corrigez la fiche puis signez operateur avant resoumission.</small></p>';
 
@@ -234,15 +245,17 @@ async function renderQualite(){
   h+='<div class="q-field"><label>Produit<small>Choisir la reference</small></label>';
   h+='<select id="qRefProd" onchange="qOnProdChange(this.value)">';
   h+='<option value="">— Choisir —</option>';
-  var prods=Object.keys(RECF);
-  prods.forEach(function(p){h+='<option value="'+esc(p)+'"'+(QS.informations.refProduit===p?' selected':'')+'>'+esc(p)+'</option>';});
+  var curProd=currentRecipeProductCode(QS.informations.refProduit);if(curProd&&curProd!==QS.informations.refProduit)QS.informations.refProduit=curProd;
+  var prods=recipeKeys();
+  prods.forEach(function(p){h+='<option value="'+esc(p)+'"'+(productCodeOf(QS.informations.refProduit)===p?' selected':'')+'>'+esc(recipeProductLabel(p))+'</option>';});
   h+='</select></div>';
   h+='<div class="q-field"><label>Date de production</label><input type="date" id="qDateProd" value="'+esc(QS.informations.dateProduction)+'" onchange="QS.informations.dateProduction=this.value"></div>';
   h+='<div class="q-field"><label>Heure debut<small>Auto (1er batch)</small></label><input type="text" id="qHDeb" value="'+esc(QS.informations.heureDebut)+'" readonly></div>';
   h+='<div class="q-field"><label>Heure fin<small>Auto (dernier batch)</small></label><input type="text" id="qHFin" value="'+esc(QS.informations.heureFin)+'" readonly></div>';
   h+='<div class="q-field"><label>Numero de lot<small>Auto-incremente</small></label><input type="text" id="qLot" value="'+esc(QS.informations.numeroLot)+'" readonly></div>';
   h+='<div class="q-field"><label>Quantite produite (kg)<small>Batches x taille</small></label><input type="text" id="qQte" value="'+QS.informations.quantiteProduite+'" readonly></div>';
-  var isCafe=QS.informations.refProduit&&QS.informations.refProduit.toUpperCase().indexOf('CAFE AU LAIT')!==-1;
+  var qProdRef=recipeProductRef(QS.informations.refProduit);
+  var isCafe=qProdRef&&qProdRef.des.toUpperCase().indexOf('CAFE AU LAIT')!==-1;
   h+='<div class="q-field"><label>Taille batch (kg)'+(isCafe?'<small>Auto 225 kg (Cafe au lait)</small>':'')+'</label>';
   h+='<select id="qBatchSize" onchange="qOnBatchSize(this.value)"'+(isCafe?' disabled':'')+'>';
   [200,225,250,400,500].forEach(function(v){h+='<option value="'+v+'"'+(QS.informations.tailleBatch===v?' selected':'')+'>'+v+' kg</option>';});
@@ -273,7 +286,7 @@ async function renderQualite(){
     h+='<p style="color:var(--mute);font-size:13px">Choisir un produit pour charger les matieres premieres.</p>';
   }
   h+='<button class="q-add" onclick="qAddMP()">+ Ajouter une matiere premiere</button>';
-  h+='<button class="q-add" style="border-color:#c5e4d2;color:var(--green);background:#eef8f1;margin-top:6px" onclick="qLoadLastBatch()">Charger la derniere fiche (memes MP)</button>';
+  h+='<button class="q-add" style="border-color:#c5e4d2;color:var(--green);background:#eef8f1;margin-top:6px" onclick="qLoadLastBatch()">Charger les derniers lots MP</button>';
   h+='</div></div>';
 
   /* Section C: Melanges */
@@ -330,7 +343,6 @@ async function renderQualite(){
   h+='<button class="q-pdf" onclick="qExportPDF()">PDF</button>';
   if(!QS_SERVER_VIEW&&!QS_SERVER_PENDING_ID){
     h+='<button class="q-json" onclick="qExportJSON()">Secours fichier signature</button>';
-    h+='<button class="q-import-json" id="qPasteBtn">Coller fiche de secours</button>';
   }
   h+='<button class="q-new" onclick="qNew()">Nouvelle fiche</button>';
   h+='</div>';
@@ -371,7 +383,8 @@ function qOnProdChange(val){
   QS.informations.refProduit=val;
   if(val){
     QS.matieresPremieres=qMPsFromRecipe(val);
-    if(val.toUpperCase().indexOf('CAFE AU LAIT')!==-1){
+    var r=recipeProductRef(val);
+    if(r&&r.des.toUpperCase().indexOf('CAFE AU LAIT')!==-1){
       QS.informations.tailleBatch=225;
     }
   }else{
@@ -480,13 +493,13 @@ async function qSave(){
     duplicate=all.find(function(r){
       if(!r||String(r.id).indexOf('batch_')!==0||r.id===recId||!r.informations)return false;
       var sameLot=QS.informations.numeroLot&&r.informations.numeroLot===QS.informations.numeroLot;
-      var sameProductDate=r.informations.refProduit===QS.informations.refProduit&&r.informations.dateProduction===QS.informations.dateProduction;
+      var sameProductDate=productCodeOf(r.informations.refProduit)===productCodeOf(QS.informations.refProduit)&&r.informations.dateProduction===QS.informations.dateProduction;
       return sameLot||sameProductDate;
     })||null;
   }catch(e){}
   if(duplicate){
     var di=duplicate.informations||{};
-    toast('Fiche qualite deja enregistree : '+(di.refProduit||'produit')+' '+frDate(di.dateProduction||duplicate.date||''));
+    toast('Fiche qualite deja enregistree : '+recipeProductLabel(di.refProduit||'produit')+' '+frDate(di.dateProduction||duplicate.date||''));
     return;
   }
   var rec={
@@ -539,7 +552,7 @@ async function qLoadHist(){
     QSERVER_PENDING=[];
     QSERVER_CORRECTIONS=[];
     try{
-      if(SESSION&&qRequiredQualityRoles().some(function(role){return qCanSignRole(role);})){
+      if(SESSION&&(SESSION.role==='admin'||qRequiredQualityRoles().some(function(role){return qCanSignRole(role);}))){
         var pdata=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload');
         QSERVER_PENDING=pdata.submissions||[];
         var cdata=await sipsFetch('/api/submissions?status=rejected&type=quality&include=payload');
@@ -555,15 +568,15 @@ async function qLoadHist(){
     var batches=all.filter(function(r){return String(r.id).indexOf('batch_')===0;}).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
     var htm='';
     if(QSERVER_PENDING.length){
-      htm+='<div style="font-size:12px;font-weight:800;color:#9a6500;margin:0 0 6px;text-transform:uppercase">A signer / en validation serveur</div>';
+      htm+='<div style="font-size:12px;font-weight:800;color:#9a6500;margin:0 0 6px;text-transform:uppercase">Fiches serveur a ouvrir / signer</div>';
       QSERVER_PENDING.forEach(function(s,idx){
         var b=s.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=qQualitySignedCount(visas);
         var mine=qRequiredQualityRoles().some(function(role){return qCanSignRole(role)&&(!visas[role]||!visas[role].signature);});
         htm+='<div class="q-hist-item">';
-        htm+='<div class="info"><b>'+esc(info.refProduit||'---')+'</b>';
+        htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'---'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+sigs+'/2 signature(s) obligatoires - '+(mine?'votre signature est attendue':'en attente admin/autre signature')+'</span></div>';
-        htm+='<button onclick="qLoadPendingBatch('+idx+')">'+(mine?'Signer':'Voir')+'</button>';
+        htm+='<button data-qpend="'+idx+'">'+(mine?'Ouvrir et signer':'Ouvrir')+'</button>';
         htm+='</div>';
       });
     }
@@ -572,9 +585,9 @@ async function qLoadHist(){
       QSERVER_CORRECTIONS.forEach(function(s,idx){
         var b=s.payload||{},info=b.informations||{};
         htm+='<div class="q-hist-item">';
-        htm+='<div class="info"><b>'+esc(info.refProduit||'---')+'</b>';
+        htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'---'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+esc(s.decisionNote||'Correction demandee')+'</span></div>';
-        htm+='<button onclick="qLoadCorrectionBatch('+idx+')">Reprendre correction</button>';
+        htm+='<button data-qcorr="'+idx+'">Reprendre correction</button>';
         htm+='</div>';
       });
     }
@@ -584,28 +597,47 @@ async function qLoadHist(){
         var b=r.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=['operateur','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
         htm+='<div class="q-hist-item">';
-        htm+='<div class="info"><b>'+esc(info.refProduit||'—')+'</b>';
+        htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'—'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date||info.dateProduction||'')+' — '+sigs+'/2 signature(s) obligatoires — officielle serveur</span></div>';
-        htm+='<button onclick="qLoadServerBatch('+idx+')">Voir</button>';
+        htm+='<button data-qserv="'+idx+'">Voir</button>';
         htm+='</div>';
       });
     }
     if(batches.length){
-      htm+='<div style="font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(QSERVER_RECORDS.length?'10px':'0')+' 0 6px;text-transform:uppercase">Historique local</div>';
+      htm+='<div style="font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(QSERVER_RECORDS.length?'10px':'0')+' 0 6px;text-transform:uppercase">Locales sur cet appareil</div>';
     }
     batches.forEach(function(b){
       var info=b.informations||{};
       var visas=b.visas||{};
       var sigs=['operateur','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
       htm+='<div class="q-hist-item">';
-      htm+='<div class="info"><b>'+esc(info.refProduit||'—')+'</b>';
+      htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'—'))+'</b>';
       htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+' — '+sigs+'/2 signature(s) obligatoires</span></div>';
-      htm+='<button onclick="qLoadBatch(\''+esc(b.id)+'\')">Voir</button>';
-      htm+='<button class="del" onclick="qDelBatch(\''+esc(b.id)+'\')">Suppr</button>';
+      htm+='<button data-qlocal="'+esc(b.id)+'">Voir</button>';
+      htm+='<button class="del" data-qdel="'+esc(b.id)+'">Suppr</button>';
       htm+='</div>';
     });
     list.innerHTML=htm||'<p style="color:var(--mute);font-size:13px">Aucune fiche enregistree.</p>';
+    qBindHistButtons(list);
   }catch(e){list.innerHTML='<p style="color:var(--red)">Erreur chargement</p>';}
+}
+
+function qBindHistButtons(list){
+  list.querySelectorAll('[data-qpend]').forEach(function(b){
+    b.addEventListener('click',function(){qLoadPendingBatch(parseInt(b.dataset.qpend,10));});
+  });
+  list.querySelectorAll('[data-qcorr]').forEach(function(b){
+    b.addEventListener('click',function(){qLoadCorrectionBatch(parseInt(b.dataset.qcorr,10));});
+  });
+  list.querySelectorAll('[data-qserv]').forEach(function(b){
+    b.addEventListener('click',function(){qLoadServerBatch(parseInt(b.dataset.qserv,10));});
+  });
+  list.querySelectorAll('[data-qlocal]').forEach(function(b){
+    b.addEventListener('click',function(){qLoadBatch(b.dataset.qlocal);});
+  });
+  list.querySelectorAll('[data-qdel]').forEach(function(b){
+    b.addEventListener('click',function(){qDelBatch(b.dataset.qdel);});
+  });
 }
 
 async function qLoadBatch(id){
@@ -617,7 +649,7 @@ async function qLoadBatch(id){
     QS.informations=rec.informations||freshQS().informations;
     QS.matieresPremieres=rec.matieresPremieres||[];
     QS.melanges=rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
-    QS.visas=rec.visas||freshQS().visas;
+    QS.visas=qNormalizeVisas(rec.visas);
     renderQualite();
     toast('Fiche chargee');
     window.scrollTo(0,0);
@@ -626,18 +658,28 @@ async function qLoadBatch(id){
 
 async function qLoadPendingBatch(idx){
   var row=QSERVER_PENDING[idx];
+  try{await qOpenSubmittedQuality(row);}
+  catch(e){toast('Ouverture impossible : '+((e&&e.message)||e));}
+}
+
+async function qOpenSubmittedQuality(row){
   if(!row||!row.payload){toast('Fiche serveur introuvable');return;}
   var rec=row.payload;
+  TAB='qualite';
+  document.querySelectorAll('#tabbar .tab').forEach(function(t){t.classList.toggle('active',t.dataset.tab==='qualite');});
+  var mt=$('#tabMoreToggle');if(mt)mt.classList.remove('active');
+  var openMore=document.querySelector('#tabbar .tabmore[open]');if(openMore)openMore.open=false;
   QS_SERVER_VIEW=false;
   QS_SERVER_PENDING_ID=row.id;
   QS_CORRECTION_OF=null;
   QS_CORRECTION_NOTE='';
   QS.id=rec.id||'';
   QS.informations=rec.informations||freshQS().informations;
+  if(!QS.informations.numeroLot)QS.informations.numeroLot=rec.numeroLot||'LOT-SERVEUR';
   QS.matieresPremieres=rec.matieresPremieres||[];
   QS.melanges=rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
-  QS.visas=rec.visas||freshQS().visas;
-  renderQualite();
+  QS.visas=qNormalizeVisas(rec.visas);
+  await renderQualite();
   toast('Fiche serveur en attente chargee');
   window.scrollTo(0,0);
 }
@@ -670,7 +712,7 @@ async function qSignServerPending(){
       method:'POST',
       body:JSON.stringify({role:role,visa:{signature:visa.signature,date:visa.date||todayStr()+' '+qNowTime()}})
     });
-    QS.visas=(data.submission&&data.submission.payload&&data.submission.payload.visas)||QS.visas;
+    QS.visas=qNormalizeVisas(data.submission&&data.submission.payload&&data.submission.payload.visas||QS.visas);
     toast(data.missing&&data.missing.length?'Signature enregistree - reste : '+data.missing.join(', '):'Signature enregistree - fiche prete pour validation admin');
     qClearServerQualityState();
     QS=freshQS();
@@ -688,7 +730,7 @@ async function qLoadServerBatch(idx){
   QS.informations=rec.informations||freshQS().informations;
   QS.matieresPremieres=rec.matieresPremieres||[];
   QS.melanges=rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
-  QS.visas=rec.visas||freshQS().visas;
+  QS.visas=qNormalizeVisas(rec.visas);
   renderQualite();
   toast('Fiche serveur chargee');
   window.scrollTo(0,0);
@@ -701,28 +743,59 @@ async function qDelBatch(id){
   qLoadHist();
 }
 
-/* --- Load last batch (same product) --- */
+/* --- Load latest MP lots, all finished products combined --- */
+function qSameMP(a,b){
+  if(!a||!b)return false;
+  var ca=String(a.code||'').trim(),cb=String(b.code||'').trim();
+  if(ca&&cb&&ca===cb)return true;
+  return String(a.designation||'').trim().toUpperCase()===String(b.designation||'').trim().toUpperCase();
+}
+
 async function qLoadLastBatch(){
   if(!QS.informations.refProduit){toast('Choisir un produit d\'abord');return;}
   try{
     var all=await idbAll();
-    var same=all.filter(function(r){
-      return String(r.id).indexOf('batch_')===0&&r.informations&&r.informations.refProduit===QS.informations.refProduit;
-    }).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
-    if(!same.length){toast('Aucune fiche precedente pour ce produit');return;}
-    var prev=same[0];
-    if(prev.matieresPremieres){
-      for(var i=0;i<QS.matieresPremieres.length;i++){
-        var pmp=prev.matieresPremieres.find(function(x){return x.code===QS.matieresPremieres[i].code&&x.designation===QS.matieresPremieres[i].designation;});
-        if(pmp){
-          QS.matieresPremieres[i].refFournisseur=pmp.refFournisseur||'';
-          QS.matieresPremieres[i].dateProd=pmp.dateProd||'';
-          QS.matieresPremieres[i].dateExp=pmp.dateExp||'';
-        }
+    var local=all.filter(function(r){
+      return String(r.id).indexOf('batch_')===0&&r.id!==QS.id&&Array.isArray(r.matieresPremieres);
+    }).map(function(r){r._qSortAt=r.savedAt||0;return r;});
+    var server=[];
+    try{
+      server=(await sipsRecords('quality',{timeoutMs:1800})).map(function(r){
+        var p=r.payload||{};
+        p._qSortAt=Date.parse(r.validatedAt||r.createdAt||'')||0;
+        return p;
+      }).filter(function(r){return Array.isArray(r.matieresPremieres);});
+    }catch(e){}
+    try{
+      var pend=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload',{timeoutMs:1800});
+      (pend.submissions||[]).forEach(function(s){
+        var p=s.payload||{};
+        if(!Array.isArray(p.matieresPremieres))return;
+        p._qSortAt=Date.parse(s.createdAt||p.submittedAt||'')||0;
+        server.push(p);
+      });
+    }catch(e){}
+    var prev=local.concat(server).sort(function(a,b){return (b._qSortAt||0)-(a._qSortAt||0);});
+    if(!prev.length){toast('Aucune fiche precedente avec matieres premieres');return;}
+    var filled=0,missing=[];
+    for(var i=0;i<QS.matieresPremieres.length;i++){
+      var cur=QS.matieresPremieres[i];
+      var pmp=null;
+      for(var j=0;j<prev.length&&!pmp;j++){
+        pmp=(prev[j].matieresPremieres||[]).find(function(x){return qSameMP(x,cur);})||null;
+      }
+      if(pmp){
+        cur.refFournisseur=pmp.refFournisseur||'';
+        cur.dateProd=pmp.dateProd||'';
+        cur.dateExp=pmp.dateExp||'';
+        filled++;
+      }else{
+        missing.push(cur.designation||cur.code||('MP '+(i+1)));
       }
     }
     renderQualite();
-    toast('Donnees MP chargees depuis la derniere fiche');
+    toast(filled+' MP chargee(s). Verifiez toujours que ce ne sont pas de nouveaux lots avant de valider.');
+    if(missing.length)toast('A completer manuellement : '+missing.slice(0,3).join(', ')+(missing.length>3?'...':''));
   }catch(e){toast('Erreur');}
 }
 
@@ -782,7 +855,7 @@ function qImportJSON(text){
   QS.matieresPremieres=obj.matieresPremieres||[];
   QS.matieresPremieres.forEach(function(mp){delete mp.photo;});
   QS.melanges=obj.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
-  QS.visas=obj.visas||freshQS().visas;
+  QS.visas=qNormalizeVisas(obj.visas);
   renderQualite();
   toast('Fiche qualite importee');
 }
@@ -823,7 +896,7 @@ async function qExportPDF(){
     /* Section A: Informations */
     drawText('A — Informations produit',lm,y,{size:12,bold:true});y-=16;
     var infoRows=[
-      ['Produit',QS.informations.refProduit],
+      ['Produit',recipeProductLabel(QS.informations.refProduit)],
       ['Date production',frDate(QS.informations.dateProduction)],
       ['Heure debut',QS.informations.heureDebut||'—'],
       ['Heure fin',QS.informations.heureFin||'—'],

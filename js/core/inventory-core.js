@@ -963,7 +963,7 @@ async function openHistory(){
   }
   else{
     const localH=document.createElement('div');localH.style.cssText='font-size:12px;font-weight:800;color:var(--steel-d);margin:0 0 6px;text-transform:uppercase';
-    localH.textContent='Historique local';list.append(localH);
+    localH.textContent='Locales sur cet appareil';list.append(localH);
     const clear=document.createElement('button');clear.className='del';clear.style.cssText='width:100%;margin-bottom:10px;padding:9px;border-radius:8px';
     clear.textContent='Vider tout l\'historique';
     clear.onclick=async()=>{

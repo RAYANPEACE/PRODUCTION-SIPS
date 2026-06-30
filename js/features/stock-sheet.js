@@ -1,5 +1,5 @@
 /* ================= D — FEUILLE ETAT DE STOCK THEORIQUE (lecture seule, tous roles) =================
-   Stock theorique = dernier inventaire valide (base) + production + entrees − sorties − consommation(RECF).
+   Stock theorique = dernier inventaire valide (base) + production + entrees - sorties - consommation(recettes + dechets).
    Source officielle : records VALIDES serveur ; repli local (idb) si aucun serveur.
    Detail par lot + FIFO pour les produits finis (lots derives des productions, date = date de prod).
    Aucune route serveur nouvelle : tout est derive a la lecture des records existants.
@@ -11,11 +11,16 @@
 /* ---- Sources de donnees ---- */
 
 async function stockServerSource(){
-  let inv = [], prod = [], ent = [], sort = [];
-  try { inv = await sipsRecords('inventory', { timeoutMs: 1500 }); } catch (e) { inv = []; }
-  try { prod = await sipsRecords('production', { timeoutMs: 1500 }); } catch (e) { prod = []; }
-  try { ent = await sipsRecords('entree', { timeoutMs: 1500 }); } catch (e) { ent = []; }
-  try { sort = await sipsRecords('sortie', { timeoutMs: 1500 }); } catch (e) { sort = []; }
+  const opt = { timeoutMs: 8000, compact: true, strict: true };
+  const reads = await Promise.allSettled([
+    sipsRecords('inventory', opt),
+    sipsRecords('production', opt),
+    sipsRecords('entree', opt),
+    sipsRecords('sortie', opt)
+  ]);
+  if (reads.every(r => r.status === 'rejected')) return null;
+  if (reads.some(r => r.status === 'rejected')) throw new Error('Lecture serveur incomplete : impossible de calculer un stock fiable. Verifie la connexion puis Actualiser.');
+  const inv = reads[0].value || [], prod = reads[1].value || [], ent = reads[2].value || [], sort = reads[3].value || [];
   if (!(inv.length || prod.length || ent.length || sort.length)) return null;
   const invs = inv.filter(r => r && r.payload && r.payload.st && r.payload.st.c)
     .sort((a, b) => String(a.payload.date || '').localeCompare(String(b.payload.date || ''))
@@ -91,7 +96,7 @@ async function computeStockData(){
   if (!src) src = await stockLocalSource();
   const bm = stockBaseMap(src.baseST);
   const baseMap = bm.baseMap, baseLotsMap = bm.baseLots;
-  const fl = stockApplyMovements(src.baseDate, src.prod, src.entree, src.sortie);
+  const fl = stockApplyMovements(src.baseDate, src.prod, src.entree, src.sortie, { refs: REFS, recipes: RECF, num: num, round2: round2, includeStartDate: true });
   const rows = [];
   REFS.forEach(r => {
     const c = r.code, cat = catOf(c), grp = grpDe(cat);
@@ -103,14 +108,14 @@ async function computeStockData(){
     const bl = (baseLotsMap[c] && baseLotsMap[c].length) ? baseLotsMap[c] : base;
     if (grp === 'fini' && src.baseDate) {
       // E2 : vrais lots finis par bloc (FIFO par date de production).
-      const lots = buildFinishedLots(c, bl, src.baseDate, src.prod, src.entree, fl.desToCode, fl.today);
+      const lots = buildFinishedLots(c, bl, src.baseDate, src.prod, src.entree, fl.desToCode, fl.today, { includeStartDate: true });
       // FIFO deduit les sorties ET l'eventuelle consommation RECF (si un produit fini sert d'ingredient),
       // pour que la somme des restants des lots egale toujours le stock agrege (base + flux).
       applyFifo(lots, (fl.so[c] || 0) + (fl.conso[c] || 0));
       row.lots = lots; row.lotKind = 'fini';
     } else if (typeof isPerishableMp === 'function' && isPerishableMp(r) && src.baseDate) {
       // E3 : lots de matiere perissable (FEFO par date de peremption). Conso MP = sorties + RECF.
-      const lots = buildMpLots(c, bl, src.baseDate, src.entree, fl.desToCode, fl.today);
+      const lots = buildMpLots(c, bl, src.baseDate, src.entree, fl.desToCode, fl.today, { includeStartDate: true });
       applyFifo(lots, (fl.so[c] || 0) + (fl.conso[c] || 0));
       row.lots = lots; row.lotKind = 'mp';
     }

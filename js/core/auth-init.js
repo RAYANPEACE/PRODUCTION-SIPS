@@ -4,6 +4,7 @@ var USR=lsGet('lep_usr',{nom:'',poste:''});
 function usrVisaKey(){return USR.poste||'';}
 function usrUpdateBar(){
   var bar=$('#usrBar');if(!bar)return;
+  if(SESSION){bar.style.display='none';return;}
   var name=SESSION?SESSION.nom:USR.nom;
   if(!name){bar.style.display='none';return;}
   bar.style.display='flex';
@@ -42,9 +43,19 @@ function usrAskProfile(){
 function updateAuthUI(){
   document.body.classList.toggle('admin',ADMIN);
   var lb=$('#lockBtn');
+  var lr=$('#lockRole');
+  var lo=$('#logoutBtn');
   if(lb){
     if(SESSION){lb.textContent='👤 '+(SESSION.nom||'');lb.title='Compte connecté';lb.onclick=authLogoutPrompt;}
     else{lb.textContent=ADMIN?'🔓 Admin':'🔒';lb.title='Mode administrateur';lb.onclick=toggleAdmin;}
+  }
+  if(lr){
+    if(SESSION){lr.textContent=roleLabel(SESSION.role)+(SESSION_OFFLINE?' · hors ligne':'');lr.style.display='';}
+    else{lr.textContent='';lr.style.display='none';}
+  }
+  if(lo){
+    if(SESSION){lo.style.display='';lo.onclick=authLogoutPrompt;}
+    else{lo.style.display='none';lo.onclick=null;}
   }
   usrUpdateBar();
 }
@@ -219,6 +230,11 @@ async function authBootstrap(){
   $('#agent').value=ST.agent;$('#date').value=ST.date;
   try{await authBootstrap();}catch(e){}
   applySession();
+  if(typeof sipsLoadReferentials==='function'){
+    await sipsLoadReferentials();
+    if(SESSION&&SESSION.role==='admin'&&typeof scheduleReferentialsPush==='function')scheduleReferentialsPush();
+  }
+  if(typeof sipsLoadEtat==='function')await sipsLoadEtat();
   updateAuthUI();
   buildTabbar();
   var tb=$('#tabbar');if(tb)tb.style.display='flex';

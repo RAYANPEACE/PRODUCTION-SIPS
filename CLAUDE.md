@@ -40,8 +40,9 @@ accueil, comptage, prod, ref, bilan, feuillet, capacite, plan, sorties, entree, 
 ## Regles CRITIQUES
 
 ### Securite des fichiers
-1. **JAMAIS utiliser Python** pour ecrire index.html ou tout fichier critique. Python `open('w')` tronque le fichier a 0 octets AVANT d'ecrire — si le script plante, le fichier est perdu. INCIDENT REEL le 2026-06-18 : 700 lignes de travail non-commite perdues.
-2. Utiliser UNIQUEMENT le **Edit tool** (remplacements cibles) ou **Node.js** `fs.readFileSync/writeFileSync` (edits programmatiques)
+1. **Ecriture atomique obligatoire** pour index.html ou tout fichier critique. Le piege : Python `open('w')` (et tout `mode='w'`) tronque le fichier a 0 octets AVANT d'ecrire — si le script plante entre l'ouverture et l'ecriture, le fichier est perdu. INCIDENT REEL le 2026-06-18 : 700 lignes de travail non-commite perdues. Le coupable n'est pas Python, c'est le write tronquant non-atomique.
+2. **Pour ecrire un fichier critique** : utiliser le **Edit tool** (remplacements cibles), **Node.js** `fs.readFileSync/writeFileSync`, ou une **ecriture atomique** (`Path('f').write_text(...)` en Python, ou ecrire dans un `.tmp` puis `os.replace()` / `mv`). JAMAIS de `open(f, 'w')` brut sur un fichier qu'on n'a pas deja sauvegarde.
+   - Python reste OK pour parsing, transformation de donnees, analyses — son efficacite est preservee. Seules les ECRITURES directes de fichiers critiques exigent la voie atomique.
 3. **Toujours valider la syntaxe JS** apres CHAQUE modification :
    ```
    npm run check:js

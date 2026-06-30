@@ -20,7 +20,11 @@
       <h1>Inventaire terrain — Production LEP</h1>
       <div class="sub">Comptage physique · Hunter's Food</div>
     </div>
-    <button id="lockBtn" class="lockbtn" title="Mode administrateur">🔒</button>
+    <div class="auth-actions">
+      <button id="lockBtn" class="lockbtn" title="Mode administrateur">🔒</button>
+      <span id="lockRole" class="lockrole" style="display:none"></span>
+      <button id="logoutBtn" class="logoutbtn" style="display:none">Déconnexion</button>
+    </div>
   </div>
   <nav class="tabbar" id="tabbar" style="display:none"></nav>
   <div class="usr-bar" id="usrBar" style="display:none"><span class="usr-name" id="usrLabel"></span><span class="usr-role" id="usrRole"></span><button class="usr-edit" id="usrEdit">Modifier</button></div>

@@ -193,12 +193,13 @@ async function sipsRecords(type,opt){
   try{
     opt=opt||{};
     const q=[];if(type)q.push('type='+encodeURIComponent(type));q.push('status=validated');
+    if(opt.compact)q.push('compact=1');
     const fetchOpt={headers:sipsAdminHeaders()};
     if(opt.timeoutMs)fetchOpt.timeoutMs=opt.timeoutMs;
     const data=await sipsFetch('/api/records'+(q.length?'?'+q.join('&'):''),fetchOpt);
     const rows=data.records||[];
     return rows;
-  }catch(e){return [];}
+  }catch(e){if(opt&&opt.strict)throw e;return [];}
 }
 
 let META=lsGet('lep_meta',{});                 // {code:{des?,ub?,cat?}}
@@ -207,22 +208,210 @@ let ETAT=lsGet('lep_etat',null); if(ETAT===null){ETAT={...SEED_ETAT};lsSet('lep_
 let ETAT_DATE=lsGet('lep_etat_date','');   // date de l'état de stock (ERP) : le Bilan s'apparie à l'inventaire ≤ cette date
 let COND=lsGet('lep_cond',null); if(COND===null){COND=clone(SEED_COND);lsSet('lep_cond',COND);}
 let RECF=lsGet('lep_recf',null); if(RECF===null){RECF=clone(SEED_RECF);lsSet('lep_recf',RECF);}
+let ETAT_PUSH_TIMER=null;
 
 const UB_OPTS=['kg','carton','sac','unite','m'];
 const CAT_OPTS=[['mp','Ingrédient (sachet)'],['film','Film'],['carton','Carton'],['emballage','Emballage divers'],['fini','Produit fini']];
+const METHOD_OPTS=[['simple','Simple'],['carton','Cartons/palettes'],['sac','Sacs/palettes'],['cartvide','Cartons vides'],['bobine','Bobine'],['vrac','Sacs/vrac'],['tare','Pesée avec tare'],['plastique','Sacs plastique']];
+let REF_PUSH_TIMER=null;
+function refSort(a,b){return String(a.code||'').localeCompare(String(b.code||''),'fr',{numeric:true});}
+function refsByCode(rows){return (rows||[]).slice().sort(refSort);}
+function finishedProductRefs(){return refsByCode(REFS.filter(r=>r.cat==='fini'));}
+function recipeProductTokens(s){
+  const stop={CARTON:1,LAIT:1,EN:1,POUDRE:1,X:1,DE:1,DU:1,LA:1,LE:1};
+  const parts=String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().match(/[A-Z0-9]+/g)||[];
+  return parts.filter(t=>!stop[t]);
+}
+function recipeProductRef(prod){
+  const byCode=REFS.find(r=>r.cat==='fini'&&r.code===prod);
+  if(byCode)return byCode;
+  const exact=REFS.find(r=>r.cat==='fini'&&r.des===prod);
+  if(exact)return exact;
+  const want=recipeProductTokens(prod);
+  let best=null,bestScore=0;
+  REFS.filter(r=>r.cat==='fini').forEach(r=>{
+    const got=recipeProductTokens(r.des);
+    const score=want.filter(t=>got.includes(t)).length;
+    if(score>bestScore){best=r;bestScore=score;}
+  });
+  return bestScore>=2?best:null;
+}
+function recipeProductCode(prod){const r=recipeProductRef(prod);return r?r.code:'';}
+function recipeProductLabel(prod){const r=recipeProductRef(prod);return r?(r.code+' - '+r.des):prod;}
+function recipeProductSort(a,b){return String(recipeProductCode(a)||'999999').localeCompare(String(recipeProductCode(b)||'999999'),'fr',{numeric:true})||String(a).localeCompare(String(b),'fr');}
+function recipeForProduct(prod){
+  if(RECF&&RECF[prod])return RECF[prod];
+  const r=recipeProductRef(prod);
+  if(!r)return [];
+  return (RECF&&RECF[r.code])||(RECF&&RECF[r.des])||[];
+}
+function recipeKeys(){return finishedProductRefs().filter(r=>recipeForProduct(r.code).length||RECF&&RECF[r.code]).map(r=>r.code).sort(recipeProductSort);}
+function currentRecipeProductCode(prod){const r=recipeProductRef(prod);return r&&recipeForProduct(r.code).length?r.code:'';}
+function productCodeOf(prod){const r=recipeProductRef(prod);return r?r.code:String(prod||'');}
+function productArticleOptions(selectedName){
+  return finishedProductRefs().map(r=>'<option value="'+esc(r.code)+'"'+(r.code===productCodeOf(selectedName)?' selected':'')+'>'+esc(r.code+' - '+r.des)+'</option>').join('');
+}
+function methodDefaults(m){
+  if(m==='carton')return {etPal:1,cartEt:1};
+  if(m==='sac')return {etPal:1,sacEt:1};
+  if(m==='cartvide')return {pqEt:1,etPal:1,cartPaquet:1};
+  if(m==='bobine')return {epRef:1,poidsRef:1};
+  if(m==='vrac')return {sacPal:1,kgSac:1};
+  if(m==='tare')return {caisse:0,film:0,kraft:0};
+  if(m==='plastique')return {parPaquet:1,parRouleau:1};
+  return {};
+}
+function groupForRef(r){
+  if(r.cat==='fini'&&r.m==='carton')return 'pf_cart';
+  if(r.cat==='fini'&&r.m==='sac')return 'pf_sac';
+  if(r.m==='cartvide')return 'cart_vide';
+  if(r.m==='bobine')return 'film';
+  if(r.m==='vrac')return 'vrac';
+  if(r.m==='tare')return 'tare';
+  if(r.m==='plastique')return 'plast';
+  return 'divers';
+}
+function persistReferentials(){
+  lsSet('lep_meta',META);lsSet('lep_added',ADDED);lsSet('lep_cond',COND);lsSet('lep_recf',RECF);
+}
+function renameProductReferences(from,to){
+  from=String(from||'').trim();to=String(to||'').trim();
+  if(!from||!to||from===to)return false;
+  let changed=false;
+  if(RECF&&RECF[from]){
+    if(!RECF[to])RECF[to]=RECF[from];
+    delete RECF[from];changed=true;
+  }
+  if(typeof PLAN!=='undefined'&&PLAN&&PLAN[from]){
+    if(!PLAN[to])PLAN[to]=PLAN[from];
+    delete PLAN[from];changed=true;
+  }
+  if(typeof MACHINES!=='undefined'&&Array.isArray(MACHINES)){
+    MACHINES.forEach(m=>(m.prods||[]).forEach(e=>{if(e&&e.p===from){e.p=to;changed=true;}}));
+  }
+  return changed;
+}
+function normalizeProductReferences(){
+  let changed=false;
+  Object.keys(RECF||{}).forEach(prod=>{
+    const r=recipeProductRef(prod);
+    if(r&&r.code!==prod)changed=renameProductReferences(prod,r.code)||changed;
+  });
+  Object.keys(typeof PLAN!=='undefined'&&PLAN||{}).forEach(prod=>{
+    const r=recipeProductRef(prod);
+    if(r&&r.code!==prod)changed=renameProductReferences(prod,r.code)||changed;
+  });
+  if(typeof MACHINES!=='undefined'&&Array.isArray(MACHINES)){
+    MACHINES.forEach(m=>(m.prods||[]).forEach(e=>{
+      const r=recipeProductRef(e&&e.p);
+      if(e&&r&&r.code!==e.p){e.p=r.code;changed=true;}
+    }));
+  }
+  if(changed){
+    lsSet('lep_recf',RECF);
+    if(typeof savePlan==='function')savePlan(false);
+    if(typeof saveMachines==='function')saveMachines(false);
+  }
+  return changed;
+}
+function referentialsPayload(){
+  normalizeProductReferences();
+  return {
+    meta:META,added:ADDED,cond:COND,recf:RECF,
+    machines:typeof MACHINES!=='undefined'?MACHINES:[],
+    prodcfg:typeof PRODCFG!=='undefined'?PRODCFG:{},
+    plan:typeof PLAN!=='undefined'?PLAN:{}
+  };
+}
+async function sipsLoadReferentials(){
+  if(!SESSION_TOKEN)return false;
+  try{
+    const data=await sipsFetch('/api/referentials',{timeoutMs:1800});
+    const r=(data&&data.referentials)||{};
+    if(!r.updatedAt&&!Object.keys(r.meta||{}).length&&!((r.added||[]).length))return false;
+    const localMeta=META,localAdded=ADDED,localCond=COND,localRecf=RECF;
+    if(SESSION&&SESSION.role==='admin'){
+      META=Object.assign({},localMeta,r.meta||{});
+      const byCode={};(localAdded||[]).concat(Array.isArray(r.added)?r.added:[]).forEach(a=>{if(a&&a.code)byCode[a.code]=a;});
+      ADDED=Object.keys(byCode).map(k=>byCode[k]);
+      COND=Object.assign({},localCond,r.cond||{});
+      RECF=Object.assign({},localRecf,r.recf||{});
+    }else{
+      META=r.meta||{};ADDED=Array.isArray(r.added)?r.added:[];COND=r.cond||COND;RECF=r.recf||RECF;
+    }
+    if(typeof MACHINES!=='undefined'&&Array.isArray(r.machines)&&r.machines.length)MACHINES=r.machines;
+    if(typeof PRODCFG!=='undefined'&&r.prodcfg)PRODCFG=r.prodcfg;
+    if(typeof PLAN!=='undefined'&&r.plan)PLAN=r.plan;
+    persistReferentials();
+    if(typeof saveMachines==='function')saveMachines(false);
+    if(typeof savePlan==='function')savePlan(false);
+    applyReferentials();mergeAndMigrate();
+    return true;
+  }catch(e){return false;}
+}
+async function sipsPushReferentials(){
+  if(!SESSION_TOKEN||!SESSION||SESSION.role!=='admin')return false;
+  await sipsFetch('/api/referentials',{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({referentials:referentialsPayload()})});
+  return true;
+}
+function scheduleReferentialsPush(){
+  normalizeProductReferences();
+  persistReferentials();
+  clearTimeout(REF_PUSH_TIMER);
+  REF_PUSH_TIMER=setTimeout(function(){sipsPushReferentials().catch(function(){});},700);
+}
+async function refSyncPull(){
+  const ok=await sipsLoadReferentials();
+  if(ok){renderRef();toast('Referentiels serveur actualises');}
+  else toast('Aucun referentiel serveur recupere. Si le serveur vient d etre mis a jour, redemarre-le.');
+}
+async function refSyncPush(){
+  persistReferentials();
+  if(!SESSION_TOKEN||!SESSION||SESSION.role!=='admin'){
+    toast('Connecte-toi avec le compte Chef d usine, puis reessaie.');
+    return;
+  }
+  try{
+    await sipsPushReferentials();
+    toast('Referentiels envoyes au serveur');
+  }catch(e){
+    if(e&&e.status===401)toast('Session admin non reconnue par le serveur : deconnecte-toi puis reconnecte-toi.');
+    else if(e&&e.status===403)toast(e.message||'Action admin bloquee par le serveur');
+    else if(e&&e.status===404)toast('Serveur a redemarrer : cette version ne connait pas encore les referentiels.');
+    else toast('Envoi impossible : '+((e&&e.message)||'serveur indisponible'));
+  }
+}
 
 /* Applique les référentiels sur la liste de comptage REFS (catégorie, unité de base, désignation, articles ajoutés) */
 function applyReferentials(){
   REFS.forEach(r=>{
     const m=META[r.code]||{};
+    const nextCat=m.cat||SEED_CAT[r.code]||'';
+    const nextDes=m.des||r.des;
+    if((r.cat==='fini'||nextCat==='fini')&&r.code)renameProductReferences(r.des,r.code);
     r.ub=m.ub||SEED_UB[r.code]||r.u||'unite';
-    r.cat=m.cat||SEED_CAT[r.code]||'';
+    r.cat=nextCat;
+    if(m.m)r.m=m.m;
+    if(m.g)r.g=m.g;else r.g=groupForRef(r);
+    if(m.p)r.p=Object.assign(methodDefaults(r.m),m.p);
     if(m.des)r.des=m.des;
   });
   ADDED.forEach(a=>{
-    if(REFS.some(r=>r.code===a.code))return;
-    REFS.push({code:a.code,des:a.des||a.code,u:a.ub||'unité',ub:a.ub||'unite',cat:a.cat||'',g:'divers',m:'simple',p:{},_added:true});
+    const existing=REFS.find(r=>r.code===a.code);
+    const m=META[a.code]||{};
+    const nextDes=m.des||a.des||a.code;
+    const nextCat=m.cat||a.cat||'';
+    if(existing){
+      if((existing.cat==='fini'||nextCat==='fini')&&existing.code)renameProductReferences(existing.des,existing.code);
+      existing.des=nextDes;existing.u=m.ub||a.ub||existing.u||'unité';existing.ub=m.ub||a.ub||existing.ub||'unite';existing.cat=nextCat;existing.m=m.m||a.m||existing.m||'simple';existing.g=m.g||a.g||groupForRef(existing);existing.p=Object.assign(methodDefaults(existing.m),m.p||a.p||existing.p||{});existing._added=true;
+      return;
+    }
+    const ref={code:a.code,des:m.des||a.des||a.code,u:m.ub||a.ub||'unité',ub:m.ub||a.ub||'unite',cat:m.cat||a.cat||'',m:m.m||a.m||'simple',p:m.p||a.p||{},_added:true};
+    ref.g=m.g||a.g||groupForRef(ref);ref.p=Object.assign(methodDefaults(ref.m),ref.p||{});
+    REFS.push(ref);
   });
+  REFS.sort(refSort);
+  normalizeProductReferences();
 }
 function pnum(s){return num(String(s==null?'':s).replace(/[\s\u00a0]/g,''));}
 function esc(s){return String(s==null?'':s).replace(/"/g,'&quot;');}
@@ -236,6 +425,28 @@ async function ensurePDF(){
   if(!window.PDFLib)await loadScript('pdf-lib.min.js');
   if(!window.pdfjsLib)await loadScript('pdf.min.js');
   if(window.pdfjsLib&&pdfjsLib.GlobalWorkerOptions&&!pdfjsLib.GlobalWorkerOptions.workerSrc)pdfjsLib.GlobalWorkerOptions.workerSrc='pdf.worker.min.js';
+}
+async function sipsLoadEtat(){
+  if(!SESSION_TOKEN)return false;
+  try{
+    const data=await sipsFetch('/api/etat',{timeoutMs:1800});
+    const incoming=data&&data.etat||{};
+    if(!Object.keys(incoming).length&&!data.date)return false;
+    ETAT=incoming;ETAT_DATE=data.date||'';
+    lsSet('lep_etat',ETAT);lsSet('lep_etat_date',ETAT_DATE);
+    return true;
+  }catch(e){return false;}
+}
+async function sipsPushEtat(){
+  if(!SESSION_TOKEN||!SESSION||SESSION.role!=='admin')return false;
+  try{
+    await sipsFetch('/api/etat',{method:'POST',body:JSON.stringify({etat:ETAT,date:ETAT_DATE})});
+    return true;
+  }catch(e){return false;}
+}
+function scheduleEtatPush(){
+  clearTimeout(ETAT_PUSH_TIMER);
+  ETAT_PUSH_TIMER=setTimeout(sipsPushEtat,700);
 }
 
 /* ---------- RÔLES (PIN 4 chiffres) ---------- */
@@ -284,6 +495,13 @@ function hasTab(id){
 
 /* ---------- ONGLETS ---------- */
 const TABS=[['accueil','Accueil',true,false],['comptage','Comptage',true,false],['prod','Production',true,false],['qualite','Qualité',true,false],['stock','Stock',true,false],['ref','Référentiels',true,true],['bilan','Bilan',true,true],['feuillet','Feuillet',true,true],['capacite','Capacité',true,true],['plan','Plan',true,true],['sorties','Sorties',true,false],['entree','Entrées',true,false],['analyse','Analyses',true,true],['serveur','Serveur',true,true]];
+const TAB_ICONS={accueil:'🏠',stock:'📦',prod:'🏭',comptage:'🧮',entree:'⬇️',sorties:'⬆️',qualite:'✅',bilan:'📊',analyse:'📈',feuillet:'📄',capacite:'⏱️',plan:'📅',ref:'⚙️',serveur:'🖥️'};
+const TAB_MAIN=['accueil','stock','comptage','prod','entree','sorties','qualite'];
+const TAB_MORE_GROUPS=[
+  ['Documents',['feuillet']],
+  ['Pilotage',['bilan','analyse','capacite','plan']],
+  ['Réglages',['ref','serveur']]
+];
 let TAB='accueil';
 let SIPS_NOTIF_COUNTS={};
 let SIPS_NOTIF_PREV_TOTAL=null;
@@ -291,6 +509,23 @@ let SIPS_NOTIF_BUSY=false;
 let SIPS_NOTIF_AUDIO=false;
 document.addEventListener('pointerdown',function(){SIPS_NOTIF_AUDIO=true;},{once:true});
 document.addEventListener('keydown',function(){SIPS_NOTIF_AUDIO=true;},{once:true});
+document.addEventListener('pointerdown',function(e){
+  const m=document.querySelector('#tabbar .tabmore[open]');
+  if(m&&!m.contains(e.target))m.open=false;
+});
+function sipsPlaceMorePanel(more){
+  if(!more||!window.matchMedia('(max-width:640px)').matches)return;
+  const sum=more.querySelector('summary'),panel=more.querySelector('.tabmore-panel');
+  if(!sum||!panel)return;
+  const r=sum.getBoundingClientRect();
+  const w=Math.min(270,window.innerWidth-24);
+  let left=Math.max(12,Math.min(r.left,window.innerWidth-w-12));
+  let top=Math.max(8,r.bottom+7);
+  panel.style.setProperty('--tabmore-left',left+'px');
+  panel.style.setProperty('--tabmore-top',top+'px');
+  panel.style.setProperty('--tabmore-width',w+'px');
+  panel.style.setProperty('--tabmore-maxh',Math.max(160,window.innerHeight-top-12)+'px');
+}
 function sipsNotifBeep(){
   if(!SIPS_NOTIF_AUDIO)return;
   try{
@@ -302,7 +537,7 @@ function sipsNotifBeep(){
   }catch(e){}
 }
 function sipsApplyNotifBadges(){
-  document.querySelectorAll('#tabbar .tab').forEach(function(btn){
+  document.querySelectorAll('#tabbar .tab[data-tab]').forEach(function(btn){
     const id=btn.dataset.tab;
     let b=btn.querySelector('.notif-badge');
     if(!b){b=document.createElement('span');b.className='notif-badge';btn.appendChild(b);}
@@ -311,6 +546,12 @@ function sipsApplyNotifBadges(){
     b.classList.toggle('on',n>0);
     btn.title=n>0?n+' notification(s) a traiter':'';
   });
+  const mb=$('#tabMoreBadge');
+  if(mb){
+    const n=Object.keys(SIPS_NOTIF_COUNTS).reduce(function(a,k){return a+(TAB_MAIN.indexOf(k)<0?(SIPS_NOTIF_COUNTS[k]||0):0);},0);
+    mb.textContent=n>99?'99+':String(n);
+    mb.classList.toggle('on',n>0);
+  }
 }
 function sipsSetNotifCounts(counts){
   SIPS_NOTIF_COUNTS=counts||{};
@@ -357,21 +598,47 @@ async function sipsRefreshNotifications(){
 }
 function buildTabbar(){
   const tb=$('#tabbar');if(!tb)return;tb.innerHTML='';
-  TABS.forEach(([id,label,ready,adminOnly])=>{
-    if(!hasTab(id))return;
+  const visible=TABS.filter(function(t){return hasTab(t[0]);});
+  const byId={};visible.forEach(function(t){byId[t[0]]=t;});
+  const makeBtn=function(t,inMore){
+    const id=t[0],label=t[1],ready=t[2];
     const b=document.createElement('button');
     b.className='tab'+(ready?'':' soon');b.dataset.tab=id;
-    b.textContent=ready?label:label+' · à venir';
-    b.onclick=()=>{ if(!ready){toast('Module à construire à l\u2019étape suivante');return;} switchTab(id); };
+    const ico=document.createElement('span');ico.className='tab-ico';ico.textContent=TAB_ICONS[id]||'\u2022';
+    const txt=document.createElement('span');txt.className='tab-label';txt.textContent=ready?label:label+' · à venir';
+    b.append(ico,txt);
+    b.onclick=()=>{ if(!ready){toast('Module à construire à l\u2019étape suivante');return;} if(inMore){const d=b.closest('details');if(d)d.open=false;} switchTab(id); };
     const badge=document.createElement('span');badge.className='notif-badge';b.appendChild(badge);
-    tb.appendChild(b);
-  });
+    return b;
+  };
+  TAB_MAIN.forEach(function(id){if(byId[id])tb.appendChild(makeBtn(byId[id],false));});
+  const rest=visible.filter(function(t){return TAB_MAIN.indexOf(t[0])<0;});
+  if(rest.length){
+    const more=document.createElement('details');more.className='tabmore';
+    const sum=document.createElement('summary');sum.className='tab more-toggle';sum.id='tabMoreToggle';
+    const ico=document.createElement('span');ico.className='tab-ico';ico.textContent='\u22EF';
+    const txt=document.createElement('span');txt.className='tab-label';txt.textContent='Plus';
+    const badge=document.createElement('span');badge.className='notif-badge';badge.id='tabMoreBadge';
+    sum.append(ico,txt,badge);more.appendChild(sum);
+    sum.onclick=function(e){e.preventDefault();more.open=!more.open;if(more.open)sipsPlaceMorePanel(more);};
+    sum.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();more.open=!more.open;if(more.open)sipsPlaceMorePanel(more);}};
+    const panel=document.createElement('div');panel.className='tabmore-panel';
+    TAB_MORE_GROUPS.forEach(function(g){
+      const ids=g[1].filter(function(id){return byId[id];});
+      if(!ids.length)return;
+      const title=document.createElement('div');title.className='tabmore-title';title.textContent=g[0];panel.appendChild(title);
+      ids.forEach(function(id){panel.appendChild(makeBtn(byId[id],true));});
+    });
+    rest.forEach(function(t){if(!panel.querySelector('[data-tab="'+t[0]+'"]'))panel.appendChild(makeBtn(t,true));});
+    more.appendChild(panel);tb.appendChild(more);
+  }
   sipsApplyNotifBadges();
   sipsRefreshNotifications();
 }
 async function switchTab(id){
   TAB=id;
   document.querySelectorAll('#tabbar .tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===id));
+  {const mt=$('#tabMoreToggle');if(mt)mt.classList.toggle('active',TAB_MAIN.indexOf(id)<0);}
   const isC=(id==='comptage');
   const ct=$('#comptageTools');if(ct)ct.style.display=isC?'':'none';
   const fm=$('#footMain');if(fm)fm.style.display=isC?'':'none';
@@ -380,7 +647,7 @@ async function switchTab(id){
   if(isC){render();}
   else if(id==='accueil'){renderAccueil();}
   else if(id==='ref'){renderRef();}
-  else if(id==='bilan'){await renderBilan();}
+  else if(id==='bilan'){await sipsLoadEtat();await renderBilan();}
   else if(id==='feuillet'){renderFeuillet();}
   else if(id==='capacite'){renderCapacite();}
   else if(id==='plan'){renderPlan();}
@@ -408,7 +675,7 @@ function renderRef(){
     +'<button data-rt="cond">Conditionnement</button>'
     +'<button data-rt="recf">Recettes</button>'
     +'<button data-rt="mach">Machines</button>'
-    +'</div><div id="refBody"></div>'
+    +'</div><div class="ref-sync"><button id="refPull">Actualiser serveur</button>'+(SESSION&&SESSION.role==='admin'?'<button id="refPush">Envoyer serveur</button>':'')+'</div><div id="refBody"></div>'
     // Bouton de sortie admin : seulement en mode legacy PIN (sans session serveur).
     // En session serveur, la deconnexion se fait via la pastille compte en haut a droite -> redondant.
     +(SESSION?'':'<div class="ref-foot"><button id="adminOut">Quitter le mode admin</button></div>')
@@ -418,6 +685,8 @@ function renderRef(){
     b.onclick=()=>{REFTAB=b.dataset.rt;renderRef();};
   });
   {const ao=$('#adminOut');if(ao)ao.onclick=toggleAdmin;}
+  {const rp=$('#refPull');if(rp)rp.onclick=refSyncPull;}
+  {const rs=$('#refPush');if(rs)rs.onclick=refSyncPush;}
   const body=$('#refBody');
   if(REFTAB==='articles')renderArticles(body);
   else if(REFTAB==='etat')renderEtat(body);
@@ -426,17 +695,23 @@ function renderRef(){
   else renderRecf(body);
 }
 
-function saveMetaFor(code,patch){META[code]={...(META[code]||{}),...patch};lsSet('lep_meta',META);}
+function saveMetaFor(code,patch){
+  META[code]={...(META[code]||{}),...patch};lsSet('lep_meta',META);
+  const a=ADDED.find(x=>x.code===code);
+  if(a){Object.assign(a,patch);lsSet('lep_added',ADDED);}
+  scheduleReferentialsPush();
+}
 function renderArticles(body){
-  const rows=REFS.map(r=>{
+  const rows=refsByCode(REFS).map(r=>{
     const opts=UB_OPTS.map(u=>'<option '+(r.ub===u?'selected':'')+'>'+u+'</option>').join('');
     const copts=CAT_OPTS.map(o=>'<option value="'+o[0]+'" '+(r.cat===o[0]?'selected':'')+'>'+o[1]+'</option>').join('');
+    const mopts=METHOD_OPTS.map(o=>'<option value="'+o[0]+'" '+(r.m===o[0]?'selected':'')+'>'+o[1]+'</option>').join('');
     return '<div class="ref-row" data-code="'+r.code+'">'
       +'<div class="rc">'+r.code+(r._added?' <span class="addedtag">ajouté</span>':'')+'</div>'
       +'<input class="ades" value="'+esc(r.des)+'">'
       +'<select class="aub">'+opts+'</select>'
       +'<select class="acat"><option value="">— catégorie —</option>'+copts+'</select>'
-      +'<span class="amet" title="méthode de comptage (réglée dans l\u2019onglet Comptage)">'+r.m+'</span>'
+      +'<select class="amet" title="methode de comptage">'+mopts+'</select>'
       +(r._added?'<button class="adel" title="supprimer">✕</button>':'<span class="adel-lock" title="article du référentiel de base">🔒</span>')
       +'</div>';
   }).join('');
@@ -446,9 +721,13 @@ function renderArticles(body){
   $('#artAdd').onclick=addArticle;
   body.querySelectorAll('.ref-row').forEach(row=>{
     const code=row.dataset.code;const r=REFS.find(x=>x.code===code);
-    row.querySelector('.ades').addEventListener('input',e=>{r.des=e.target.value;saveMetaFor(code,{des:e.target.value});});
+    row.querySelector('.ades').addEventListener('input',e=>{const old=r.des;r.des=e.target.value;if(r.cat==='fini')renameProductReferences(old,r.code);saveMetaFor(code,{des:e.target.value});});
     row.querySelector('.aub').addEventListener('change',e=>{r.ub=e.target.value;saveMetaFor(code,{ub:e.target.value});});
-    row.querySelector('.acat').addEventListener('change',e=>{r.cat=e.target.value;saveMetaFor(code,{cat:e.target.value});});
+    row.querySelector('.acat').addEventListener('change',e=>{r.cat=e.target.value;r.g=groupForRef(r);saveMetaFor(code,{cat:r.cat,g:r.g});});
+    row.querySelector('.amet').addEventListener('change',e=>{
+      r.m=e.target.value;r.g=groupForRef(r);r.p=Object.assign(methodDefaults(r.m),{});
+      ST.c[code]=blankEntry(r);saveCounts();saveMetaFor(code,{m:r.m,g:r.g,p:r.p});renderRef();
+    });
     const del=row.querySelector('.adel');if(del)del.onclick=()=>delArticle(code);
   });
 }
@@ -457,32 +736,32 @@ function addArticle(){
   if(!/^\d{6}$/.test(code)){alert('Le code doit faire 6 chiffres.');return;}
   if(REFS.some(r=>r.code===code)){alert('Ce code existe déjà.');return;}
   const des=prompt('Désignation :');if(des==null)return;
-  const rec={code:code,des:des||code,ub:'unite',cat:''};
+  const rec={code:code,des:des||code,ub:'unite',cat:'',m:'simple',g:'divers',p:{}};
   ADDED.push(rec);lsSet('lep_added',ADDED);
   const ref={code:code,des:rec.des,u:'unité',ub:'unite',cat:'',g:'divers',m:'simple',p:{},_added:true};
-  REFS.push(ref);ST.c[code]=blankEntry(ref);saveCounts();
+  REFS.push(ref);REFS.sort(refSort);ST.c[code]=blankEntry(ref);saveCounts();scheduleReferentialsPush();
   renderRef();toast('Article ajouté (compté en saisie directe)');
 }
 function delArticle(code){
   if(!confirm('Supprimer cet article ajouté ?'))return;
   ADDED=ADDED.filter(a=>a.code!==code);lsSet('lep_added',ADDED);
   const i=REFS.findIndex(r=>r.code===code);if(i>-1)REFS.splice(i,1);
-  delete ST.c[code];delete META[code];lsSet('lep_meta',META);saveCounts();
+  delete ST.c[code];delete META[code];lsSet('lep_meta',META);saveCounts();scheduleReferentialsPush();
   renderRef();toast('Article supprimé');
 }
 
 /* Convertit un n° de série Excel (jours depuis 1899-12-30) en date ISO AAAA-MM-JJ */
 function excelSerialToISO(n){const ms=Math.round((n-25569)*86400000);const d=new Date(ms);return isNaN(d.getTime())?'':d.toISOString().slice(0,10);}
 function renderEtat(body){
-  const rows=REFS.map(r=>'<div class="ref-row etat" data-code="'+r.code+'"><div class="rc">'+r.code+'</div><div class="ed">'+esc(r.des)+'</div><input class="eval" inputmode="decimal" enterkeyhint="done" value="'+(ETAT[r.code]!=null?ETAT[r.code]:'')+'"></div>').join('');
+  const rows=refsByCode(REFS).map(r=>'<div class="ref-row etat" data-code="'+r.code+'"><div class="rc">'+r.code+'</div><div class="ed">'+esc(r.des)+'</div><input class="eval" inputmode="decimal" enterkeyhint="done" value="'+(ETAT[r.code]!=null?ETAT[r.code]:'')+'"></div>').join('');
   body.innerHTML='<p class="ref-hint">Stock théorique de référence — <b>seule base du Bilan et des écarts</b>. Une valeur par article ; vide = 0.</p>'
     +'<div class="etat-date"><label for="etatDate">📅 Date de cet état de stock</label><input id="etatDate" type="date" value="'+esc(ETAT_DATE||'')+'"><div class="etat-date-h">Le Bilan le comparera automatiquement à l’inventaire du même jour ou juste avant (jamais postérieur).</div></div>'
     +'<button class="ref-add" id="etatXlsx">Importer le fichier Excel (.xlsx)</button>'
     +'<div class="ref-list">'+rows+'</div>';
-  const ed=$('#etatDate');if(ed)ed.addEventListener('input',e=>{ETAT_DATE=e.target.value||'';lsSet('lep_etat_date',ETAT_DATE);});
+  const ed=$('#etatDate');if(ed)ed.addEventListener('input',e=>{ETAT_DATE=e.target.value||'';lsSet('lep_etat_date',ETAT_DATE);scheduleEtatPush();});
   body.querySelectorAll('.eval').forEach(inp=>{
     const code=inp.closest('.ref-row').dataset.code;
-    inp.addEventListener('input',e=>{const v=e.target.value.trim();if(v==='')delete ETAT[code];else ETAT[code]=pnum(v);lsSet('lep_etat',ETAT);});
+    inp.addEventListener('input',e=>{const v=e.target.value.trim();if(v==='')delete ETAT[code];else ETAT[code]=pnum(v);lsSet('lep_etat',ETAT);scheduleEtatPush();});
   });
   $('#etatXlsx').onclick=()=>{
     const fi=document.createElement('input');fi.type='file';fi.accept='.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';fi.style.display='none';
@@ -506,7 +785,7 @@ function renderEtat(body){
             });
           }});
         if(foundDate){ETAT_DATE=foundDate;lsSet('lep_etat_date',ETAT_DATE);}
-        lsSet('lep_etat',ETAT);renderRef();toast(n+' valeur(s) importée(s)'+(foundDate?(' · état daté du '+foundDate):''));
+        lsSet('lep_etat',ETAT);renderRef();sipsPushEtat();toast(n+' valeur(s) importée(s)'+(foundDate?(' · état daté du '+foundDate):''));
       }catch(err){toast('Excel illisible : '+(err&&err.message||err));}};
       rd.readAsArrayBuffer(f);
     };
@@ -516,7 +795,7 @@ function renderEtat(body){
 
 function renderCond(body){
   const has=r=>COND[r.code]&&(COND[r.code].lv||[]).length>0;
-  const shown=REFS.filter(has);
+  const shown=refsByCode(REFS.filter(has));
   const cards=shown.map(r=>{
     const c=COND[r.code]||{ub:r.ub,lv:[]};const lv=c.lv||[];
     let lvHtml='';
@@ -526,7 +805,7 @@ function renderCond(body){
     }
     return '<div class="ref-card" data-code="'+r.code+'"><div class="cardh"><b>'+r.code+'</b> '+esc(r.des)+'<span class="ubtag">base : '+r.ub+'</span><button class="cond-del" title="retirer le conditionnement">🗑</button></div><div class="condlvs">'+lvHtml+'</div></div>';
   }).join('');
-  const missing=REFS.filter(r=>!has(r));
+  const missing=refsByCode(REFS.filter(r=>!has(r)));
   const addSel='<div class="cond-add"><select id="condAddSel"><option value="">+ Ajouter un conditionnement…</option>'+missing.map(r=>`<option value="${esc(r.code)}">${esc(r.des)} (${esc(r.code)})</option>`).join('')+'</select></div>';
   body.innerHTML='<p class="ref-hint">Jusqu\u2019à 3 niveaux d\u2019emballage. <b>Taille exprimée en unité de base, déjà multipliée</b> (ex. étage = 150 cartons). Choisis l\u2019article à conditionner dans la liste ci-dessous.</p><div class="ref-cards">'+cards+'</div>'+addSel;
   body.querySelectorAll('.ref-card').forEach(card=>{
@@ -535,33 +814,29 @@ function renderCond(body){
       const arr=[];
       card.querySelectorAll('.condlv').forEach(d=>{const nom=d.querySelector('.cnom').value.trim();const t=d.querySelector('.ctail').value.trim();if(nom&&t!=='')arr.push([nom,pnum(t)]);});
       const r=REFS.find(x=>x.code===code)||{};
-      COND[code]={ub:r.ub,lv:arr};lsSet('lep_cond',COND);
+      COND[code]={ub:r.ub,lv:arr};lsSet('lep_cond',COND);scheduleReferentialsPush();
     };
     card.querySelectorAll('input').forEach(i=>i.addEventListener('input',save));
-    card.querySelector('.cond-del').onclick=()=>{const r=REFS.find(x=>x.code===code)||{};COND[code]={ub:r.ub,lv:[]};lsSet('lep_cond',COND);renderRef();};
+    card.querySelector('.cond-del').onclick=()=>{const r=REFS.find(x=>x.code===code)||{};COND[code]={ub:r.ub,lv:[]};lsSet('lep_cond',COND);scheduleReferentialsPush();renderRef();};
   });
   const as=body.querySelector('#condAddSel');
-  if(as)as.onchange=()=>{const code=as.value;if(!code)return;const r=REFS.find(x=>x.code===code)||{};COND[code]={ub:r.ub,lv:[['',''],['',''],['','']].slice(0,1)};lsSet('lep_cond',COND);renderRef();};
+  if(as)as.onchange=()=>{const code=as.value;if(!code)return;const r=REFS.find(x=>x.code===code)||{};COND[code]={ub:r.ub,lv:[['',''],['',''],['','']].slice(0,1)};lsSet('lep_cond',COND);scheduleReferentialsPush();renderRef();};
 }
 
-function articleOptions(sel){return REFS.map(a=>`<option value="${esc(a.code)}"${a.code===sel?' selected':''}>${esc(a.des)} (${esc(a.code)})</option>`).join('');}
+function articleOptions(sel){return refsByCode(REFS).map(a=>`<option value="${esc(a.code)}"${a.code===sel?' selected':''}>${esc(a.des)} (${esc(a.code)})</option>`).join('');}
 function renderRecf(body){
-  const prods=Object.keys(RECF);
+  const prods=recipeKeys();
   const cards=prods.map(p=>{
-    const rows=RECF[p].map((m,i)=>{
+    const rows=recipeForProduct(p).map((m,i)=>{
       let extra='';if(m.code&&!REFS.some(a=>a.code===m.code))extra=`<option value="${esc(m.code)}" selected>${esc(m.des||m.code)} (${esc(m.code)})</option>`;
       return '<div class="recrow" data-i="'+i+'"><select class="msel"><option value=""'+(m.code?'':' selected')+'>— choisir un article —</option>'+extra+articleOptions(m.code)+'</select><input class="mqte" inputmode="decimal" placeholder="qté/u" value="'+(m.qte!=null?m.qte:'')+'"><button class="mdel" title="retirer">✕</button></div>';
     }).join('');
-    return '<div class="ref-card" data-prod="'+esc(p)+'"><div class="cardh"><b>'+esc(p)+'</b><button class="rec-delprod" title="supprimer la recette">🗑</button></div><div class="recrows">'+rows+'</div><button class="rec-addrow">+ matière</button></div>';
+    return '<div class="ref-card" data-prod="'+esc(p)+'"><div class="cardh"><b>'+esc(recipeProductLabel(p))+'</b><button class="rec-delprod" title="supprimer la recette">🗑</button></div><div class="recrows">'+rows+'</div><button class="rec-addrow">+ matière</button></div>';
   }).join('');
-  body.innerHTML='<p class="ref-hint">Choisis chaque matière dans la liste (articles déjà créés) et sa quantité <b>pour 1 unité de produit fini</b>. Le code se remplit tout seul.</p><div class="ref-cards">'+cards+'</div><button id="recAddProd" class="ref-add">+ Nouveau produit fini</button>';
-  body.querySelector('#recAddProd').onclick=()=>{
-    const nom=prompt('Nom du nouveau produit fini :');if(nom==null)return;
-    const n=nom.trim();if(!n)return;
-    if(RECF[n]){alert('Ce produit existe déjà.');return;}
-    RECF[n]=[{code:'',des:'',qte:0}];lsSet('lep_recf',RECF);renderRef();
-    toast('Produit ajouté — complète ses matières, puis crée l\u2019article fini dans Articles.');
-  };
+  const addable=finishedProductRefs().filter(r=>!recipeForProduct(r.code).length);
+  body.innerHTML='<p class="ref-hint">Crée d’abord l’article en <b>Produit fini</b>. La recette est liée à son code article.</p><div class="ref-cards">'+cards+'</div><div class="cond-add"><select id="recAddSel"><option value="">+ Ajouter la recette d’un produit fini…</option>'+addable.map(r=>'<option value="'+esc(r.code)+'">'+esc(r.code+' - '+r.des)+'</option>').join('')+'</select></div>';
+  const addSel=body.querySelector('#recAddSel');
+  if(addSel)addSel.onchange=()=>{const p=addSel.value;if(!p)return;RECF[p]=[{code:'',des:'',qte:0}];lsSet('lep_recf',RECF);scheduleReferentialsPush();renderRef();};
   body.querySelectorAll('.ref-card').forEach(card=>{
     const p=card.dataset.prod;
     const save=()=>{
@@ -572,24 +847,24 @@ function renderRecf(body){
         const q=row.querySelector('.mqte').value.trim();
         if(code||q)arr.push({code:code,des:a?a.des:'',qte:pnum(q)});
       });
-      RECF[p]=arr;lsSet('lep_recf',RECF);
+      RECF[p]=arr;lsSet('lep_recf',RECF);scheduleReferentialsPush();
     };
     card.querySelectorAll('.msel').forEach(s=>s.addEventListener('change',save));
     card.querySelectorAll('.mqte').forEach(i=>i.addEventListener('input',save));
     card.querySelectorAll('.mdel').forEach(b=>b.onclick=()=>{b.closest('.recrow').remove();save();});
-    card.querySelector('.rec-addrow').onclick=()=>{save();RECF[p].push({code:'',des:'',qte:0});lsSet('lep_recf',RECF);renderRef();};
-    card.querySelector('.rec-delprod').onclick=()=>{if(confirm('Supprimer la recette « '+p+' » ?')){delete RECF[p];lsSet('lep_recf',RECF);renderRef();}};
+    card.querySelector('.rec-addrow').onclick=()=>{save();RECF[p]=recipeForProduct(p).slice();RECF[p].push({code:'',des:'',qte:0});lsSet('lep_recf',RECF);scheduleReferentialsPush();renderRef();};
+    card.querySelector('.rec-delprod').onclick=()=>{if(confirm('Supprimer la recette « '+p+' » ?')){delete RECF[p];lsSet('lep_recf',RECF);scheduleReferentialsPush();renderRef();}};
   });
 }
-
 function renderMachines(body){
-  const prodOpts=sel=>Object.keys(RECF).map(p=>`<option value="${esc(p)}"${p===sel?' selected':''}>${esc(p)}</option>`).join('');
+  const prodOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}>${esc(recipeProductLabel(p))}</option>`).join('');
   const freqOpts=sel=>['once','parprod'].map(f=>`<option value="${f}"${f===sel?' selected':''}>${f==='once'?'une fois':'par produit'}</option>`).join('');
   let h='<p class="ref-hint">Cadence : soit <b>pistes × sachets/min</b> (débit calculé via «\u00a0sachets/u.b.\u00a0»), soit un <b>débit direct</b> par produit (sacs/h). Dans le Plan, <b>Démarrage</b> sert au lancement du jour, <b>Fin</b> réserve seulement une fin de journée quand la production déborde, et <b>Changement/Bobine</b> sert aux transitions entre produits.</p>';
   h+='<div class="prodcfg"><label>Heures/quart<input id="pcHq" inputmode="decimal" value="'+esc(PRODCFG.heuresQuart)+'"></label>'
     +'<label>Quarts/jour<input id="pcQj" inputmode="decimal" value="'+esc(PRODCFG.quartsJour)+'"></label>'
     +'<label class="pc-par"><input type="checkbox" id="pcPar"'+(PRODCFG.parallele?' checked':'')+'> machines en parallèle</label></div>';
   MACHINES.forEach((m,mi)=>{
+    m.prods=(m.prods||[]).filter(e=>!e.p||currentRecipeProductCode(e.p)).map(e=>{const p=currentRecipeProductCode(e.p);if(p)e.p=p;return e;});
     const hasCad=m.mode==='sachets';
     let prows='';
     (m.prods||[]).forEach((e,ei)=>{
@@ -651,7 +926,7 @@ function planChargeHTML(items){
   if(!ms.length&&!nonEst.length)return '';
   let h='<div class="charge-box"><h4 class="plan-sub">⏱ Charge de production estimée</h4>';
   ms.forEach(m=>{h+='<div class="charge-m"><div class="cm-h"><b>'+esc(m.m.nom)+'</b><span>'+fmtH(m.totH)+'</span></div>';
-    m.lines.forEach(l=>{h+='<div class="cm-l">'+esc(l.p)+' — '+fmt(l.n)+' u · '+fmtH(l.h)+'</div>';});
+    m.lines.forEach(l=>{h+='<div class="cm-l">'+esc(recipeProductLabel(l.p))+' — '+fmt(l.n)+' u · '+fmtH(l.h)+'</div>';});
     const bits=[];
     if(m.startupMin>0)bits.push('démarrage '+fmtH(m.startupMin/60));
     if(m.restartMin>0)bits.push('reprise/bascule '+fmtH(m.restartMin/60));

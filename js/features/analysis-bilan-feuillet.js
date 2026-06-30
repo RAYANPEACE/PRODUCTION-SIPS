@@ -40,8 +40,8 @@ async function renderAnalyse(){
   wProd.forEach(r=>{(r.blocks||[]).forEach(b=>{const n=num(b.n);const emb=embType(b.p);
     if(emb==='sac')dW.sac+=num(b.w_emb);else dW.carton+=num(b.w_emb);
     dW.film+=num(b.w_film);dW.mel+=num(b.w_mel);
-    if(b.p&&n>0){prodW[b.p]=(prodW[b.p]||0)+n;if(emb==='sac')prodUnits.sac+=n;else prodUnits.carton+=n;
-      (RECF[b.p]||[]).forEach(m=>{const k=m.des||m.code;conso[k]=conso[k]||{q:0,code:m.code};conso[k].q+=n*num(m.qte);});}
+    if(b.p&&n>0){const pc=typeof productCodeOf==='function'?productCodeOf(b.p):b.p;prodW[pc]=(prodW[pc]||0)+n;if(emb==='sac')prodUnits.sac+=n;else prodUnits.carton+=n;
+      (typeof recipeForProduct==='function'?recipeForProduct(b.p):(RECF[b.p]||[])).forEach(m=>{const k=m.des||m.code;conso[k]=conso[k]||{q:0,code:m.code};conso[k].q+=n*num(m.qte);});}
   });});
   const perOpts=[['3','3 derniers mois'],['6','6 derniers mois'],['12','12 derniers mois']].map(o=>'<option value="'+o[0]+'"'+(ANPER===o[0]?' selected':'')+'>'+o[1]+'</option>').join('');
   h+='<div class="an-period"><label>Période</label><select id="anPer">'+perOpts+'</select></div>';
@@ -61,7 +61,7 @@ async function renderAnalyse(){
   const prodWArr=Object.keys(prodW).map(p=>[p,prodW[p]]).sort((a,b)=>b[1]-a[1]);
   if(prodWArr.length){const totP=prodWArr.reduce((s,e)=>s+e[1],0);const maxPW=Math.max(1,...prodWArr.map(e=>e[1]));
     h+='<div class="pf-sec"><div class="pf-h">Répartition de la production</div><div class="an-bars">';
-    prodWArr.forEach(e=>{const pc=totP?Math.round(e[1]/totP*100):0;h+=barRow(e[0]+' ('+pc+'%)',e[1],maxPW,'u');});
+    prodWArr.forEach(e=>{const pc=totP?Math.round(e[1]/totP*100):0;h+=barRow((typeof recipeProductLabel==='function'?recipeProductLabel(e[0]):e[0])+' ('+pc+'%)',e[1],maxPW,'u');});
     h+='</div></div>';
   }
   // Taux de déchets — tuiles mises en valeur
@@ -122,7 +122,7 @@ async function renderAnalyse(){
   const ps=$('#anPer');if(ps)ps.onchange=e=>{ANPER=e.target.value;renderAnalyse();};
   if(invD.length>=2){
     const byId={};invD.forEach(r=>byId[r.id]=r);
-    const desToCode={};REFS.forEach(r=>{desToCode[r.des]=r.code;});
+    const desToCode={};REFS.forEach(r=>{desToCode[r.code]=r.code;desToCode[r.des]=r.code;});
     const drawRecon=()=>{
       let a=byId[$('#cmpA').value],b=byId[$('#cmpB').value];if(!a||!b)return;
       // a = départ (le plus ancien), b = arrivée (le plus récent)
@@ -131,7 +131,7 @@ async function renderAnalyse(){
       const prodAdd={},conso={},entrA={},sortA={};
       prod.filter(inWin).forEach(r=>(r.blocks||[]).forEach(bk=>{const n=num(bk.n);if(!bk.p||n<=0)return;
         const code=desToCode[bk.p];if(code)prodAdd[code]=(prodAdd[code]||0)+n;
-        (RECF[bk.p]||[]).forEach(m=>{conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});}));
+        (typeof recipeForProduct==='function'?recipeForProduct(bk.p):(RECF[bk.p]||[])).forEach(m=>{conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});}));
       const addMov=(arr,obj)=>arr.filter(inWin).forEach(r=>{[].concat(r.finis||[],r.mp||[]).forEach(x=>{if(!x.a)return;const c=desToCode[x.a];if(c&&num(x.q)>0)obj[c]=(obj[c]||0)+num(x.q);});});
       addMov(entr,entrA);addMov(sort,sortA);
       const codes=Array.from(new Set([].concat(Object.keys(a.detail),Object.keys(b.detail),Object.keys(prodAdd),Object.keys(conso),Object.keys(entrA),Object.keys(sortA))));
@@ -159,52 +159,126 @@ async function renderAnalyse(){
 }
 
 /* ================= TABLEAU DE BORD ================= */
+function dashAccessButton(id,label){
+  if(typeof hasTab==='function'&&!hasTab(id))return '';
+  return '<button class="dash-b" data-go="'+id+'"><span class="dash-ico">'+(TAB_ICONS[id]||'\u2022')+'</span><span>'+label+'</span></button>';
+}
+function dashAccessGroup(title,items){
+  const btns=items.map(function(x){return dashAccessButton(x[0],x[1]);}).filter(Boolean).join('');
+  if(!btns)return '';
+  return '<div class="dash-group"><div class="dash-gh">'+title+'</div><div class="dash-btns dash-grid">'+btns+'</div></div>';
+}
+function dashLotAlertItemsFromStock(data){
+  const out=[];
+  ((data&&data.rows)||[]).forEach(function(r){
+    const lots=(r.lots||[]).filter(function(l){return Math.abs(num(l.rest))>1e-9||l.imprecise;});
+    lots.forEach(function(l,i){
+      let st=null,kind='';
+      if(r.lotKind==='mp'){
+        kind='Matière';
+        st=l.imprecise?{rank:1,cls:'pr-warn',txt:'date de péremption manquante'}:perimStatus(l.date);
+      }else if(r.lotKind==='fini'){
+        kind='Production';
+        const pi=l.imprecise?{cls:'exp-ko',txt:'date de production manquante'}:prodInfo(l.date);
+        if(pi&&pi.cls==='exp-ko')st={rank:2,cls:'pr-ko',txt:pi.txt};
+      }
+      if(!st)return;
+      out.push({code:r.code,nom:r.des,u:r.unite||'',q:round2(num(l.rest)),n:i+1,date:l.date||'',kind:kind,st:st});
+    });
+  });
+  return out;
+}
+function dashLotAlertItemsFromCurrent(){
+  const out=[];
+  REFS.forEach(function(r){
+    const e=ST.c[r.code];const blocks=(e&&e.blocks)||[];
+    blocks.forEach(function(b,i){
+      if(typeof blockHasInput==='function'&&!blockHasInput(r,b))return;
+      const q=blockTotal(r,b,b.cfg||pOf(r));
+      if(r.cat==='mp'){
+        const st=perimStatus(b.date);if(!st)return;
+        out.push({code:r.code,nom:r.des,u:r.u||r.ub||'',q:q,n:i+1,date:b.date||'',kind:'Matière',st:st});
+      }else if(r.cat==='fini'||r.g==='fini'){
+        const pi=prodInfo(b.date);if(!pi||pi.cls!=='exp-ko')return;
+        out.push({code:r.code,nom:r.des,u:r.u||r.ub||'',q:q,n:i+1,date:b.date||'',kind:'Production',st:{rank:2,cls:'pr-ko',txt:pi.txt}});
+      }
+    });
+  });
+  return out;
+}
+function dashLotAlertsCard(items){
+  if(!items.length)return '';
+  items.sort(function(a,b){return b.st.rank-a.st.rank||String(a.nom).localeCompare(String(b.nom));});
+  let h='<div class="perim-box dash-alert-card"><h3>⚠ Lots à surveiller <span class="perim-cnt">'+items.length+'</span></h3>';
+  items.forEach(function(x){
+    h+='<div class="perim-art"><div class="perim-nom"><b>'+esc(x.nom)+'</b> <small>'+esc(x.code)+'</small></div>'
+      +'<div class="perim-lot '+x.st.cls+'"><span class="pl-q">'+fmt(x.q)+' '+esc(x.u||'')+'</span><span class="pl-d">'+esc(x.kind)+' · lot '+x.n+(x.date?' · '+esc(x.date):'')+' · '+esc(x.st.txt)+'</span></div></div>';
+  });
+  h+='</div>';return h;
+}
+async function dashLotAlertsHTML(){
+  try{
+    if(typeof computeStockData==='function'){
+      const fromStock=dashLotAlertItemsFromStock(await computeStockData());
+      if(fromStock.length)return dashLotAlertsCard(fromStock);
+    }
+  }catch(e){}
+  return dashLotAlertsCard(dashLotAlertItemsFromCurrent());
+}
+function dashRecentLine(ic,txt){return '<div class="dash-rl">'+ic+' '+esc(txt)+'</div>';}
+function dashRecentProd(row,isServer){
+  const rec=isServer?(row.payload||{}):row;
+  const blocks=typeof prodRecBlocks==='function'?prodRecBlocks(rec):(rec.blocks||[]);
+  const np=(blocks||[]).filter(function(b){return b.p&&num(b.n)>0;}).length;
+  return dashRecentLine('🏭','Production '+frDate(rec.date)+' · '+np+' produit(s)');
+}
+function dashRecentMov(row,kind,isServer){
+  const rec=isServer?(row.payload||{}):row;
+  const nl=((rec.finis||[]).filter(function(x){return x.a&&num(x.q)>0;}).length)+((rec.mp||[]).filter(function(x){return x.a&&num(x.q)>0;}).length);
+  return dashRecentLine(kind==='entree'?'📦':'🚚',(kind==='entree'?'Entrée ':'Sortie ')+frDate(rec.date)+' · '+nl+' article(s)');
+}
+function dashRecentQuality(row,isServer){
+  const rec=isServer?(row.payload||{}):row;
+  const info=rec.informations||{};
+  return dashRecentLine('✅','Qualité '+(info.numeroLot||'lot ?')+' · '+frDate(rec.date||info.dateProduction||''));
+}
+function dashRecentSection(title,html,empty){
+  return '<div class="dash-rsec"><div class="dash-rh">'+title+'</div>'+(html||'<div class="dash-empty">'+empty+'</div>')+'</div>';
+}
 async function renderAccueil(){
   const app=$('#app');
-  const counted=REFS.filter(r=>ST.c[r.code]&&ST.c[r.code].counted).length;const tot=REFS.length;const pct=tot?Math.round(counted/tot*100):0;
-  let urg=0;REFS.forEach(r=>{if(r.cat!=='mp')return;((ST.c[r.code]&&ST.c[r.code].blocks)||[]).forEach(b=>{const st=perimStatus(b.date);if(st&&st.rank>=2)urg++;});});
   let h='<div class="prod-wrap"><h2 class="prod-title">Tableau de bord</h2>';
-  var _chg=parseInt(localStorage.getItem('lep_changes_since_backup'))||0;var _lts=parseInt(localStorage.getItem('lep_last_backup_ts'))||0;
-  if(_chg>0||_lts===0){var _lastStr=_lts?frDate(new Date(_lts).toISOString().slice(0,10)):'jamais';var _msg=_lts===0?'Aucune sauvegarde locale realisee':('<b>'+_chg+'</b> modification(s) locales non sauvegardee(s)');h+='<div id="backupBanner" style="background:#fef6e7;border:1.5px solid #e6cf95;border-left:5px solid #c8791b;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';h+='<div style="flex:1;min-width:180px;font-size:13px;color:#8a6d1b;line-height:1.4">'+_msg+'<br><span style="font-size:11px;color:#a08530">Derniere sauvegarde locale : '+_lastStr+'</span></div>';h+='<div style="display:flex;gap:6px;flex:none"><button id="backupShare" style="padding:8px 12px;border:none;border-radius:9px;background:#c8791b;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Partager local</button><button id="backupDL" style="padding:8px 12px;border:none;border-radius:9px;background:#15487f;color:#fff;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer">Telecharger local</button></div>';h+='</div>';}
-  h+='<div class="dash-card"><div class="dash-t">Inventaire en cours'+(ST.date?(' — '+esc(ST.date)):'')+'</div>'
-    +'<div class="dash-prog"><div class="dash-pb"><div class="dash-pf" style="width:'+pct+'%"></div></div><div class="dash-pv">'+counted+'/'+tot+'</div></div>'
-    +'<div class="dash-sub">'+pct+' % des articles comptés</div></div>';
-  if(urg)h+='<div class="dash-card dash-warn">⏳ <b>'+urg+'</b> lot(s) de matière à surveiller (péremption proche). Voir le Bilan.</div>';
-  h+='<div class="dash-card"><div class="dash-t">Accès rapide</div><div class="dash-btns">'
-    +'<button class="dash-b" data-go="comptage">📋 Compter</button>'
-    +'<button class="dash-b" data-go="prod">🏭 Production</button>';
-  if(ADMIN)h+='<button class="dash-b" data-go="bilan">📊 Bilan</button>'
-    +'<button class="dash-b" data-go="sorties">🚚 Sorties</button>'
-    +'<button class="dash-b" data-go="entree">📦 Entrées</button>'
-    +'<button class="dash-b" data-go="analyse">📈 Analyses</button>';
-  h+='</div></div>';
+  h+='<div class="dash-card"><div class="dash-t">Accès rapide</div><div class="dash-groups">'
+    +dashAccessGroup('Saisies terrain',[['comptage','Comptage'],['prod','Production'],['entree','Entrées'],['sorties','Sorties'],['qualite','Qualité']])
+    +dashAccessGroup('Stock & contrôle',[['stock','Stock'],['bilan','Bilan'],['feuillet','Feuillet']])
+    +dashAccessGroup('Pilotage',[['analyse','Analyses'],['capacite','Capacité'],['plan','Plan']])
+    +dashAccessGroup('Réglages',[['ref','Référentiels'],['serveur','Serveur']])
+    +'</div></div>';
+  h+='<div id="dashAlerts"></div>';
   h+='<div id="dashRecent" class="dash-card"><div class="dash-t">Dernières saisies</div><div class="dash-rec">Chargement…</div></div>';
   h+='<div class="dash-card"><div class="dash-t">Serveur local</div><div id="srvDash" class="dash-rec">Verification...</div><div class="dash-btns" style="margin-top:8px"><button class="dash-b" id="srvDashTest">Tester</button><button class="dash-b" id="srvDashFlush">Synchroniser</button>'+(ADMIN?'<button class="dash-b" data-go="serveur">Validation</button>':'')+'</div></div>';
-  h+='<div class="dash-card"><div class="dash-t">Secours local & Import</div><div id="saveBtnBox" style="display:flex;flex-direction:column;gap:8px;margin-top:10px"></div></div>';
   h+='</div>';
   app.innerHTML=h;
-  var bbS=$('#backupShare');if(bbS)bbS.onclick=function(){exportAll();};
-  var bbD=$('#backupDL');if(bbD)bbD.onclick=function(){exportAllDownload();};
   app.querySelectorAll('.dash-b').forEach(b=>{if(b.dataset.go)b.onclick=()=>switchTab(b.dataset.go);});
   var sdt=$('#srvDashTest');if(sdt)sdt.onclick=updSrvDash;
   var sdf=$('#srvDashFlush');if(sdf)sdf.onclick=async()=>{await sipsFlushPending();updSrvDash();};
   updSrvDash();
-  const saveBtnBox=$('#saveBtnBox');
-  const expShareBtn=document.createElement('button');expShareBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:700;font-size:13px';expShareBtn.textContent='Partager sauvegarde locale';expShareBtn.onclick=()=>exportAll();
-  const expDLBtn=document.createElement('button');expDLBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--steel);background:#eef4fb;color:var(--steel-d);font-weight:700;font-size:13px';expDLBtn.textContent='Telecharger sauvegarde locale';expDLBtn.onclick=()=>exportAllDownload();
-  const expLghtBtn=document.createElement('button');expLghtBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';expLghtBtn.textContent='Secours sans photos';expLghtBtn.onclick=()=>exportLight();
-  const fileInput=document.createElement('input');fileInput.type='file';fileInput.accept='.txt,.json,text/plain';fileInput.style.display='none';fileInput.onchange=function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=function(){importAll(rd.result);};rd.readAsText(f);};
-  const impBtn=document.createElement('button');impBtn.style.cssText='padding:10px;border-radius:8px;border:1.5px solid var(--line);background:#fff;font-weight:600;font-size:13px';impBtn.textContent='Restaurer une sauvegarde locale';impBtn.onclick=function(){fileInput.click();};
-  saveBtnBox.append(expShareBtn,expDLBtn,expLghtBtn,fileInput,impBtn);
+  dashLotAlertsHTML().then(function(html){const da=$('#dashAlerts');if(da)da.innerHTML=html;});
   let recs=[];try{recs=await idbAll();}catch(e){}
   const pick=(pfx,n)=>recs.filter(r=>String(r.id).indexOf(pfx)===0).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0)).slice(0,n);
-  const prods=pick('prod_',3),sorts=pick('sortie_',2),entrs=pick('entree_',2);
-  let rec='';
-  const line=(ic,txt)=>'<div class="dash-rl">'+ic+' '+esc(txt)+'</div>';
-  prods.forEach(r=>{const np=(r.blocks||[]).filter(b=>b.p&&num(b.n)>0).length;rec+=line('🏭','Production '+frDate(r.date)+' · '+np+' produit(s)');});
-  sorts.forEach(r=>{const nl=((r.finis||[]).filter(x=>x.a&&num(x.q)>0).length)+((r.mp||[]).filter(x=>x.a&&num(x.q)>0).length);rec+=line('🚚','Sortie '+frDate(r.date)+' · '+nl+' article(s)');});
-  entrs.forEach(r=>{const nl=((r.finis||[]).filter(x=>x.a&&num(x.q)>0).length)+((r.mp||[]).filter(x=>x.a&&num(x.q)>0).length);rec+=line('📦','Entrée '+frDate(r.date)+' · '+nl+' article(s)');});
-  const dr=$('#dashRecent');if(dr)dr.querySelector('.dash-rec').innerHTML=rec||'<span style="color:#6a7280;font-size:13px">Aucune saisie pour l\u2019instant.</span>';
+  let loc='';
+  pick('prod_',3).forEach(r=>{loc+=dashRecentProd(r,false);});
+  pick('sortie_',2).forEach(r=>{loc+=dashRecentMov(r,'sortie',false);});
+  pick('entree_',2).forEach(r=>{loc+=dashRecentMov(r,'entree',false);});
+  pick('batch_',2).forEach(r=>{loc+=dashRecentQuality(r,false);});
+  const dr=$('#dashRecent');
+  if(dr)dr.querySelector('.dash-rec').innerHTML=dashRecentSection('Validées serveur','Chargement…','Aucune saisie validée serveur.')+dashRecentSection('Locales sur cet appareil',loc,'Aucune saisie locale.');
+  let srv='';
+  try{(await sipsRecords('production',{timeoutMs:1200})).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).slice(0,3).forEach(r=>{srv+=dashRecentProd(r,true);});}catch(e){}
+  try{(await sipsRecords('sortie',{timeoutMs:1200})).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).slice(0,2).forEach(r=>{srv+=dashRecentMov(r,'sortie',true);});}catch(e){}
+  try{(await sipsRecords('entree',{timeoutMs:1200})).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).slice(0,2).forEach(r=>{srv+=dashRecentMov(r,'entree',true);});}catch(e){}
+  try{(await sipsRecords('quality',{timeoutMs:1200})).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||''))).slice(0,2).forEach(r=>{srv+=dashRecentQuality(r,true);});}catch(e){}
+  if(dr)dr.querySelector('.dash-rec').innerHTML=dashRecentSection('Validées serveur',srv,'Aucune saisie validée serveur.')+dashRecentSection('Locales sur cet appareil',loc,'Aucune saisie locale.');
   window.scrollTo(0,0);
 }
 
@@ -326,10 +400,16 @@ function buildBilanFrom(snapshot){
 
 function ecartHTML(a,withCond){
   if(a.ecart==null)return '<span class="bc-nc">report état (= théorique)</span>';
-  const arrow=a.ecart>0?'\u25BC':(a.ecart<0?'\u25B2':'');
+  const delta=-a.ecart;
+  const pct=a.pct==null?null:-a.pct;
+  const arrow=delta<0?'\u25BC':(delta>0?'\u25B2':'');
   const col=a.ok?'var(--green)':'var(--red)';
-  const cond=withCond?convCond(a.code,a.ecart):'';
-  return '<span class="bc-ec"><b style="color:'+col+'">'+(arrow?arrow+' ':'')+fsign(a.ecart)+' '+esc(a.unite)+'</b> <span class="bc-pct">('+spc(a.pct)+' %)</span>'+(cond?'<div class="bc-cond">≈ '+cond+'</div>':'')+'</span>';
+  const cond=withCond?convCond(a.code,delta):'';
+  return '<span class="bc-ec"><b style="color:'+col+'">'+(arrow?arrow+' ':'')+fsign(delta)+' '+esc(a.unite)+'</b> <span class="bc-pct">('+spc(pct)+' %)</span>'+(cond?'<div class="bc-cond">≈ '+cond+'</div>':'')+'</span>';
+}
+function bilanStockMiniHTML(a){
+  const unit=a.unite?(' '+esc(a.unite)):'';
+  return '<div class="bc-stocks"><span><small>Théorique</small><b>'+fmtq(a.theo)+unit+'</b></span><span class="bc-stock-phys"><small>Inventaire</small><b>'+fmtq(a.phys)+unit+'</b><div class="bc-stock-diff">'+ecartHTML(a,true)+'</div></span></div>';
 }
 
 function lotDateKey(d){return d||'sans date';}
@@ -536,7 +616,7 @@ async function renderBilan(){
   if(r.alertes.length){
     h+='<div class="bil-alert"><h3>'+r.alertes.length+' article(s) à vérifier</h3><div class="bil-cards">';
     r.alertes.forEach(a=>{
-      h+='<div class="bil-card"><div class="bc-top"><span class="bc-code">'+a.code+'</span>'+ecartHTML(a,true)+'</div><div class="bc-nom">'+esc(a.nom)+'</div><div class="bc-rai">'+a.flags.map(f=>f.split('→').pop().trim()).join(' · ')+'</div></div>';
+      h+='<div class="bil-card"><div class="bc-top"><span class="bc-code">'+a.code+'</span></div><div class="bc-nom">'+esc(a.nom)+'</div>'+bilanStockMiniHTML(a)+'<div class="bc-rai">'+a.flags.map(f=>f.split('→').pop().trim()).join(' · ')+'</div></div>';
     });
     h+='</div></div>';
   }else if(counted){
@@ -546,7 +626,7 @@ async function renderBilan(){
   h+=prodAgeHTML();
   h+='<button id="bilToggle" class="bil-toggle">Voir tous les produits</button>';
   h+='<div id="bilFull" class="bil-full" style="display:none">'+fullTablesHTML(r)+'</div>';
-  h+='<div class="bil-foot">Total des écarts (articles comptés, unités mêlées, indicatif) : <b>'+fsign(Math.round(r.total*1000)/1000)+'</b>.<br>Convention : écart = théorique − physique ; ▲ surplus (physique &gt; théo), ▼ manque (physique &lt; théo).</div>';
+  h+='<div class="bil-foot">Total des écarts (articles comptés, unités mêlées, indicatif) : <b>'+fsign(Math.round(-r.total*1000)/1000)+'</b>.<br>Convention : écart = inventaire physique − théorique ; ▲ surplus (physique &gt; théo), ▼ manque (physique &lt; théo).</div>';
   h+='</div>';
   app.innerHTML=h;
   ST=prevST;RO=prevRO;   // restaure le brouillon : l'appariement n'altère jamais l'état courant
@@ -583,12 +663,12 @@ async function bilanPDF(r){
       T((x.nom||'').slice(0,42),cols[1],y,8,false,col);
       T(fmtq(x.theo),cols[2],y,8,false,col);
       T(x.counted?fmtq(x.phys):'—',cols[3],y,8,false,col);
-      T(x.ecart==null?'—':fsign(x.ecart),cols[4],y,8,false,col);
-      T(x.pct==null?'':(Math.round(x.pct)+'%'),cols[5],y,8,false,col);
+      T(x.ecart==null?'—':fsign(-x.ecart),cols[4],y,8,false,col);
+      T(x.pct==null?'':(Math.round(-x.pct)+'%'),cols[5],y,8,false,col);
       y-=13;
     });
     y-=6;if(y<M+20){page=doc.addPage([W,H]);y=H-M;}
-    T('Total des écarts (indicatif, unités mêlées) : '+fsign(Math.round(r.total*1000)/1000),M,y,9,true);
+    T('Total des écarts (indicatif, unités mêlées) : '+fsign(Math.round(-r.total*1000)/1000),M,y,9,true);
     const bytes=await doc.save();
     shareBlob('bilan_'+(r.srcDate||todayStr())+'.pdf',bytes,'application/pdf','Bilan d\u2019inventaire');
     toast('PDF généré');

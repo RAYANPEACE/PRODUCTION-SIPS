@@ -249,6 +249,28 @@ async function main() {
     check('[J] la fiche qualite validee est archivee et lisible par le responsable qualite',
       rqReadsQualityRecord.status === 200 && !!rqQualityArchived && rqQualityArchived.payload && rqQualityArchived.payload.visas && rqQualityArchived.payload.visas.responsableQualite);
 
+    // ---- [MVT] garde-fous serveur production / entree / sortie + historique valide ----
+    const badProd = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'production', payload: { kind: 'production', date: '2026-06-30', blocks: [{ p: '', n: '12' }] } } });
+    const badEntree = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'entree', payload: { kind: 'entree', date: '2026-06-30', finis: [{ a: '', q: '4' }], mp: [] } } });
+    const badSortie = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'sortie', payload: { kind: 'sortie', date: '2026-06-30', finis: [{ a: '', q: '4' }], mp: [] } } });
+    const goodProdPayload = { kind: 'production', date: '2026-06-30', blocks: [{ p: 'DIAMO LAIT 20G X100', n: '12' }], note: 'test historique' };
+    const goodProd = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'production', payload: goodProdPayload } });
+    const goodProdId = goodProd.json && goodProd.json.submission && goodProd.json.submission.id;
+    const valProd = await api('POST', '/api/submissions/' + goodProdId + '/validate', { token: adminToken, body: {} });
+    const prodRecords = await api('GET', '/api/records?type=production&status=validated', { token: adminToken });
+    const prodArchived = prodRecords.json && (prodRecords.json.records || []).find(r => r.sourceSubmissionId === goodProdId);
+    const dupProd = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'production', payload: goodProdPayload } });
+    check('[MVT] production sans produit fini refusee par le serveur (400)', badProd.status === 400);
+    check('[MVT] entree avec quantite mais sans article refusee (400)', badEntree.status === 400);
+    check('[MVT] sortie avec quantite mais sans article refusee (400)', badSortie.status === 400);
+    check('[MVT] production validee visible dans /api/records', valProd.status === 200 && prodRecords.status === 200 && !!prodArchived);
+    check('[MVT] resoumettre une production deja validee renvoie un doublon, pas une attente', dupProd.status === 200 && dupProd.json && dupProd.json.duplicate === true && dupProd.json.submission.status === 'validated');
+
     // ---- [B] ecritures concurrentes : aucune contribution perdue ----
     const sess = await api('POST', '/api/inventory-sessions', { token: adminToken, body: { date: '2026-06-21', title: 'Concurrence' } });
     const sessId = sess.json && sess.json.session && sess.json.session.id;
@@ -342,6 +364,21 @@ async function main() {
     check('[N] la qualite reste reservee aux signataires qualite (magasinier refuse)', magQuality.status === 401);
     check('[N] le magasinier voit comptage, production, stock, sorties et entrees',
       ['comptage', 'prod', 'stock', 'sorties', 'entree'].every(t => magTabs.includes(t)));
+    const refsNoAuth = await api('GET', '/api/referentials');
+    const refsNonAdmin = await api('POST', '/api/referentials', {
+      token: magRead,
+      body: { referentials: { added: [{ code: '999999', des: 'TEST' }] } }
+    });
+    const refsAdmin = await api('POST', '/api/referentials', {
+      token: adminToken,
+      body: { referentials: { added: [{ code: '999999', des: 'TEST', cat: 'fini', m: 'carton' }], recf: { TEST: [] } } }
+    });
+    const refsRead = await api('GET', '/api/referentials', { token: magRead });
+    check('[REF] lecture referentiels refusee sans auth', refsNoAuth.status === 401);
+    check('[REF] ecriture referentiels reservee admin', refsNonAdmin.status === 401);
+    check('[REF] admin sauvegarde et utilisateur relit les referentiels',
+      refsAdmin.status === 200 && refsRead.status === 200
+      && refsRead.json.referentials.added.some(r => r.code === '999999'));
 
     // ---- [B1] reject inventaire avec recountRequested conserve la soumission + pose le flag ----
     const invCounter = await makeUser(adminToken, 'magasinier', 'recb1');
@@ -369,15 +406,19 @@ async function main() {
     // ---- [B3] validate d un inventaire cree un record valide lisible (st present) ----
     const invSub3 = await api('POST', '/api/submissions', {
       token: invCounter,
-      body: { type: 'inventory', payload: { kind: 'inventory', date: '2026-06-23', agent: 'Compteur B3', filled: 1, st: { c: { 'B3-CODE': { counted: true, blocks: [{ qty: 9 }] } } } } }
+      body: { type: 'inventory', payload: { kind: 'inventory', date: '2026-06-23', agent: 'Compteur B3', filled: 1, st: { c: { 'B3-CODE': { counted: true, blocks: [{ qty: 9, photo: 'data:image/jpeg;base64,ABC' }] } } } } }
     });
     const invSub3Id = invSub3.json && invSub3.json.submission && invSub3.json.submission.id;
     const validateInv = await api('POST', '/api/submissions/' + invSub3Id + '/validate', { token: adminToken, body: {} });
     const recRead = await api('GET', '/api/records?type=inventory&status=validated', { token: invCounter });
+    const recCompact = await api('GET', '/api/records?type=inventory&status=validated&compact=1', { token: invCounter });
     const invRecord = recRead.json && (recRead.json.records || []).find(r => r.sourceSubmissionId === invSub3Id);
+    const compactInvRecord = recCompact.json && (recCompact.json.records || []).find(r => r.sourceSubmissionId === invSub3Id);
     check('[B3] validate inventaire renvoie 200', validateInv.status === 200);
     check('[B3] le record inventaire valide est lisible avec son snapshot st',
       !!invRecord && invRecord.payload && invRecord.payload.st && invRecord.payload.st.c && !!invRecord.payload.st.c['B3-CODE']);
+    check('[B3] records compact retire les photos inutiles au stock',
+      !!compactInvRecord && !compactInvRecord.payload.st.c['B3-CODE'].blocks[0].photo);
 
     // ---- [B4] journal : suppression CIBLEE (ids / periode), jamais de purge globale, admin requis ----
     const audAll = await api('GET', '/api/audit', { token: adminToken });

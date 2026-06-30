@@ -1,6 +1,6 @@
 # SIPS — Relais developpement serveur local (vue courante)
 
-Derniere mise a jour : 2026-06-29
+Derniere mise a jour : 2026-06-30
 
 Point d'entree pour reprendre le projet. **Court par design** : seulement l'etat courant, les prochaines taches et les decisions actives. L'historique complet (journal date de tous les lots) est dans **`docs/SIPS_HANDOFF_ARCHIVE.md`** ; le detail commit par commit est dans `git log` ; les decisions durables sont en memoire (`MEMORY.md`).
 
@@ -15,6 +15,22 @@ Remplacer les echanges de fichiers WhatsApp par une base centrale locale (serveu
 Branche de travail : **`inventaire-serveur`** (33+ commits devant `main`, **non mergee**). Contient le durcissement securite Phases 0-5 + le verrou strict hors-ligne + les 3 lots ci-dessous.
 
 Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gate Codex**) :
+- **2026-06-30 - identite produit par code** : recettes, production, qualite, plan, bilan et stock utilisent le code produit comme cle ; les anciens enregistrements par libelle restent resolus vers le PF courant. SW v173. Tests : `check:js`, `test:server` 80/80, `test:stock` 45/45, `test:lot` 11/11.
+- **2026-06-30 - Stock deduit les dechets production** : en plus de la recette normale, Stock deduit les dechets carton/sac, film, et repartit le melange perdu proportionnellement sur les MP de la recette ; recette retrouvee meme si l ancien libelle pointe vers le PF actuel. SW v172. Tests : `check:js`, `test:stock` 42/42.
+- **2026-06-30 - Stock serveur fiable** : l onglet Stock lit les records serveur en mode compact sans photos/base64, timeout augmente, et refuse un calcul serveur partiel au lieu de remplacer une lecture echouee par zero mouvement. SW v171. Tests : `check:js`, `test:server`.
+- **2026-06-30 - listes produits finis dynamiques** : Production/Qualite/Recettes/Machines/Plan ne proposent plus que les produits finis existants ; un renommage article deplace automatiquement recette, plan et cadences machine vers le nouveau libelle. SW v170. Tests : `check:js`.
+- **2026-06-30 - rattachement recettes/stock Laity** : Stock rattache une recette au produit fini meme si son libelle differe (`CARTON LAITY 20G` -> 390007) sans crediter le carton 190021 comme PF ; l interface recettes suit le meme rattachement. SW v169. Tests : `check:js`, `test:stock` 35/35.
+- **2026-06-30 - reprise stock/qualite/historiques** : Qualite recharge aussi les fiches serveur en attente, Stock inclut les mouvements valides du jour de la base, historiques Production/Entree/Sortie affichent les lignes article+quantite sans ouvrir. SW v168. Tests : `check:js`, `test:stock` 32/32.
+- **2026-06-30 - garde-fous soumission/historiques qualite** : Production/Entree/Sortie refusent les lignes sans article/produit fini cote UI + serveur, production validee reapparait dans l historique serveur, Qualite recharge les derniers lots MP tous produits confondus avec rappel de verification. SW v167. Tests : `check:js`, `test:server` 79/79, `test:stock` 29/29, `test:lot` 11/11.
+- **2026-06-30 - correctifs mobile/historiques/referentiels** : menu `Plus` mobile en panneau fixe, Bilan laisse le pourcentage revenir a la ligne, Accueil separe serveur/local ; referentiels/recettes/machines/plan synchronises serveur, articles/methodes/produits tries par code. SW v157. Tests : `check:js`, `test:server` 74/74, `test:stock` 29/29, `test:lot` 11/11. Verification navigateur non faite : aucun browser expose dans la session.
+- **2026-06-30 - retours terrain mobile/qualite** : menu `Plus` mobile repositionne sous le bouton, boutons de synchro referentiels, workflow Qualite clarifie (ouvrir/signature depuis onglet Qualite, bouton serveur `Ouvrir fiche`, validation bloquee si 1/2 signatures, temps moyen + duree par batch visibles), collage secours masque. SW v159.
+- **2026-06-30 - synchro referentiels admin** : le bouton `Envoyer serveur` affiche maintenant la vraie erreur serveur/reconnexion au lieu d un refus admin generique ; push auto referentiels ignore proprement les sessions expirees. SW v160.
+- **2026-06-30 - correctifs ouverture qualite/ref serveur** : `Envoyer serveur` indique explicitement de redemarrer si `/api/referentials` manque ; `Ouvrir fiche` serveur bascule vraiment sur l onglet Qualite avant de charger la fiche. SW v161.
+- **2026-06-30 - ouverture fiche qualite durcie** : `qOpenSubmittedQuality` pilote lui-meme le basculement onglet Qualite, l ecran de chargement et attend le rendu complet. SW v162.
+- **2026-06-30 - flux ouverture qualite simplifie** : admin voit aussi les fiches serveur dans l onglet Qualite ; bouton `Ouvrir fiche` retire de Serveur, qui indique d ouvrir/sign(er) depuis Qualite. SW v163.
+- **2026-06-30 - clic historique qualite fiabilise** : boutons historique Qualite relies par `addEventListener` au lieu de `onclick` inline ; erreurs d ouverture affichees en toast. SW v164.
+- **2026-06-30 - ouverture qualite visas incomplets** : normalisation des visas au chargement/rendu d une fiche qualite serveur pour eviter l erreur `setting nom` quand un role manque dans la soumission. SW v165.
+- **2026-06-30 - navigation accueil/onglets** : barre compacte ordre Accueil/Stock/Comptage/Production/Entrees/Sorties/Qualite + menu `Plus`; accueil allege (sans jauge inventaire ni sauvegarde locale) avec alertes lots detaillees MP/productions. SW v154. Tests : `check:js`, `test:server` 71/71, `test:stock` 29/29, `test:lot` 11/11. Verification navigateur non faite : aucun browser expose dans la session.
 - **2026-06-29 - structure serveur inventaire** : extraction `server/inventory-session-service.mjs` pour normaliser/upsert les contributions d'inventaire ; les routes gardent auth, choix session, erreurs et audit. Tests : `test:server` 71/71, `node --check` serveur OK.
 - **2026-06-29 - structure stock/lots** : extraction pure `domain/stock.js` (lots FIFO/FEFO + flux mouvements) reutilisee par Stock, Bilan et Plan ; `stock-sheet.js` ne porte plus la mecanique dupliquee. Tests : `check:js`, `test:server` 71/71, `test:stock` 29/29, `test:lot` 11/11.
 - **2026-06-29 - droits magasinier + estimation Plan** : `magasinier` voit Comptage/Production/Stock/Sorties/Entrees ; l'estimation de charge compte demarrage au lancement, reprise reduite le lendemain, fin seulement si debord jour suivant, transitions produit/machine separees. Tests : `check:js`, `test:server` 71/71, `test:stock` 29/29.
@@ -28,7 +44,7 @@ Fait et verifie en local (sur branche, **pas encore teste mobile ni passe au gat
 
 - **Revue adversariale cross-model (Codex, 2026-06-27)** : 3 revues (securite serveur, inventaire B/C, modele par lot E1-E3). 9 findings reels, **8 corriges** (commit d68b38c) — R1-1 actor depuis token, R1-2 date visa serveur, R1-3 auth GET /api/submissions, R1-4 detail session role-split, R2-5 rejet part offline base differente, R2-7 fusion parts same-user, R3-9 garde-fou entree MP perissable, R3-8 lot synthetique negatif. **R2-6 FAIT** (commit 680a2ea, spec `...2026-06-27-recompte-cible-enforcement-design.md`) : enforcement serveur du recompte cible — un article assigne (recountArticles.byUser) ne peut plus etre soumis par un autre (403) ; cycle de vie explicite (`activeRecountAssignments` + `resolvePendingRecounts` sur finalize ET validate inventaire = pas de blocage collant). Aussi : `finalizedBy` derive du token (meme classe que R1-1). **Les 9 findings de la revue adversariale sont corriges.**
 
-Etat technique : **SW v150**, `npm run test:server` = **71/71**, `npm run test:stock` = **29/29**, `npm run test:lot` = **11/11**, `npm run check:js` OK.
+Etat technique : **SW v173**, `npm run test:server` = **80/80**, `npm run test:stock` = **45/45**, `npm run test:lot` = **11/11**, `npm run check:js` OK.
 
 ## A faire avant de merger `main` (dans l'ordre)
 

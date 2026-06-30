@@ -113,7 +113,8 @@ function emptyDb() {
     inventorySessions: [],
     submissions: [],
     records: [],
-    audit: []
+    audit: [],
+    settings: {}
   };
 }
 
@@ -135,6 +136,7 @@ async function readDb() {
   if (!Array.isArray(db.submissions)) db.submissions = [];
   if (!Array.isArray(db.records)) db.records = [];
   if (!Array.isArray(db.audit)) db.audit = [];
+  if (!db.settings || typeof db.settings !== 'object') db.settings = {};
   return db;
 }
 
@@ -407,6 +409,51 @@ function submissionHash(type, payload) {
     .digest('hex');
 }
 
+function serverNum(value) {
+  const n = Number(String(value == null ? '' : value).replace(',', '.').replace(/\s/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function productionBlockHasInput(b) {
+  return !!(b && (
+    String(b.p || '').trim()
+    || serverNum(b.n) > 0
+    || serverNum(b.w_emb) > 0
+    || serverNum(b.w_film) > 0
+    || serverNum(b.w_mel) > 0
+    || (Array.isArray(b.perso) && b.perso.some(x => String(x && x.lbl || '').trim() || serverNum(x && x.qte) > 0))
+  ));
+}
+
+function validMovementLines(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(x => x && String(x.a || '').trim() && serverNum(x.q) > 0);
+}
+
+function incompleteMovementLine(rows) {
+  return (Array.isArray(rows) ? rows : []).some(x => x && serverNum(x.q) > 0 && !String(x.a || '').trim());
+}
+
+function validateSubmissionPayload(type, payload) {
+  if (!payload || typeof payload !== 'object') return 'Payload invalide';
+  if (type === 'production') {
+    const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+    if (blocks.some(b => productionBlockHasInput(b) && (!String(b.p || '').trim() || serverNum(b.n) <= 0))) {
+      return 'Production incomplete : produit fini et quantite obligatoires';
+    }
+    payload.blocks = blocks.filter(b => b && String(b.p || '').trim() && serverNum(b.n) > 0);
+    if (!payload.blocks.length) return 'Production vide : choisir au moins un produit fini';
+  }
+  if (type === 'entree' || type === 'sortie') {
+    if (incompleteMovementLine(payload.finis) || incompleteMovementLine(payload.mp)) {
+      return 'Ligne incomplete : article obligatoire quand une quantite est saisie';
+    }
+    payload.finis = validMovementLines(payload.finis);
+    payload.mp = validMovementLines(payload.mp);
+    if (!payload.finis.length && !payload.mp.length) return 'Mouvement vide : aucun article renseigne';
+  }
+  return '';
+}
+
 function qualityLot(payload) {
   return String(payload && payload.informations && payload.informations.numeroLot || '').trim().toUpperCase();
 }
@@ -433,6 +480,38 @@ function fullSubmission(s) {
     ...publicSubmission(s),
     payload: s.payload,
     decisionNote: s.decisionNote || ''
+  };
+}
+
+function stripPayloadMedia(value) {
+  if (Array.isArray(value)) return value.map(stripPayloadMedia);
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const key of Object.keys(value)) {
+    if (key === 'photo' || key === 'photos') continue;
+    out[key] = stripPayloadMedia(value[key]);
+  }
+  return out;
+}
+
+function compactRecord(r) {
+  return { ...r, payload: stripPayloadMedia(r.payload) };
+}
+
+function duplicateSubmissionFromRecord(r) {
+  return {
+    id: r.sourceSubmissionId || r.id,
+    type: r.type,
+    status: recordStatus(r),
+    author: r.author || null,
+    createdAt: r.validatedAt || '',
+    decidedAt: r.validatedAt || null,
+    decidedBy: r.validatedBy || null,
+    note: '',
+    correctionRequested: false,
+    recountRequested: false,
+    recountArticles: null,
+    correctionOf: null
   };
 }
 
@@ -809,6 +888,75 @@ async function handleApiRoutes(req, res, url) {
       name: 'SIPS local server',
       time: new Date().toISOString()
     });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/etat') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const db = await readDb();
+    const etatStock = db.settings.etatStock || {};
+    return sendJson(res, 200, {
+      ok: true,
+      etat: etatStock.etat || {},
+      date: etatStock.date || '',
+      updatedAt: etatStock.updatedAt || '',
+      updatedBy: etatStock.updatedBy || ''
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/etat') {
+    if (!(await requireAdmin(req, res))) return;
+    const actor = await authUser(req);
+    const body = await readBody(req);
+    const clean = {};
+    Object.entries(body.etat || {}).forEach(([code, value]) => {
+      if (/^\d{6}$/.test(String(code)) && Number.isFinite(Number(value))) clean[String(code)] = Number(value);
+    });
+    const db = await readDb();
+    db.settings.etatStock = {
+      etat: clean,
+      date: String(body.date || ''),
+      updatedAt: new Date().toISOString(),
+      updatedBy: (actor && actor.nom) || 'admin'
+    };
+    audit(db, 'etat.updated', db.settings.etatStock.updatedBy, {
+      date: db.settings.etatStock.date,
+      values: Object.keys(clean).length
+    });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, ...db.settings.etatStock });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/referentials') {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const db = await readDb();
+    return sendJson(res, 200, { ok: true, referentials: db.settings.referentials || {} });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/referentials') {
+    if (!(await requireAdmin(req, res))) return;
+    const actor = await authUser(req);
+    const body = await readBody(req);
+    const r = body.referentials || {};
+    const db = await readDb();
+    db.settings.referentials = {
+      meta: r.meta && typeof r.meta === 'object' ? r.meta : {},
+      added: Array.isArray(r.added) ? r.added : [],
+      cond: r.cond && typeof r.cond === 'object' ? r.cond : {},
+      recf: r.recf && typeof r.recf === 'object' ? r.recf : {},
+      machines: Array.isArray(r.machines) ? r.machines : [],
+      prodcfg: r.prodcfg && typeof r.prodcfg === 'object' ? r.prodcfg : {},
+      plan: r.plan && typeof r.plan === 'object' ? r.plan : {},
+      updatedAt: new Date().toISOString(),
+      updatedBy: (actor && actor.nom) || 'admin'
+    };
+    audit(db, 'referentials.updated', db.settings.referentials.updatedBy, {
+      articles: Object.keys(db.settings.referentials.meta).length + db.settings.referentials.added.length,
+      recipes: Object.keys(db.settings.referentials.recf).length
+    });
+    await writeDb(db);
+    return sendJson(res, 200, { ok: true, referentials: db.settings.referentials });
   }
 
   // ====== AUTH ======
@@ -1281,14 +1429,25 @@ async function handleApiRoutes(req, res, url) {
     const type = String(body.type);
     // Faille A : normaliser/estampiller les visas qualite avant tout (hash inclus).
     if (type === 'quality') await sanitizeQualityVisas(body.payload, user);
+    const validationError = validateSubmissionPayload(type, body.payload);
+    if (validationError) {
+      audit(db, 'submission.rejected_payload', user.nom, { type, error: validationError });
+      await writeDb(db);
+      return sendJson(res, 400, { ok: false, error: validationError });
+    }
     const hash = submissionHash(type, body.payload);
     const activeRecord = db.records.find(r => r.hash === hash && recordStatus(r) !== 'cancelled');
     const existing = db.submissions.find(s => s.hash === hash && s.status === 'submitted')
-      || (activeRecord && db.submissions.find(s => s.id === activeRecord.sourceSubmissionId));
+      || (activeRecord && db.submissions.find(s => s.id === activeRecord.sourceSubmissionId))
+      || activeRecord;
     if (existing) {
       audit(db, 'submission.duplicate', user.nom, { id: existing.id, type });
       await writeDb(db);
-      return sendJson(res, 200, { ok: true, duplicate: true, submission: publicSubmission(existing) });
+      return sendJson(res, 200, {
+        ok: true,
+        duplicate: true,
+        submission: existing.sourceSubmissionId ? duplicateSubmissionFromRecord(existing) : publicSubmission(existing)
+      });
     }
     if (type === 'quality') {
       const lot = qualityLot(body.payload);
@@ -1417,6 +1576,7 @@ async function handleApiRoutes(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/records') {
     const type = url.searchParams.get('type');
     const status = url.searchParams.get('status');
+    const compact = url.searchParams.get('compact') === '1';
     if (!(await isAdminRequest(req))) {
       const user = await authUser(req);
       if (!user) return sendJson(res, 401, { ok: false, error: 'Connexion requise' });
@@ -1435,6 +1595,7 @@ async function handleApiRoutes(req, res, url) {
     let rows = db.records;
     if (type) rows = rows.filter(r => r.type === type);
     if (status) rows = rows.filter(r => recordStatus(r) === status);
+    if (compact) rows = rows.map(compactRecord);
     return sendJson(res, 200, { ok: true, records: rows });
   }
 

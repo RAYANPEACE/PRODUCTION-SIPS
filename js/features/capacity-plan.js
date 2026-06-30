@@ -20,8 +20,8 @@ MACHINES.forEach(m=>{
 });
 if(MACHINES_MIGRATED)lsSet('lep_machines',MACHINES);
 let PRODCFG=lsGet('lep_prodcfg',{heuresQuart:8,quartsJour:1,parallele:false});
-function saveMachines(){lsSet('lep_machines',MACHINES);}
-function machineForProd(prod){for(const m of MACHINES){const e=(m.prods||[]).find(x=>x.p===prod);if(e)return {m:m,e:e};}return null;}
+function saveMachines(push){lsSet('lep_machines',MACHINES);if(push!==false&&typeof scheduleReferentialsPush==='function')scheduleReferentialsPush();}
+function machineForProd(prod){const code=productCodeOf(prod);for(const m of MACHINES){const e=(m.prods||[]).find(x=>productCodeOf(x.p)===code);if(e)return {m:m,e:e};}return null;}
 function prodDebit(prod){
   const f=machineForProd(prod);if(!f)return null;
   const calc=(num(f.m.pistes)>0&&num(f.m.cadence)>0&&num(f.e.sachetsUb)>0)?num(f.m.pistes)*num(f.m.cadence)*60/num(f.e.sachetsUb):0;
@@ -206,14 +206,14 @@ function stockDispo(code){
   const v=ETAT[code];return (v!=null&&v!=='')?num(v):0;
 }
 function catOf(code){const r=REFS.find(x=>x.code===code);return (r&&r.cat)||SEED_CAT[code]||'';}
-function poidsUnite(prod){return (RECF[prod]||[]).reduce((s,m)=>s+(catOf(m.code)==='mp'?num(m.qte):0),0);}
+function poidsUnite(prod){return recipeForProduct(prod).reduce((s,m)=>s+(catOf(m.code)==='mp'?num(m.qte):0),0);}
 function matNom(m){return m.des||m.code||'?';}
 
 /* ---------- CAPACITÉ ---------- */
 function computeCapaciteFromStock(stockMap){
-  return Object.keys(RECF).map(prod=>{
+  return recipeKeys().map(prod=>{
     let cap=null,goulot=null;const lignes=[];
-    (RECF[prod]||[]).forEach(m=>{
+    recipeForProduct(prod).forEach(m=>{
       const q=num(m.qte);const s=(stockMap&&m.code&&(m.code in stockMap))?num(stockMap[m.code]):stockDispo(m.code);
       const poss=q?s/q:null;
       lignes.push({nom:matNom(m),code:m.code,q:q,stock:s,poss:poss});
@@ -235,7 +235,7 @@ function renderCapacite(){
   h+='<button id="capPDF" class="bil-print" style="width:100%;margin:4px 0 12px">📄 Exporter PDF (capacité & stock)</button>';
   res.forEach(p=>{
     const capN=p.cap==null?0:Math.floor(p.cap);
-    h+='<div class="cap-card"><div class="cap-h"><div class="cap-prod">'+esc(p.produit)+'</div>'
+    h+='<div class="cap-card"><div class="cap-h"><div class="cap-prod">'+esc(recipeProductLabel(p.produit))+'</div>'
       +'<div class="cap-val'+(capN<=0?' zero':'')+'"><b>'+fmtq(capN)+'</b><small>unités</small></div></div>'
       +'<div class="cap-goulot"><span>goulot</span><b>'+esc(p.goulot||'—')+'</b></div>'
       +'<details class="cap-det"><summary>Détail des matières</summary><div class="cap-lines">';
@@ -324,7 +324,8 @@ async function capacitePDF(){
 
 /* ---------- PLAN ---------- */
 function planRows(){
-  return Object.keys(PLAN||{}).filter(prod=>RECF[prod]).map(prod=>{
+  const active=recipeKeys();
+  return Object.keys(PLAN||{}).filter(prod=>active.indexOf(prod)>=0).map(prod=>{
     const p=PLAN[prod]||{};
     return {produit:prod,prio:p.prio,objectif:p.objectif,part:p.part};
   }).sort((a,b)=>{
@@ -332,9 +333,9 @@ function planRows(){
     return ap-bp||String(a.produit).localeCompare(String(b.produit),'fr');
   });
 }
-function buildReste(){const r={};Object.keys(RECF).forEach(prod=>(RECF[prod]||[]).forEach(m=>{if(m.code&&!(m.code in r))r[m.code]=stockDispo(m.code);}));return r;}
-function maxGoulot(reste,prod){let maxs=null,goulot=null;(RECF[prod]||[]).forEach(m=>{const q=num(m.qte);const poss=q?((m.code?(reste[m.code]||0):0)/q):null;if(poss!=null&&(maxs==null||poss<maxs)){maxs=poss;goulot=matNom(m);}});return {maxs:maxs==null?0:maxs,goulot:goulot};}
-function deduire(reste,prod,x){(RECF[prod]||[]).forEach(m=>{if(m.code)reste[m.code]=(reste[m.code]||0)-x*num(m.qte);});}
+function buildReste(){const r={};recipeKeys().forEach(prod=>recipeForProduct(prod).forEach(m=>{if(m.code&&!(m.code in r))r[m.code]=stockDispo(m.code);}));return r;}
+function maxGoulot(reste,prod){let maxs=null,goulot=null;recipeForProduct(prod).forEach(m=>{const q=num(m.qte);const poss=q?((m.code?(reste[m.code]||0):0)/q):null;if(poss!=null&&(maxs==null||poss<maxs)){maxs=poss;goulot=matNom(m);}});return {maxs:maxs==null?0:maxs,goulot:goulot};}
+function deduire(reste,prod,x){recipeForProduct(prod).forEach(m=>{if(m.code)reste[m.code]=(reste[m.code]||0)-x*num(m.qte);});}
 
 
 /* Option B — commandes fermes (objectif) + prorata du reste (part, base tonnage) */
@@ -349,12 +350,12 @@ function simulerB(){
   // prorata du reste
   const actifs=[],exclus=[];
   rows.filter(r=>String(r.part).trim()!==''&&String(r.objectif).trim()===''&&num(r.part)>0).forEach(r=>{
-    let cap=null;(RECF[r.produit]||[]).forEach(m=>{const q=num(m.qte);const poss=q?((m.code?(reste[m.code]||0):0)/q):null;if(poss!=null&&(cap==null||poss<cap))cap=poss;});
+    let cap=null;recipeForProduct(r.produit).forEach(m=>{const q=num(m.qte);const poss=q?((m.code?(reste[m.code]||0):0)/q):null;if(poss!=null&&(cap==null||poss<cap))cap=poss;});
     if((cap==null?0:cap)<1)exclus.push(r.produit);else actifs.push({produit:r.produit,part:num(r.part)});
   });
   const poids={};actifs.forEach(a=>poids[a.produit]=poidsUnite(a.produit)||1);
   const coef={};
-  actifs.forEach(a=>{const w=a.part/poids[a.produit];(RECF[a.produit]||[]).forEach(m=>{if(m.code)coef[m.code]=(coef[m.code]||0)+w*num(m.qte);});});
+  actifs.forEach(a=>{const w=a.part/poids[a.produit];recipeForProduct(a.produit).forEach(m=>{if(m.code)coef[m.code]=(coef[m.code]||0)+w*num(m.qte);});});
   let k=null,goulotCode=null;
   Object.keys(coef).forEach(code=>{const a=coef[code];if(a>0){const r=(reste[code]||0)/a;if(k==null||r<k){k=r;goulotCode=code;}}});
   k=k==null?0:k;
@@ -367,14 +368,14 @@ function simulerB(){
   return {resFirm:resFirm,resPro:resPro,reste:reste,exclus:exclus,goulot:goulotNom,negs:negs};
 }
 
-function savePlan(){lsSet('lep_plan',PLAN);}
+function savePlan(push){lsSet('lep_plan',PLAN);if(push!==false&&typeof scheduleReferentialsPush==='function')scheduleReferentialsPush();}
 function setPlan(prod,field,val){PLAN[prod]=PLAN[prod]||{prio:'',objectif:'',part:''};PLAN[prod][field]=val;savePlan();}
 function nextPlanPrio(){
   let max=0;planRows().forEach(r=>{if(String(r.prio).trim()!=='')max=Math.max(max,Math.floor(num(r.prio)));});
   return max+1;
 }
 function addPlanProduct(prod){
-  if(!prod||!RECF[prod])return false;
+  if(!prod||recipeKeys().indexOf(prod)<0)return false;
   PLAN[prod]=PLAN[prod]||{prio:nextPlanPrio(),objectif:'',part:''};
   if(String(PLAN[prod].prio).trim()==='')PLAN[prod].prio=nextPlanPrio();
   normalizePriorities(prod);savePlan();return true;
@@ -415,11 +416,11 @@ function normalizePriorities(modifiedProd){
 function renderPlan(){
   const app=$('#app');
   const rows=planRows();
-  const addable=Object.keys(RECF).filter(prod=>!PLAN[prod]).sort((a,b)=>String(a).localeCompare(String(b),'fr'));
+  const addable=recipeKeys().filter(prod=>!PLAN[prod]);
   let h='<div class="plan-wrap">';
   h+='<div class="bil-src">'+liveStockNote()+'</div>';
   h+='<p class="ref-hint">Pour chaque produit : une <b>priorité</b> (obligatoire pour l\u2019activer), puis <b>soit</b> une <b>quantité</b> ferme <b>soit</b> une <b>part %</b> du reste. Les quantités fermes sont produites d\u2019abord (par priorité), puis le stock restant est partagé au prorata du tonnage selon les % (somme ≤ 100 %).</p>';
-  h+='<div class="plan-pick"><select id="planPick"><option value="">Choisir un produit fini</option>'+addable.map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('')+'</select><button id="planAdd" type="button">+ Ajouter</button></div>';
+  h+='<div class="plan-pick"><select id="planPick"><option value="">Choisir un produit fini</option>'+addable.map(p=>'<option value="'+esc(p)+'">'+esc(recipeProductLabel(p))+'</option>').join('')+'</select><button id="planAdd" type="button">+ Ajouter</button></div>';
   h+='<button id="planReset" class="plan-reset" type="button">Repartir a zero</button>';
   h+='<div class="plan-rows">';
   if(!rows.length)h+='<p class="hist-empty">Aucun produit dans ce plan. Choisis un produit fini puis ajoute-le.</p>';
@@ -429,7 +430,7 @@ function renderPlan(){
     const hasPart=String(r.part).trim()!=='';
     const objDis=!hasPrio||hasPart;
     const partDis=!hasPrio||hasObj;
-    h+='<div class="plan-row'+(hasPrio?'':' off')+'"><div class="pr-head"><div class="pr-prod">'+esc(r.produit)+'</div><button class="pr-remove" data-prod="'+esc(r.produit)+'" type="button">Retirer</button></div><div class="pr-fields">'
+    h+='<div class="plan-row'+(hasPrio?'':' off')+'"><div class="pr-head"><div class="pr-prod">'+esc(recipeProductLabel(r.produit))+'</div><button class="pr-remove" data-prod="'+esc(r.produit)+'" type="button">Retirer</button></div><div class="pr-fields">'
       +'<label>prio<input class="pf pf-prio" data-prod="'+esc(r.produit)+'" data-f="prio" inputmode="numeric" value="'+esc(r.prio)+'"></label>'
       +'<label>quantité<input class="pf pf-obj" data-prod="'+esc(r.produit)+'" data-f="objectif" inputmode="numeric" value="'+esc(r.objectif)+'"'+(objDis?' disabled':'')+'></label>'
       +'<label>part %<input class="pf pf-pct" data-prod="'+esc(r.produit)+'" data-f="part" inputmode="decimal" value="'+esc(r.part)+'"'+(partDis?' disabled':'')+'><span class="part-hint"></span></label>'
@@ -481,9 +482,9 @@ function renderPlan(){
 function planResBHTML(r){
   let h='<div class="plan-res">';
   if(r.resFirm.length){h+='<h4 class="plan-sub">Commandes fermes</h4>';
-    r.resFirm.forEach(x=>{h+='<div class="plr '+(x.ok?'ok':'ko')+'"><div class="plr-h"><b>'+esc(x.produit)+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">prio '+x.prio+' · objectif '+x.objectif+' — '+esc(x.limite)+'</div></div>';});}
+    r.resFirm.forEach(x=>{h+='<div class="plr '+(x.ok?'ok':'ko')+'"><div class="plr-h"><b>'+esc(recipeProductLabel(x.produit))+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">prio '+x.prio+' · objectif '+x.objectif+' — '+esc(x.limite)+'</div></div>';});}
   if(r.resPro.length){h+='<h4 class="plan-sub">Prorata du reste (tonnage)</h4>';
-    r.resPro.forEach(x=>{h+='<div class="plr ok"><div class="plr-h"><b>'+esc(x.produit)+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">part '+fmtq(x.part)+'% · '+fmtq(x.poids)+' kg/u · ≈ '+fmtq(x.tonnage)+' kg</div></div>';});
+    r.resPro.forEach(x=>{h+='<div class="plr ok"><div class="plr-h"><b>'+esc(recipeProductLabel(x.produit))+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">part '+fmtq(x.part)+'% · '+fmtq(x.poids)+' kg/u · ≈ '+fmtq(x.tonnage)+' kg</div></div>';});
     h+='<div class="goulot-box"><span class="gb-tag">⚠ GOULOT</span><span class="gb-nom">'+esc(r.goulot||'—')+'</span><span class="gb-sub">matière qui limite le partage</span></div>';}
   if(r.exclus.length)h+='<div class="plr nf">Exclus du prorata (matière à 0) : '+r.exclus.map(esc).join(', ')+'</div>';
   if(r.negs.length)h+='<div class="plr ko">⚠ Matières en négatif (objectifs fermes trop ambitieux) : '+r.negs.map(esc).join(' · ')+'</div>';
@@ -501,7 +502,7 @@ function planPDFChargeSummary(items){
 }
 function planPlannedLine(items){
   if(!items.length)return 'Aucune production prevue.';
-  return items.map(x=>esc(x.produit)+' : <b>'+fmtq(x.n)+'</b> u'+(x.objectif&&x.objectif!==x.n?' <small>(objectif '+fmtq(x.objectif)+')</small>':'')).join(' · ');
+  return items.map(x=>esc(recipeProductLabel(x.produit))+' : <b>'+fmtq(x.n)+'</b> u'+(x.objectif&&x.objectif!==x.n?' <small>(objectif '+fmtq(x.objectif)+')</small>':'')).join(' · ');
 }
 function planRemainingCapacityHTML(b){
   const reste=(b&&b.reste)||{};
@@ -512,7 +513,7 @@ function planRemainingCapacityHTML(b){
   h+='<button id="planCapPDF" class="bil-print" style="width:100%;margin:0 0 4px">📄 Exporter PDF (capacit&eacute; apr&egrave;s plan)</button>';
   caps.forEach(p=>{
     const capN=Math.max(0,Math.floor(p.cap==null?0:p.cap));
-    h+='<div class="cap-card plan-cap-card"><div class="cap-h"><div class="cap-prod">'+esc(p.produit)+'</div>'
+    h+='<div class="cap-card plan-cap-card"><div class="cap-h"><div class="cap-prod">'+esc(recipeProductLabel(p.produit))+'</div>'
       +'<div class="cap-val'+(capN<=0?' zero':'')+'"><b>'+fmtq(capN)+'</b><small>unit&eacute;s</small></div></div>'
       +'<div class="cap-goulot"><span>goulot</span><b>'+(p.goulot?esc(p.goulot):'&mdash;')+'</b></div>'
       +'<details class="cap-det"><summary>D&eacute;tail des mati&egrave;res restantes</summary><div class="cap-lines">';
