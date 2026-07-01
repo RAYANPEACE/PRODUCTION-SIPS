@@ -637,6 +637,9 @@ function localRecordSig(r){
 async function findLocalDuplicate(kind,sig,selfId){
   try{const all=await idbAll();return all.find(r=>r&&r.id!==selfId&&localRecordKind(r)===kind&&localRecordSig(r)===sig)||null;}catch(e){return null;}
 }
+function inventoryResumeSig(st){
+  return localSig('resume-inv',{c:st&&st.c?st.c:null,cfg:st&&st.cfg?st.cfg:null});
+}
 
 let _saveTimer=null;
 function saveCounts(){if(RO)return;clearTimeout(_saveTimer);
@@ -1101,10 +1104,16 @@ bindClick('#resumeValidated',async()=>{
   if(!pool.length)pool=validated;
   pool.sort((a,b)=>(b.date||'').localeCompare(a.date||'')||((b.server?1:0)-(a.server?1:0))||((b.validatedAt||0)-(a.validatedAt||0)));
   const rec=pool[0];
+  const baseSig=inventoryResumeSig(rec.st);
+  if(ST.resumeSourceSig===baseSig&&inventoryResumeSig(ST)===baseSig){
+    toast('Dernier inventaire validé déjà repris');
+    return;
+  }
   if(!confirm('Reprendre le dernier inventaire validé ('+(rec.date||'—')+(rec.agent?(' · '+rec.agent):'')+(rec.server?' · serveur':'')+') ?\n\nSes chiffres sont copiés dans un nouveau comptage modifiable daté d’aujourd’hui. L’inventaire validé d’origine reste intact et verrouillé.'))return;
   await archiveCurrent();
   RO=false;document.body.classList.remove('ro');$('#roBanner').style.display='none';
   ST=InventoryDomain.createInventoryFromLastValidated(rec.st);
+  ST.resumeSourceSig=baseSig;
   mergeAndMigrate();
   $('#agent').value=ST.agent||'';$('#date').value=ST.date;
   saveCounts();render();window.scrollTo(0,0);

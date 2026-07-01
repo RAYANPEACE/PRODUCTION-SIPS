@@ -3,6 +3,9 @@ const FR_MOIS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept
 function moisKey(d){return String(d||'').slice(0,7);}
 function moisLabel(k){const m=k.split('-');if(m.length<2)return k;return FR_MOIS[(+m[1])-1]+' '+m[0];}
 function barRow(label,val,max,unit,color){const w=max>0?Math.round(val/max*100):0;return '<div class="an-bar"><div class="an-bl">'+esc(label)+'</div><div class="an-row2"><div class="an-bt"><div class="an-bf" style="width:'+w+'%'+(color?';background:'+color:'')+'"></div></div><div class="an-bv">'+fmt(Math.round(val*100)/100)+(unit?' '+unit:'')+'</div></div></div>';}
+function fmtKg(v){v=num(v);return v>=1000?fmt(Math.round(v/10)/100)+' t':fmt(Math.round(v*10)/10)+' kg';}
+function analyseBatchCount(r){return ((r.melanges||[]).filter(b=>b&&(b.heureDebut||b.heureFin||b.batchNum))).length;}
+function analyseBatchKg(info,n){const q=num(info&&info.quantiteProduite);return q>0?q:n*num(info&&info.tailleBatch);}
 function groupOf(code){return (REFS.find(x=>x.code===code)||{}).g||'divers';}
 function groupLabel(g){return (GROUPS.find(x=>x[0]===g)||[null,g])[1];}
 const GRP_COL={pf_cart:'#1b5faa',pf_sac:'#1b5faa',cart_vide:'#b5791f',film:'#1f7a8c',vrac:'#1b5faa',tare:'#7a4f9e',plast:'#1f7a4d',divers:'#6a7280'};
@@ -27,7 +30,7 @@ async function analyseLoadData(){
     sort:local.filter(r=>String(r.id).indexOf('sortie_')===0),
     entr:local.filter(r=>String(r.id).indexOf('entree_')===0),
     qual:local.filter(r=>String(r.id).indexOf('batch_')===0),
-    inv:local.filter(r=>r&&r.st&&r.id!=='current'&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('batch_')!==0)
+    inv:local.filter(r=>r&&r.locked&&r.st&&r.id!=='current'&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('batch_')!==0)
   };
   async function addServer(type,key,shape){
     try{
@@ -41,7 +44,7 @@ async function analyseLoadData(){
   await addServer('sortie','sort');
   await addServer('entree','entr');
   await addServer('quality','qual');
-  await addServer('inventory','inv',r=>{const p=r&&r.payload||{};return Object.assign({id:r&&r.id},p,{savedAt:Date.parse(r.validatedAt||r.createdAt||'')||0});});
+  await addServer('inventory','inv',r=>{const p=r&&r.payload||{};return Object.assign({id:r&&r.id},p,{savedAt:Date.parse(r.validatedAt||r.createdAt||'')||0,locked:true,server:true});});
   ['prod','sort','entr','qual','inv'].forEach(key=>{
     const type={prod:'production',sort:'sortie',entr:'entree',qual:'quality',inv:'inventory'}[key];
     const seen={};
@@ -56,12 +59,11 @@ async function renderAnalyse(){
   const src=await analyseLoadData();
   const recs=src.recs,prod=src.prod,sort=src.sort,entr=src.entr,qual=src.qual;
   // agrégats déchets + production par mois
-  const dech={};const prodByProd={};const prodMonths={},batchMonths={},batchByProd={};
+  const dech={};const prodByProd={};const prodMonths={},batchMonths={};
   qual.forEach(r=>{
     const info=r.informations||{},prod=productCodeOf(info.refProduit||r.refProduit||''),k=moisKey(info.dateProduction||r.date);
-    const n=((r.melanges||[]).filter(b=>b&&(b.heureDebut||b.heureFin||b.batchNum))).length;
+    const n=analyseBatchCount(r);
     if(k&&n>0)batchMonths[k]=(batchMonths[k]||0)+n;
-    if(prod&&n>0)batchByProd[prod]=(batchByProd[prod]||0)+n;
   });
   prod.forEach(r=>{const k=moisKey(r.date);dech[k]=dech[k]||{carton:0,sac:0,film:0,mel:0,scotch:0};
     analyseProdBlocks(r).forEach(b=>{const emb=embType(b.p);
@@ -104,18 +106,32 @@ async function renderAnalyse(){
     h+='<div class="an-note">Moyenne par mois = consommation des '+ANPER+' derniers mois ÷ '+ANPER+' (recettes × productions). Jauges relatives au max de chaque groupe → comparables entre matières d\u2019un même groupe (ex. arômes entre eux).</div></div>';
   }
   // Répartition de la production
+  const batchByProd={},batchKgByProd={};
+  qual.filter(r=>String((r.informations&&r.informations.dateProduction)||r.date)>=cut).forEach(r=>{
+    const info=r.informations||{},p=productCodeOf(info.refProduit||r.refProduit||''),n=analyseBatchCount(r);
+    if(!p||n<=0)return;
+    batchByProd[p]=(batchByProd[p]||0)+n;
+    batchKgByProd[p]=(batchKgByProd[p]||0)+analyseBatchKg(info,n);
+  });
+  const batchArr=Object.keys(batchByProd).map(p=>[p,batchByProd[p]]).sort((a,b)=>b[1]-a[1]);
   const prodWArr=Object.keys(prodW).map(p=>[p,prodW[p]]).sort((a,b)=>b[1]-a[1]);
   if(prodWArr.length){const totP=prodWArr.reduce((s,e)=>s+e[1],0);const maxPW=Math.max(1,...prodWArr.map(e=>e[1]));
     h+='<div class="pf-sec"><div class="pf-h">Répartition de la production</div><div class="an-bars">';
     prodWArr.forEach(e=>{const pc=totP?Math.round(e[1]/totP*100):0;h+=barRow(prodName(e[0])+' ('+pc+'%)',e[1],maxPW,'u');});
     h+='</div></div>';
   }
-  const batchArr=Object.keys(batchByProd).map(p=>[p,batchByProd[p]]).sort((a,b)=>b[1]-a[1]);
   if(batchArr.length){const totalB=batchArr.reduce((s,e)=>s+e[1],0),maxB=Math.max(1,...batchArr.map(e=>e[1]));
     h+='<div class="pf-sec"><div class="pf-h">Batches réalisés</div><div class="an-tiles">'
       +'<div class="an-tile"><div class="at-lbl">Total</div><div class="at-val" style="color:var(--ink)">'+fmt(totalB)+'</div><div class="at-sub">batch(es) sur la période</div></div></div><div class="an-bars">';
     batchArr.forEach(e=>{h+=barRow(prodName(e[0]),e[1],maxB,'batch(es)','#1f7a4d');});
     h+='</div></div>';
+    const batchKgArr2=Object.keys(batchKgByProd).map(p=>[p,batchKgByProd[p],batchByProd[p]||0]).sort((a,b)=>b[1]-a[1]);
+    if(batchKgArr2.length){const totalKg2=batchKgArr2.reduce((s,e)=>s+e[1],0),maxKg2=Math.max(1,...batchKgArr2.map(e=>e[1]));
+      h+='<div class="pf-sec"><div class="pf-h">Tonnage par produit fini</div><div class="an-tiles">'
+        +'<div class="an-tile"><div class="at-lbl">Tonnage global</div><div class="at-val" style="color:var(--ink)">'+fmtKg(totalKg2)+'</div><div class="at-sub">moy. '+fmtKg(totalB?totalKg2/totalB:0)+' / batch</div></div></div><div class="an-bars">';
+      batchKgArr2.forEach(e=>{h+=barRow(prodName(e[0])+' - '+fmt(e[2])+' batch(es), moy. '+fmtKg(e[2]?e[1]/e[2]:0)+'/batch',e[1],maxKg2,'', '#1b5faa');});
+      h+='<div class="an-note">Tonnage calcule depuis la quantite produite de la fiche qualite ; si elle manque : nombre de batchs x taille batch du produit.</div></div></div>';
+    }
   }
   // Taux de déchets — tuiles mises en valeur
   if(wProd.length){
@@ -167,12 +183,15 @@ async function renderAnalyse(){
   const entrHtml=topList(eM,'Matières premières reçues','#1f7a4d')+topList(eF,'Produits finis (retours)','#1f7a4d');
   h+='<div class="pf-sec"><div class="pf-h">Entrées par article</div>'+(entrHtml||'<div class="an-note">Aucune entrée sur la période.</div>')+'<div class="an-note">Quelle matière entre le plus sur les '+ANPER+' derniers mois.</div></div>';
   // Réconciliation entre deux inventaires (physique départ + flux → théorique attendu vs physique réel)
-  const invD=recs.filter(r=>r.detail&&Object.keys(r.detail).length&&r.id!=='current').sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+  const invD=recs.filter(r=>(r.locked||r.server)&&r.detail&&Object.keys(r.detail).length&&r.id!=='current').sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   if(invD.length>=2){
     const opt=sel=>invD.map(r=>'<option value="'+esc(r.id)+'"'+(r.id===sel?' selected':'')+'>'+frDate(r.date)+'</option>').join('');
     h+='<div class="pf-sec"><div class="pf-h">Réconciliation entre deux inventaires</div>'
       +'<div class="cmp-sel"><select id="cmpA">'+opt(invD[1].id)+'</select><span>→</span><select id="cmpB">'+opt(invD[0].id)+'</select></div>'
       +'<div id="cmpBox"></div></div>';
+  }else{
+    h+='<div class="pf-sec"><div class="pf-h">Reconciliation entre deux inventaires</div>'
+      +'<div class="an-note">Il faut au moins deux inventaires valides pour comparer deux periodes. Les brouillons et inventaires non valides ne sont pas utilises ici.</div></div>';
   }
   $('#anBody').innerHTML=h;
   const ps=$('#anPer');if(ps)ps.onchange=e=>{ANPER=e.target.value;renderAnalyse();};
