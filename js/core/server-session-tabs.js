@@ -560,6 +560,24 @@ function sipsSetNotifCounts(counts){
   if(SIPS_NOTIF_PREV_TOTAL!==null&&total>SIPS_NOTIF_PREV_TOTAL)sipsNotifBeep();
   SIPS_NOTIF_PREV_TOTAL=total;
 }
+function sipsHasServerQualityVisa(visas,role){
+  var visa=visas&&visas[role];
+  return !!(visa&&visa.signature&&visa.role===role&&visa.serverStamp&&visa.serverStamp.by==='sips-server');
+}
+function sipsNeedsMyQualitySignature(payload,canSign){
+  canSign=Array.isArray(canSign)?canSign:[];
+  var visas=(payload&&payload.visas)||{};
+  if(!sipsHasServerQualityVisa(visas,'operateur')){
+    return canSign.indexOf('operateur')>=0;
+  }
+  if(sipsHasServerQualityVisa(visas,'responsableQualite')||sipsHasServerQualityVisa(visas,'responsableProd')){
+    return false;
+  }
+  return canSign.indexOf('responsableQualite')>=0||canSign.indexOf('responsableProd')>=0;
+}
+function sipsQualityCorrectionOfId(payload){
+  return payload&&payload.correctionOf&&payload.correctionOf.id||'';
+}
 async function sipsRefreshNotifications(){
   if(SIPS_NOTIF_BUSY)return;
   SIPS_NOTIF_BUSY=true;
@@ -578,19 +596,27 @@ async function sipsRefreshNotifications(){
         const q=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload');
         const qRows=q.submissions||[];
         const need=(q.submissions||[]).filter(function(s){
-          const v=(s.payload&&s.payload.visas)||{};
-          const opMissing=!(v.operateur&&v.operateur.signature);
-          const secondMissing=!((v.responsableQualite&&v.responsableQualite.signature)||(v.responsableProd&&v.responsableProd.signature));
-          return (opMissing&&SESSION.canSign.indexOf('operateur')>=0)||(secondMissing&&(SESSION.canSign.indexOf('responsableQualite')>=0||SESSION.canSign.indexOf('responsableProd')>=0));
+          return sipsNeedsMyQualitySignature(s&&s.payload,SESSION.canSign);
         }).length;
         counts.qualite=(counts.qualite||0)+need;
-        const c=await sipsFetch('/api/submissions?status=rejected&type=quality&include=payload');
-        const recs=await sipsRecords('quality');
-        const resumed={};
-        qRows.forEach(function(s){const id=s&&s.payload&&s.payload.correctionOf&&s.payload.correctionOf.id;if(id)resumed[id]=1;});
-        recs.forEach(function(r){const id=r&&r.payload&&r.payload.correctionOf&&r.payload.correctionOf.id;if(id)resumed[id]=1;});
-        const corrections=(c.submissions||[]).filter(function(s){return s&&s.correctionRequested&&!resumed[s.id];}).length;
-        counts.qualite=(counts.qualite||0)+corrections;
+        if(SESSION.canSign.indexOf('operateur')>=0){
+          const c=await sipsFetch('/api/submissions?status=rejected&type=quality&include=payload');
+          const recs=await sipsRecords('quality');
+          const correctionsById={};
+          const resumed={};
+          (c.submissions||[]).forEach(function(s){if(s&&s.id)correctionsById[s.id]=s;});
+          function markResumed(id){
+            while(id&&!resumed[id]){
+              resumed[id]=1;
+              var parent=correctionsById[id];
+              id=sipsQualityCorrectionOfId(parent&&parent.payload);
+            }
+          }
+          qRows.forEach(function(s){markResumed(sipsQualityCorrectionOfId(s&&s.payload));});
+          recs.forEach(function(r){markResumed(sipsQualityCorrectionOfId(r&&r.payload));});
+          const corrections=(c.submissions||[]).filter(function(s){return s&&s.correctionRequested&&!resumed[s.id];}).length;
+          counts.qualite=(counts.qualite||0)+corrections;
+        }
       }catch(e){}
     }
   }finally{

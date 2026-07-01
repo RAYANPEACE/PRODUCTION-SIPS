@@ -200,51 +200,75 @@ function qApplyAccountVisaNames(){
 function qInitSigPad(canvasId,role,editable){
   var cv=document.getElementById(canvasId);
   if(!cv)return;
-  /* Fix 4: scale canvas internal resolution to match CSS display size */
   var dispW=cv.offsetWidth||400;
   var dispH=cv.offsetHeight||100;
   cv.width=dispW;
   cv.height=dispH;
   var ctx=cv.getContext('2d');
-  var drawing=false;
-  function pos(e){
-    var rect=cv.getBoundingClientRect();
-    var t=e.touches?e.touches[0]:e;
-    return {x:(t.clientX-rect.left)*(cv.width/rect.width),y:(t.clientY-rect.top)*(cv.height/rect.height)};
-  }
-  if(editable){
-    function start(e){
-      e.preventDefault();drawing=true;
-      var name=qSignerName();if(name)QS.visas[role].nom=name;
-      var p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);
-    }
-    function move(e){
-      if(!drawing)return;e.preventDefault();
-      var p=pos(e);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#13202b';
-      ctx.lineTo(p.x,p.y);ctx.stroke();
-    }
-    function end(){
-      if(!drawing)return;drawing=false;
-      QS.visas[role].signature=cv.toDataURL();
-      if(!QS.visas[role].date)QS.visas[role].date=todayStr()+' '+qNowTime();
-      var tsEl=document.getElementById('qSigTs_'+role);
-      if(tsEl)tsEl.textContent=QS.visas[role].date;
-    }
-    cv.addEventListener('pointerdown',start);
-    cv.addEventListener('pointermove',move);
-    cv.addEventListener('pointerup',end);
-    cv.addEventListener('pointerleave',end);
-  }
+  ctx.clearRect(0,0,cv.width,cv.height);
   _qSigPads[role]={canvas:cv,ctx:ctx,clear:function(){
     ctx.clearRect(0,0,cv.width,cv.height);
     QS.visas[role].signature='';QS.visas[role].date='';
     var tsEl=document.getElementById('qSigTs_'+role);
     if(tsEl)tsEl.textContent='';
+    var st=document.getElementById('qSigState_'+role);
+    if(st)st.textContent='Non signe';
   }};
   if(QS.visas[role].signature){
     var img=new Image();img.onload=function(){ctx.drawImage(img,0,0,cv.width,cv.height);};
     img.src=QS.visas[role].signature;
   }
+}
+function qOpenSigDlg(role){
+  if(!qCanEditVisa(role)){toast('Signature non modifiable');return;}
+  var visa=QS.visas[role]||{};
+  var dlg=document.createElement('dialog');
+  dlg.className='q-sig-dialog';
+  dlg.innerHTML='<div class="dlg-h"><b>SIGNER</b><button type="button" data-close>x</button></div>'
+    +'<div class="dlg-b q-sig-dialog-body"><canvas class="q-sig-pad-big"></canvas>'
+    +'<div class="q-sig-dialog-actions"><button type="button" class="b-sec" data-clear>Effacer</button><button type="button" class="b-go" data-save>Valider la signature</button></div></div>';
+  document.body.appendChild(dlg);
+  var cv=dlg.querySelector('canvas'),ctx=cv.getContext('2d'),drawing=false,hasInk=false;
+  function fit(){
+    var rect=cv.getBoundingClientRect();
+    cv.width=Math.max(320,Math.round(rect.width));
+    cv.height=Math.max(260,Math.round(rect.height));
+    ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#13202b';
+    if(visa.signature){
+      var img=new Image();img.onload=function(){ctx.drawImage(img,0,0,cv.width,cv.height);hasInk=true;};img.src=visa.signature;
+    }
+  }
+  function pos(e){
+    var rect=cv.getBoundingClientRect();
+    var t=e.touches?e.touches[0]:(e.changedTouches?e.changedTouches[0]:e);
+    return {x:(t.clientX-rect.left)*(cv.width/rect.width),y:(t.clientY-rect.top)*(cv.height/rect.height)};
+  }
+  function start(e){e.preventDefault();drawing=true;hasInk=true;var p=pos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);}
+  function move(e){if(!drawing)return;e.preventDefault();var p=pos(e);ctx.lineTo(p.x,p.y);ctx.stroke();}
+  function end(e){if(!drawing)return;if(e)e.preventDefault();drawing=false;}
+  cv.addEventListener('pointerdown',start);
+  cv.addEventListener('pointermove',move);
+  cv.addEventListener('pointerup',end);
+  cv.addEventListener('pointerleave',end);
+  cv.addEventListener('touchstart',start,{passive:false});
+  cv.addEventListener('touchmove',move,{passive:false});
+  cv.addEventListener('touchend',end,{passive:false});
+  dlg.querySelector('[data-close]').onclick=function(){dlg.close();};
+  dlg.querySelector('[data-clear]').onclick=function(){ctx.clearRect(0,0,cv.width,cv.height);hasInk=false;};
+  dlg.querySelector('[data-save]').onclick=function(){
+    if(!hasInk){toast('Tracez votre signature');return;}
+    var name=qSignerName();if(name)QS.visas[role].nom=name;
+    QS.visas[role].signature=cv.toDataURL();
+    QS.visas[role].date=todayStr()+' '+qNowTime();
+    dlg.close();
+    renderQualite();
+  };
+  dlg.addEventListener('close',function(){dlg.remove();});
+  dlg.showModal();
+  setTimeout(fit,30);
+}
+function qSigButtonText(role){
+  return (QS.visas[role]&&QS.visas[role].signature)?'RESIGNER':'SIGNER';
 }
 
 /* --- Render main --- */
@@ -258,8 +282,7 @@ async function renderQualite(){
   var app=$('#app');
   var h='<div class="q-wrap">';
   h+='<h2 class="q-title">Suivi Qualité — Fiche de Lot</h2>';
-  if(!QS_SERVER_VIEW&&!QS_SERVER_PENDING_ID&&SESSION&&qQualitySignableRoles().some(function(role){return qCanSignRole(role);}))
-    h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Les fiches serveur a signer apparaissent dans l historique en bas de cet onglet. Ouvrez la fiche, tracez votre signature, puis enregistrez la signature serveur.</p>';
+  h+='<button id="qGoHist" class="hist-jump">Historique</button>';
   if(QS_SERVER_VIEW)h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Consultation officielle serveur : lecture seule. Utilisez PDF pour exporter, ou Nouvelle fiche pour reprendre la saisie locale.</p>';
   if(QS_CORRECTION_OF)h+='<p class="ref-hint" style="background:#fff3f0;border:1px solid #efc9c0;border-radius:8px;padding:8px 10px"><b>Correction demandee</b> : '+esc(QS_CORRECTION_NOTE||'Motif non renseigne')+'<br><small>Ancienne soumission : '+esc(QS_CORRECTION_OF.id||'')+'. Corrigez la fiche puis signez operateur avant resoumission.</small></p>';
 
@@ -349,8 +372,10 @@ async function renderQualite(){
     else if(SESSION)h+=' <span style="color:var(--green);font-size:10px;font-style:italic">(compte connecte)</span>';
     h+='</div>';
     h+='<input class="q-sig-nom" type="text" id="qSigNom_'+key+'" value="'+esc(v.nom)+'" placeholder="Nom"'+(lockName?' readonly style="background:#eef2f6;color:var(--mute)"':' oninput="QS.visas.'+key+'.nom=this.value"')+'>';
-    h+='<canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"'+(canEdit?'':' style="pointer-events:none;opacity:0.6"')+'></canvas>';
-    if(canEdit){h+='<button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';}
+    h+='<div class="q-sig-preview-row"><canvas class="q-sig-canvas" id="qSigCv_'+key+'" width="400" height="100"></canvas><div class="q-sig-side">';
+    h+='<div class="q-sig-state" id="qSigState_'+key+'">'+(v.signature?'Signe':'Non signe')+'</div>';
+    if(canEdit){h+='<button class="q-sign-btn" onclick="qOpenSigDlg(\''+key+'\')">'+qSigButtonText(key)+'</button><button class="q-sig-clear" onclick="qClearSig(\''+key+'\')">Effacer</button>';}
+    h+='</div></div>';
     h+='<div class="q-sig-ts" id="qSigTs_'+key+'">'+esc(v.date)+'</div>';
     h+='</div>';
   });
@@ -374,11 +399,13 @@ async function renderQualite(){
   h+='</div>';
 
   /* History */
-  h+='<div style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;margin-bottom:8px">Historique des fiches</h3>';
+  h+='<div id="qHistory" style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;margin-bottom:8px">Historique des fiches</h3>';
   h+='<div id="qHistList"></div></div>';
 
   h+='</div>';
   app.innerHTML=h;
+  var qGoHist=$('#qGoHist');
+  if(qGoHist)qGoHist.onclick=function(){var el=document.getElementById('qHistory');if(el)scrollCardIntoView(el);};
   if(QS_SERVER_VIEW){
     app.querySelectorAll('input,select,textarea,button.q-add,button.q-rm,button.q-now,button.q-sig-clear').forEach(function(el){el.disabled=true;});
   }
@@ -621,9 +648,9 @@ async function qLoadHist(){
       QSERVER_PENDING.forEach(function(s,idx){
         var b=s.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=qQualitySignedCount(visas);
-        var opMissing=!(visas.operateur&&visas.operateur.signature);
-        var secondMissing=!qHasQualitySecondSignature(visas);
-        var mine=(opMissing&&qCanSignRole('operateur'))||(secondMissing&&(qCanSignRole('responsableQualite')||qCanSignRole('responsableProd')));
+        var mine=typeof sipsNeedsMyQualitySignature==='function'
+          ? sipsNeedsMyQualitySignature(b,(SESSION&&SESSION.canSign)||[])
+          : false;
         htm+='<div class="q-hist-item">';
         htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'---'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+sigs+'/2 signature(s) obligatoires - '+(mine?'votre signature est attendue':'en attente admin/autre signature')+'</span></div>';
@@ -701,7 +728,7 @@ async function qLoadBatch(id){
     QS.matieresPremieres=rec.matieresPremieres||[];
     QS.melanges=rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
     QS.visas=qNormalizeVisas(rec.visas);
-    renderQualite();
+    await renderQualite();
     toast('Fiche chargee');
     window.scrollTo(0,0);
   }catch(e){toast('Erreur chargement');}
@@ -748,7 +775,7 @@ async function qLoadCorrectionBatch(idx){
   QS.visas=freshQS().visas;
   QS_CORRECTION_OF={id:row.id,lot:(QS.informations&&QS.informations.numeroLot)||'',decidedAt:row.decidedAt||'',decidedBy:row.decidedBy||''};
   QS_CORRECTION_NOTE=row.decisionNote||'Correction demandee';
-  renderQualite();
+  await renderQualite();
   toast('Correction chargee');
   window.scrollTo(0,0);
 }
@@ -783,7 +810,7 @@ async function qLoadServerBatch(idx){
   QS.matieresPremieres=rec.matieresPremieres||[];
   QS.melanges=rec.melanges||[{batchNum:1,heureDebut:'',heureFin:''}];
   QS.visas=qNormalizeVisas(rec.visas);
-  renderQualite();
+  await renderQualite();
   toast('Fiche serveur chargee');
   window.scrollTo(0,0);
 }

@@ -6,22 +6,67 @@ function barRow(label,val,max,unit,color){const w=max>0?Math.round(val/max*100):
 function groupOf(code){return (REFS.find(x=>x.code===code)||{}).g||'divers';}
 function groupLabel(g){return (GROUPS.find(x=>x[0]===g)||[null,g])[1];}
 const GRP_COL={pf_cart:'#1b5faa',pf_sac:'#1b5faa',cart_vide:'#b5791f',film:'#1f7a8c',vrac:'#1b5faa',tare:'#7a4f9e',plast:'#1f7a4d',divers:'#6a7280'};
-const DCH_COL={carton:'#b5791f',sac:'#1b5faa',film:'#1f7a8c',mel:'#7a4f9e'};
+const DCH_COL={carton:'#b5791f',sac:'#1b5faa',film:'#1f7a8c',mel:'#7a4f9e',scotch:'#59636e'};
 let ANPER='3';
 function dateMonthsAgo(n){const d=new Date();d.setMonth(d.getMonth()-n);const p=x=>(x<10?'0':'')+x;return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
+function analyseSig(type,p){
+  p=p||{};
+  if(type==='production')return localSig('an-prod',{date:p.date||'',agent:p.agent||'',blocks:typeof migrateProdRec==='function'?migrateProdRec(p):(p.blocks||[]),note:p.note||''});
+  if(type==='sortie'||type==='entree')return localSig('an-'+type,{date:p.date||'',ref:p.ref||'',finis:p.finis||[],mp:p.mp||[],note:p.note||''});
+  if(type==='quality')return localSig('an-quality',{date:p.date||'',informations:p.informations||{},matieresPremieres:p.matieresPremieres||[],melanges:p.melanges||[]});
+  if(type==='inventory')return localSig('an-inv',{date:p.date||'',detail:p.detail||null,st:p.st&&p.st.c?p.st.c:null});
+  return localSig('an-'+type,p);
+}
+function analyseProdBlocks(r){
+  return typeof migrateProdRec==='function'?migrateProdRec(r||{}):((r&&r.blocks)||[]);
+}
+async function analyseLoadData(){
+  let local=[];try{local=await idbAll();}catch(e){}
+  const out={
+    prod:local.filter(r=>String(r.id).indexOf('prod_')===0),
+    sort:local.filter(r=>String(r.id).indexOf('sortie_')===0),
+    entr:local.filter(r=>String(r.id).indexOf('entree_')===0),
+    qual:local.filter(r=>String(r.id).indexOf('batch_')===0),
+    inv:local.filter(r=>r&&r.st&&r.id!=='current'&&String(r.id).indexOf('fragsess_')!==0&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('batch_')!==0)
+  };
+  async function addServer(type,key,shape){
+    try{
+      (await sipsRecords(type,{timeoutMs:1600})).forEach(r=>{
+        const p=shape?shape(r):(r&&r.payload||{});
+        if(p)out[key].push(p);
+      });
+    }catch(e){}
+  }
+  await addServer('production','prod');
+  await addServer('sortie','sort');
+  await addServer('entree','entr');
+  await addServer('quality','qual');
+  await addServer('inventory','inv',r=>{const p=r&&r.payload||{};return Object.assign({id:r&&r.id},p,{savedAt:Date.parse(r.validatedAt||r.createdAt||'')||0});});
+  ['prod','sort','entr','qual','inv'].forEach(key=>{
+    const type={prod:'production',sort:'sortie',entr:'entree',qual:'quality',inv:'inventory'}[key];
+    const seen={};
+    out[key]=out[key].filter(p=>{const sig=analyseSig(type,p);if(seen[sig])return false;seen[sig]=1;return true;});
+  });
+  out.recs=out.inv;
+  return out;
+}
 async function renderAnalyse(){
   const app=$('#app');
   app.innerHTML='<div class="prod-wrap"><h2 class="prod-title">Analyses <span style="font-size:12px;color:#6a7280;font-weight:400">(admin)</span></h2><div id="anBody">Chargement…</div></div>';
-  let recs=[];try{recs=await idbAll();}catch(e){}
-  const prod=recs.filter(r=>String(r.id).indexOf('prod_')===0);
-  const sort=recs.filter(r=>String(r.id).indexOf('sortie_')===0);
-  const entr=recs.filter(r=>String(r.id).indexOf('entree_')===0);
+  const src=await analyseLoadData();
+  const recs=src.recs,prod=src.prod,sort=src.sort,entr=src.entr,qual=src.qual;
   // agrégats déchets + production par mois
-  const dech={};const prodByProd={};const prodMonths={};
-  prod.forEach(r=>{const k=moisKey(r.date);dech[k]=dech[k]||{carton:0,sac:0,film:0,mel:0};
-    (r.blocks||[]).forEach(b=>{const emb=embType(b.p);
+  const dech={};const prodByProd={};const prodMonths={},batchMonths={},batchByProd={};
+  qual.forEach(r=>{
+    const info=r.informations||{},prod=productCodeOf(info.refProduit||r.refProduit||''),k=moisKey(info.dateProduction||r.date);
+    const n=((r.melanges||[]).filter(b=>b&&(b.heureDebut||b.heureFin||b.batchNum))).length;
+    if(k&&n>0)batchMonths[k]=(batchMonths[k]||0)+n;
+    if(prod&&n>0)batchByProd[prod]=(batchByProd[prod]||0)+n;
+  });
+  prod.forEach(r=>{const k=moisKey(r.date);dech[k]=dech[k]||{carton:0,sac:0,film:0,mel:0,scotch:0};
+    analyseProdBlocks(r).forEach(b=>{const emb=embType(b.p);
       if(emb==='sac')dech[k].sac+=num(b.w_emb);else dech[k].carton+=num(b.w_emb);
-      dech[k].film+=num(b.w_film);dech[k].mel+=num(b.w_mel);
+      dech[k].film+=num(b.w_film);dech[k].mel+=num(b.w_mel);dech[k].scotch+=num(b.scotch);
       if(b.p&&num(b.n)>0){prodByProd[b.p]=(prodByProd[b.p]||0)+num(b.n);prodMonths[k]=prodMonths[k]||{};prodMonths[k][b.p]=(prodMonths[k][b.p]||0)+num(b.n);}
     });});
   // mouvements par mois
@@ -30,16 +75,17 @@ async function renderAnalyse(){
     const f=(r.finis||[]).reduce((s,x)=>s+(x.a?num(x.q):0),0);const m=(r.mp||[]).reduce((s,x)=>s+(x.a?num(x.q):0),0);
     if(key==='e'){mov[k].eF+=f;mov[k].eM+=m;}else{mov[k].sF+=f;mov[k].sM+=m;}});
   addMov(entr,'e');addMov(sort,'s');
-  const months=Array.from(new Set([].concat(Object.keys(dech),Object.keys(mov),Object.keys(prodMonths)))).filter(Boolean).sort().reverse().slice(0,12);
+  const months=Array.from(new Set([].concat(Object.keys(dech),Object.keys(mov),Object.keys(prodMonths),Object.keys(batchMonths)))).filter(Boolean).sort().reverse().slice(0,12);
   let h='';
   if(!months.length){h='<div class="placeholder">Pas encore de données. Enregistre des productions, sorties ou entrées pour voir leur évolution ici.</div>';$('#anBody').innerHTML=h;return;}
+  h+='<div class="an-note" style="margin-bottom:10px">Données détectées : '+prod.length+' production(s), '+sort.length+' sortie(s), '+entr.length+' entrée(s), '+qual.length+' fiche(s) qualité, '+recs.length+' inventaire(s).</div>';
   // ===== Sections par période (3 / 6 / 12 mois) =====
   const cut=dateMonthsAgo(+ANPER);
   const wProd=prod.filter(r=>String(r.date)>=cut);
-  const conso={},prodW={},dW={carton:0,sac:0,film:0,mel:0},prodUnits={carton:0,sac:0};
-  wProd.forEach(r=>{(r.blocks||[]).forEach(b=>{const n=num(b.n);const emb=embType(b.p);
+  const conso={},prodW={},dW={carton:0,sac:0,film:0,mel:0,scotch:0},prodUnits={carton:0,sac:0};
+  wProd.forEach(r=>{analyseProdBlocks(r).forEach(b=>{const n=num(b.n);const emb=embType(b.p);
     if(emb==='sac')dW.sac+=num(b.w_emb);else dW.carton+=num(b.w_emb);
-    dW.film+=num(b.w_film);dW.mel+=num(b.w_mel);
+    dW.film+=num(b.w_film);dW.mel+=num(b.w_mel);dW.scotch+=num(b.scotch);
     if(b.p&&n>0){const pc=typeof productCodeOf==='function'?productCodeOf(b.p):b.p;prodW[pc]=(prodW[pc]||0)+n;if(emb==='sac')prodUnits.sac+=n;else prodUnits.carton+=n;
       (typeof recipeForProduct==='function'?recipeForProduct(b.p):(RECF[b.p]||[])).forEach(m=>{const k=m.des||m.code;conso[k]=conso[k]||{q:0,code:m.code};conso[k].q+=n*num(m.qte);});}
   });});
@@ -61,7 +107,14 @@ async function renderAnalyse(){
   const prodWArr=Object.keys(prodW).map(p=>[p,prodW[p]]).sort((a,b)=>b[1]-a[1]);
   if(prodWArr.length){const totP=prodWArr.reduce((s,e)=>s+e[1],0);const maxPW=Math.max(1,...prodWArr.map(e=>e[1]));
     h+='<div class="pf-sec"><div class="pf-h">Répartition de la production</div><div class="an-bars">';
-    prodWArr.forEach(e=>{const pc=totP?Math.round(e[1]/totP*100):0;h+=barRow((typeof recipeProductLabel==='function'?recipeProductLabel(e[0]):e[0])+' ('+pc+'%)',e[1],maxPW,'u');});
+    prodWArr.forEach(e=>{const pc=totP?Math.round(e[1]/totP*100):0;h+=barRow(prodName(e[0])+' ('+pc+'%)',e[1],maxPW,'u');});
+    h+='</div></div>';
+  }
+  const batchArr=Object.keys(batchByProd).map(p=>[p,batchByProd[p]]).sort((a,b)=>b[1]-a[1]);
+  if(batchArr.length){const totalB=batchArr.reduce((s,e)=>s+e[1],0),maxB=Math.max(1,...batchArr.map(e=>e[1]));
+    h+='<div class="pf-sec"><div class="pf-h">Batches réalisés</div><div class="an-tiles">'
+      +'<div class="an-tile"><div class="at-lbl">Total</div><div class="at-val" style="color:var(--ink)">'+fmt(totalB)+'</div><div class="at-sub">batch(es) sur la période</div></div></div><div class="an-bars">';
+    batchArr.forEach(e=>{h+=barRow(prodName(e[0]),e[1],maxB,'batch(es)','#1f7a4d');});
     h+='</div></div>';
   }
   // Taux de déchets — tuiles mises en valeur
@@ -76,12 +129,28 @@ async function renderAnalyse(){
       +tile('Film',txF==null?'—':txF+'%',txCol(txF),fmt(dW.film)+' déchet / '+fmt(prodUnits.carton)+' cart.')
       +tile('Sac',txS==null?'—':txS+'%',txCol(txS),fmt(dW.sac)+' déchet / '+fmt(prodUnits.sac)+' prod.')
       +tile('Mélange',fmt(dW.mel)+' kg','var(--ink)','perdu sur la période')
+      +tile('Scotch',fmt(dW.scotch),'var(--ink)','bobine(s) sur la période')
       +'</div><div class="an-note">Taux = déchets ÷ unités produites sur la période (indicatif). Vert &lt; 1 % · orange 1–3 % · rouge &gt; 3 %.</div></div>';
+  }
+  const wasteDetail={};
+  wProd.forEach(r=>analyseProdBlocks(r).forEach(b=>{
+    prodBlockWasteDetails(b).forEach(x=>{
+      const k=x.kind+'|'+x.code;
+      if(!wasteDetail[k])wasteDetail[k]=Object.assign({},x,{qty:0});
+      wasteDetail[k].qty+=num(x.qty);
+    });
+  }));
+  const wasteArr=Object.keys(wasteDetail).map(k=>wasteDetail[k]).sort((a,b)=>String(a.code).localeCompare(String(b.code),'fr',{numeric:true}));
+  if(wasteArr.length){
+    const maxD=Math.max(1,...wasteArr.map(x=>x.qty));
+    h+='<div class="pf-sec"><div class="pf-h">Détail déchets par produit fini et référence</div><div class="an-bars">';
+    wasteArr.forEach(x=>{h+=barRow(refName(x.code),x.qty,maxD,'',DCH_COL[x.kind]||'#59636e');});
+    h+='<div class="an-note">Cartons, sacs et films sont ventilés sur la référence de recette du produit fini. Le mélange reste suivi globalement.</div></div></div>';
   }
   // ===== Évolution mensuelle (12 derniers mois) =====
   // Déchets — jauge par catégorie dans chaque cellule (relative au max de sa colonne)
   h+='<div class="pf-sec"><div class="pf-h">Déchets de production par mois</div>';
-  const dcats=[['carton','Carton'],['sac','Sac'],['film','Film'],['mel','Mélange']];
+  const dcats=[['carton','Carton'],['sac','Sac'],['film','Film'],['mel','Mélange'],['scotch','Scotch']];
   const colMax={};dcats.forEach(c=>{colMax[c[0]]=Math.max(1,...months.map(m=>(dech[m]||{})[c[0]]||0));});
   h+='<table class="an-tbl andech"><thead><tr><th>Mois</th>'+dcats.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr></thead><tbody>';
   months.forEach(m=>{const d=dech[m]||{};h+='<tr><td>'+moisLabel(m)+'</td>'+dcats.map(c=>{const k=c[0];const v=d[k]||0;const w=Math.round(v/colMax[k]*100);
@@ -97,19 +166,6 @@ async function renderAnalyse(){
   h+='<div class="pf-sec"><div class="pf-h">Sorties par article</div>'+(sortHtml||'<div class="an-note">Aucune sortie sur la période.</div>')+'<div class="an-note">Quel produit / quelle matière sort le plus sur les '+ANPER+' derniers mois.</div></div>';
   const entrHtml=topList(eM,'Matières premières reçues','#1f7a4d')+topList(eF,'Produits finis (retours)','#1f7a4d');
   h+='<div class="pf-sec"><div class="pf-h">Entrées par article</div>'+(entrHtml||'<div class="an-note">Aucune entrée sur la période.</div>')+'<div class="an-note">Quelle matière entre le plus sur les '+ANPER+' derniers mois.</div></div>';
-  // Évolution des écarts d'inventaire (résumés stockés à l'archivage)
-  const invs=recs.filter(r=>r.st&&r.bilan&&r.id!=='current'&&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0&&String(r.id).indexOf('entree_')!==0).sort((a,b)=>(a.savedAt||0)-(b.savedAt||0));
-  if(invs.length){
-    h+='<div class="pf-sec"><div class="pf-h">Évolution des écarts d\u2019inventaire</div>';
-    h+='<table class="an-tbl"><thead><tr><th>Inventaire</th><th>Comptés</th><th>Anomalies</th><th>Écart total</th></tr></thead><tbody>';
-    invs.forEach(r=>{const b=r.bilan;h+='<tr><td>'+frDate(r.date)+'</td><td>'+(b.nbCounted||0)+'</td><td>'+(b.nbAlertes||0)+'</td><td>'+fsign(Math.round((b.total||0)*100)/100)+'</td></tr>';});
-    h+='</tbody></table><div class="an-bars">';
-    const maxA=Math.max(1,...invs.map(r=>r.bilan.nbAlertes||0));
-    invs.forEach(r=>{h+=barRow(frDate(r.date),r.bilan.nbAlertes||0,maxA,'anom.');});
-    h+='</div><div class="an-note">Nombre d\u2019anomalies par inventaire (tendance). Écart = théorique − physique, unités mêlées (indicatif).</div></div>';
-  }else{
-    h+='<div class="an-note" style="margin-top:10px">Évolution des écarts d\u2019inventaire : disponible dès ton prochain archivage d\u2019inventaire (les inventaires archivés avant cette version n\u2019ont pas de résumé de bilan).</div>';
-  }
   // Réconciliation entre deux inventaires (physique départ + flux → théorique attendu vs physique réel)
   const invD=recs.filter(r=>r.detail&&Object.keys(r.detail).length&&r.id!=='current').sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   if(invD.length>=2){
@@ -129,7 +185,7 @@ async function renderAnalyse(){
       if(String(a.date)>String(b.date)){const t=a;a=b;b=t;}
       const lo=String(a.date),hi=String(b.date);const inWin=r=>{const d=String(r.date);return d>lo&&d<=hi;};
       const prodAdd={},conso={},entrA={},sortA={};
-      prod.filter(inWin).forEach(r=>(r.blocks||[]).forEach(bk=>{const n=num(bk.n);if(!bk.p||n<=0)return;
+      prod.filter(inWin).forEach(r=>analyseProdBlocks(r).forEach(bk=>{const n=num(bk.n);if(!bk.p||n<=0)return;
         const code=desToCode[bk.p];if(code)prodAdd[code]=(prodAdd[code]||0)+n;
         (typeof recipeForProduct==='function'?recipeForProduct(bk.p):(RECF[bk.p]||[])).forEach(m=>{conso[m.code]=(conso[m.code]||0)+n*num(m.qte);});}));
       const addMov=(arr,obj)=>arr.filter(inWin).forEach(r=>{[].concat(r.finis||[],r.mp||[]).forEach(x=>{if(!x.a)return;const c=desToCode[x.a];if(c&&num(x.q)>0)obj[c]=(obj[c]||0)+num(x.q);});});

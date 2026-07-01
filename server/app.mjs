@@ -421,7 +421,7 @@ function productionBlockHasInput(b) {
     || serverNum(b.w_emb) > 0
     || serverNum(b.w_film) > 0
     || serverNum(b.w_mel) > 0
-    || (Array.isArray(b.perso) && b.perso.some(x => String(x && x.lbl || '').trim() || serverNum(x && x.qte) > 0))
+    || serverNum(b.scotch) > 0
   ));
 }
 

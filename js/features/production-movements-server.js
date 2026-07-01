@@ -4,14 +4,38 @@ function frDate(s){if(!s)return '—';const m=String(s).split('-');return m.leng
 let PF=null;
 const HIST_MAX=80;
 const HIST_FILTERS={
-  production:{mode:'all',value:''},
-  sortie:{mode:'all',value:''},
-  entree:{mode:'all',value:''}
+  production:{mode:'all',value:'',start:'',end:'',article:''},
+  sortie:{mode:'all',value:'',start:'',end:'',article:''},
+  entree:{mode:'all',value:'',start:'',end:'',article:''}
 };
+function refName(value){
+  const r=REFS.find(x=>x.code===value||x.des===value);
+  return r?r.des:String(value||'');
+}
+function refCode(value){
+  const r=REFS.find(x=>x.code===value||x.des===value);
+  return r?r.code:String(value||'');
+}
+function prodName(prod){
+  const r=(typeof recipeProductRef==='function'&&recipeProductRef(prod))||REFS.find(x=>x.code===prod||x.des===prod);
+  return r?r.des:String(prod||'');
+}
+function nonFinishedRefs(){
+  return refsByCode(REFS.filter(r=>r.cat!=='fini'));
+}
+function histWeekRange(v){
+  const m=String(v||'').match(/^(\d{4})-W(\d{2})$/);if(!m)return null;
+  const d=new Date(Date.UTC(+m[1],0,1+(+m[2]-1)*7));
+  const day=d.getUTCDay()||7;
+  d.setUTCDate(d.getUTCDate()+(day<=4?1-day:8-day));
+  const s=d.toISOString().slice(0,10);
+  d.setUTCDate(d.getUTCDate()+6);
+  return [s,d.toISOString().slice(0,10)];
+}
 function embType(p){const a=(typeof recipeProductRef==='function'&&recipeProductRef(p))||REFS.find(x=>x.code===p||x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
-function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',perso:[],photos:[]};}
-function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),scotch:'',blocks:[freshBlock()],note:''};}
-function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||(b.perso||[]).some(x=>x.lbl&&num(x.qte)>0);}
+function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',scotch:'',photos:[]};}
+function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
+function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||num(b.scotch)>0;}
 function pfCompleteBlocks(pf){return (pf.blocks||[]).filter(b=>b&&b.p&&num(b.n)>0);}
 function pfMissingProductBlocks(pf){return (pf.blocks||[]).filter(b=>pfBlockHasInput(b)&&(!b.p||num(b.n)<=0));}
 function pfProductionGuard(pf){
@@ -21,11 +45,91 @@ function pfProductionGuard(pf){
   if(!blocks.length){toast('Rien a soumettre');return null;}
   return blocks;
 }
+function prodBlocksScotch(blocks){
+  return (blocks||[]).reduce((sum,b)=>sum+num(b&&b.scotch),0);
+}
+function prodRecipeRows(prod){
+  return typeof recipeForProduct==='function'?recipeForProduct(prod):(RECF&&RECF[prod]||[]);
+}
+function prodRef(code){
+  return REFS.find(r=>r.code===code)||{};
+}
+function prodIngrText(m){
+  return String(((m&&m.des)||'')+' '+((m&&m.code)||'')).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+}
+function prodIngrCat(m){
+  return (prodRef(m&&m.code).cat)||'';
+}
+function prodIsFilmIngr(m){
+  return prodIngrCat(m)==='film'||prodIngrText(m).indexOf('FILM')>=0;
+}
+function prodIsCartonIngr(m){
+  return prodIngrCat(m)==='carton'||prodIngrText(m).indexOf('CARTON')>=0;
+}
+function prodIsSacIngr(m){
+  const txt=prodIngrText(m),cat=prodIngrCat(m);
+  return txt.indexOf('SAC')>=0||cat==='plast'||cat==='emballage';
+}
+function prodWasteIngredientRows(prod,kind){
+  const recipe=prodRecipeRows(prod).filter(m=>m&&m.code&&num(m.qte)>0);
+  if(kind==='film')return recipe.filter(prodIsFilmIngr);
+  if(kind==='carton')return recipe.filter(prodIsCartonIngr);
+  if(kind==='sac')return recipe.filter(m=>prodIsSacIngr(m)&&!prodIsFilmIngr(m)&&!prodIsCartonIngr(m));
+  return [];
+}
+function prodPackagingWasteRows(prod){
+  const kind=embType(prod)==='sac'?'sac':'carton';
+  let rows=prodWasteIngredientRows(prod,kind);
+  if(!rows.length)rows=prodRecipeRows(prod).filter(m=>m&&m.code&&num(m.qte)>0&&!prodIsFilmIngr(m)&&(prodIsCartonIngr(m)||prodIsSacIngr(m)));
+  return rows;
+}
+function prodWasteRefLabel(rows,fallback){
+  rows=(rows||[]).filter(r=>r&&r.code);
+  if(!rows.length)return fallback;
+  return fallback+' ('+rows.map(r=>r.code+' - '+(prodRef(r.code).des||r.des||r.code)).join(' + ')+')';
+}
+function prodPackagingLabel(prod){
+  return prodWasteRefLabel(prodPackagingWasteRows(prod),'Cartons / sacs');
+}
+function prodFilmLabel(prod){
+  return prodWasteRefLabel(prodWasteIngredientRows(prod,'film'),'Film');
+}
+function prodBlockWasteDetails(b){
+  const out=[],prod=b&&b.p;
+  const pack=num(b&&b.w_emb);
+  if(pack>0){
+    prodPackagingWasteRows(prod).forEach(m=>out.push({
+      kind:embType(prod)==='sac'?'sac':'carton',
+      product:productCodeOf(prod),
+      code:m.code,
+      des:(prodRef(m.code).des||m.des||m.code),
+      qty:pack*num(m.qte)
+    }));
+  }
+  const film=num(b&&b.w_film),films=prodWasteIngredientRows(prod,'film');
+  if(film>0&&films.length){
+    const total=films.reduce((s,m)=>s+num(m.qte),0)||1;
+    films.forEach(m=>out.push({
+      kind:'film',
+      product:productCodeOf(prod),
+      code:m.code,
+      des:(prodRef(m.code).des||m.des||m.code),
+      qty:film*num(m.qte)/total
+    }));
+  }
+  return out;
+}
+function prodBlockWasteText(b){
+  const parts=prodBlockWasteDetails(b).sort((a,b)=>String(a.code).localeCompare(String(b.code),'fr',{numeric:true})).map(x=>esc(refName(x.code))+' : <b class="hist-qty">'+esc(histQty(x.qty))+'</b>');
+  if(num(b&&b.w_mel)>0)parts.push('mélange '+histQty(b.w_mel)+' kg');
+  if(num(b&&b.scotch)>0)parts.push('scotch '+prodScotchText(b.scotch));
+  return parts.join(' · ');
+}
 async function prodSave(pf){
   const blocks=pfProductionGuard(pf);
   if(!blocks)return false;
-  const rec={id:'prod_'+Date.now(),kind:'prod',date:pf.date||todayStr(),agent:pf.agent||'',scotch:pf.scotch||'',blocks:clone(blocks),note:pf.note,savedAt:Date.now()};
-  rec._sig=localSig('prod',{date:rec.date,scotch:rec.scotch||'',blocks:rec.blocks,note:rec.note||''});
+  const rec={id:'prod_'+Date.now(),kind:'prod',date:pf.date||todayStr(),agent:pf.agent||'',scotch:prodBlocksScotch(blocks),blocks:clone(blocks),note:pf.note,savedAt:Date.now()};
+  rec._sig=localSig('prod',{date:rec.date,blocks:rec.blocks,note:rec.note||''});
   if(await findLocalDuplicate('prod',rec._sig,rec.id)){toast('Production deja enregistree dans l historique local');return false;}
   try{await idbPut(rec);toast('Production enregistrée');return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
@@ -33,7 +137,7 @@ async function prodSubmit(pf){
   const blocks=pfProductionGuard(pf);
   if(!blocks)return false;
   if(!pf.agent&&typeof USR!=='undefined'&&USR.nom)pf.agent=USR.nom;
-  const payload={kind:'production',date:pf.date||todayStr(),agent:pf.agent||'',scotch:pf.scotch||'',blocks:clone(blocks),note:pf.note||'',submittedAt:new Date().toISOString()};
+  const payload={kind:'production',date:pf.date||todayStr(),agent:pf.agent||'',scotch:prodBlocksScotch(blocks),blocks:clone(blocks),note:pf.note||'',submittedAt:new Date().toISOString()};
   await sipsSubmit('production',payload,'Production '+(payload.date||''));
   return true;
 }
@@ -49,6 +153,13 @@ function photoArrayUI(host,arr,redraw){
   arr.forEach((b,i)=>{const th=document.createElement('img');th.className='photo-thumb';th.src=b;th.onclick=()=>openLightbox('Photo',b);host.append(th);
     const rm=document.createElement('button');rm.type='button';rm.className='photo-btn';rm.textContent='✕';rm.onclick=()=>{arr.splice(i,1);redraw();};host.append(rm);});
 }
+function noteSectionHTML(id,value){
+  return '<div class="pf-sec"><div class="pf-h">Note</div><textarea id="'+esc(id)+'" class="note-field" rows="2" placeholder="remarque (option)">'+esc(value||'')+'</textarea></div>';
+}
+function scrollToHistory(id){
+  const el=document.getElementById(id);
+  if(el)scrollCardIntoView(el);
+}
 function renderProduction(focusBi){
   if(!PF)PF=freshPF();
   if(!PF.agent&&typeof USR!=='undefined'&&USR.nom)PF.agent=USR.nom;
@@ -58,33 +169,30 @@ function renderProduction(focusBi){
   let blocksH='';
   PF.blocks.forEach((b,bi)=>{
     const current=currentRecipeProductCode(b.p);if(current&&current!==b.p)b.p=current;
-    const emb=embType(b.p);const embL=(emb==='sac'?'Sac':'Carton');
-    let perso=(b.perso||[]).map((x,pi)=>`<div class="pf-row d" data-pp="${pi}"><input class="pf-pl" placeholder="déchet perso" value="${esc(x.lbl)}"><input class="pf-pq" inputmode="decimal" placeholder="qté" value="${esc(x.qte)}"><button class="pf-delp" title="retirer">✕</button></div>`).join('');
     blocksH+='<div class="pb-card" data-bi="'+bi+'">'
       +'<div class="pb-h"><span>Production '+(bi+1)+'</span>'+(PF.blocks.length>1?'<button class="pb-del" title="supprimer">🗑</button>':'')+'</div>'
       +'<div class="pf-row"><select class="pb-p"><option value="">— produit fini —</option>'+finiOpts(b.p)+'</select><input class="pb-n" inputmode="numeric" placeholder="qté" value="'+esc(b.n)+'"></div>'
-      +'<div class="pb-dech"><div class="pf-h">Déchets</div>'
-      +'<div class="pb-drow"><span class="pb-dl">'+embL+'</span><input class="pb-emb" inputmode="decimal" placeholder="qté" value="'+esc(b.w_emb)+'"></div>'
-      +(emb==='carton'?'<div class="pb-drow"><span class="pb-dl">Film</span><input class="pb-film" inputmode="decimal" placeholder="qté" value="'+esc(b.w_film)+'"></div>':'')
+      +'<div class="pb-dech"><div class="pf-h">Déchets / consommation</div>'
+      +'<div class="pb-drow"><span class="pb-dl">'+esc(prodPackagingLabel(b.p))+'</span><input class="pb-emb" inputmode="decimal" placeholder="qté" value="'+esc(b.w_emb)+'"></div>'
+      +'<div class="pb-drow"><span class="pb-dl">'+esc(prodFilmLabel(b.p))+'</span><input class="pb-film" inputmode="decimal" placeholder="qté" value="'+esc(b.w_film)+'"></div>'
       +'<div class="pb-drow"><span class="pb-dl">Mélange (kg)</span><input class="pb-mel" inputmode="decimal" placeholder="kg" value="'+esc(b.w_mel)+'"></div>'
-      +perso+'<button class="pb-addp" type="button">+ déchet personnalisé</button></div>'
+      +'<div class="pb-drow"><span class="pb-dl">Scotch (bobines)</span><input class="pb-scotch" inputmode="decimal" placeholder="0" value="'+esc(b.scotch)+'"></div></div>'
       +'<div class="pf-h" style="margin-top:10px">Photo(s)</div><div class="pb-photos photo-row"></div>'
       +'</div>';
   });
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production</h2>'
-    +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui.</p>'
-    +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
-    +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label><label>Scotch utilise (bobines)<input id="pfScotch" inputmode="decimal" placeholder="0" value="'+esc(PF.scotch||'')+'"></label></div>'
+    +'<button id="pfGoHist" class="hist-jump">Historique</button>'
+    +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
-    +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
+    +noteSectionHTML('pfNote',PF.note)
     +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
-    +'<div class="pf-sec"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
+    +'<div class="pf-sec" id="pfHistory"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderProduction();
+  $('#pfGoHist').onclick=()=>scrollToHistory('pfHistory');
   $('#pfDate').onchange=e=>{PF.date=e.target.value;};
-  $('#pfScotch').oninput=e=>{PF.scotch=e.target.value;};
   $('#pfNote').oninput=e=>{PF.note=e.target.value;};
   app.querySelectorAll('.pb-card').forEach(card=>{
     const bi=+card.dataset.bi;const b=PF.blocks[bi];
@@ -93,12 +201,8 @@ function renderProduction(focusBi){
     card.querySelector('.pb-emb').oninput=e=>{b.w_emb=e.target.value;};
     const fl=card.querySelector('.pb-film');if(fl)fl.oninput=e=>{b.w_film=e.target.value;};
     card.querySelector('.pb-mel').oninput=e=>{b.w_mel=e.target.value;};
+    card.querySelector('.pb-scotch').oninput=e=>{b.scotch=e.target.value;};
     const delB=card.querySelector('.pb-del');if(delB)delB.onclick=()=>{PF.blocks.splice(bi,1);if(!PF.blocks.length)PF.blocks.push(freshBlock());re();};
-    card.querySelectorAll('.pf-row.d[data-pp]').forEach(row=>{const pi=+row.dataset.pp;
-      row.querySelector('.pf-pl').oninput=e=>{b.perso[pi].lbl=e.target.value;};
-      row.querySelector('.pf-pq').oninput=e=>{b.perso[pi].qte=e.target.value;};
-      row.querySelector('.pf-delp').onclick=()=>{b.perso.splice(pi,1);re();};});
-    card.querySelector('.pb-addp').onclick=()=>{b.perso=b.perso||[];b.perso.push({lbl:'',qte:''});re();};
     photoArrayUI(card.querySelector('.pb-photos'),b.photos,re);
   });
   $('#pfAddBlock').onclick=()=>{PF.blocks.push(freshBlock());renderProduction(PF.blocks.length-1);};
@@ -109,11 +213,16 @@ function renderProduction(focusBi){
   if(focusBi!=null){const c=app.querySelector('.pb-card[data-bi="'+focusBi+'"]');if(c)setTimeout(()=>scrollCardIntoView(c),60);}
 }
 function migrateProdRec(rec){
-  if(rec.blocks&&rec.blocks.length)return rec.blocks;
+  if(rec.blocks&&rec.blocks.length){
+    const blocks=clone(rec.blocks);
+    if(num(rec.scotch)>0&&!blocks.some(b=>num(b&&b.scotch)>0))blocks[0].scotch=rec.scotch;
+    return blocks;
+  }
   const b=freshBlock();const pr=(rec.prods||[]).filter(x=>x.p&&num(x.n)>0);
   if(pr.length){b.p=pr[0].p;b.n=pr[0].n;}
-  (rec.dechets||[]).forEach(x=>{if(!x.lbl)return;const l=x.lbl.toLowerCase();if(l.indexOf('carton')>=0||l.indexOf('sac')>=0)b.w_emb=x.qte;else if(l.indexOf('film')>=0)b.w_film=x.qte;else if(num(x.qte)>0){b.perso.push({lbl:x.lbl,qte:x.qte});}});
+  (rec.dechets||[]).forEach(x=>{if(!x.lbl)return;const l=x.lbl.toLowerCase();if(l.indexOf('carton')>=0||l.indexOf('sac')>=0)b.w_emb=x.qte;else if(l.indexOf('film')>=0)b.w_film=x.qte;});
   (rec.melange||[]).forEach(x=>{if(num(x.kg)>0)b.w_mel=x.kg;});
+  if(num(rec.scotch)>0)b.scotch=rec.scotch;
   b.photos=clone(rec.photos||[]);
   const blocks=[b];pr.slice(1).forEach(x=>{const nb=freshBlock();nb.p=x.p;nb.n=x.n;blocks.push(nb);});
   return blocks;
@@ -123,52 +232,79 @@ function histRecDate(row,isServer){
   return String((rec&&rec.date)||'');
 }
 function histMatchDate(date,filter){
-  if(!filter||filter.mode==='all'||!filter.value)return true;
+  if(!filter||filter.mode==='all')return true;
+  if(filter.mode==='period')return (!filter.start||date>=filter.start)&&(!filter.end||date<=filter.end);
+  if(!filter.value)return true;
   if(filter.mode==='month')return date.indexOf(filter.value)===0;
   if(filter.mode==='year')return date.indexOf(filter.value)===0;
-  if(filter.mode==='date')return date===filter.value;
+  if(filter.mode==='week'){const r=histWeekRange(filter.value);return !r||(date>=r[0]&&date<=r[1]);}
+  if(filter.mode==='day')return date===filter.value;
   return true;
 }
 function histApply(rows,key,isServer){
   const filter=HIST_FILTERS[key]||HIST_FILTERS.production;
-  return (rows||[]).filter(r=>histMatchDate(histRecDate(r,isServer),filter));
+  return (rows||[]).filter(r=>histMatchDate(histRecDate(r,isServer),filter)&&histMatchArticle(r,key,isServer,filter.article));
 }
 function histClip(rows){
   rows=rows||[];
   return {rows:rows.slice(0,HIST_MAX),hidden:Math.max(0,rows.length-HIST_MAX),total:rows.length};
 }
 function histFilterText(filter){
-  if(!filter||filter.mode==='all'||!filter.value)return 'Tout';
+  if(!filter||filter.mode==='all')return 'Tout';
+  if(filter.mode==='period')return 'Periode '+(filter.start?frDate(filter.start):'...')+' -> '+(filter.end?frDate(filter.end):'...');
+  if(!filter.value)return 'Tout';
   if(filter.mode==='month')return 'Mois '+filter.value;
   if(filter.mode==='year')return 'Annee '+filter.value;
-  return 'Date '+frDate(filter.value);
+  if(filter.mode==='week')return 'Semaine '+filter.value;
+  return 'Jour '+frDate(filter.value);
 }
 function bindHistFilter(host,key,loader){
-  const sel=host.querySelector('.hist-filter-mode'),val=host.querySelector('.hist-filter-value');
+  const sel=host.querySelector('.hist-filter-mode'),val=host.querySelector('.hist-filter-value'),start=host.querySelector('.hist-filter-start'),end=host.querySelector('.hist-filter-end'),article=host.querySelector('.hist-filter-article');
   if(!sel||!val)return;
   const sync=()=>{
     const f=HIST_FILTERS[key];
-    val.style.display=f.mode==='all'?'none':'block';
-    val.type=f.mode==='date'?'date':(f.mode==='month'?'month':'number');
+    val.style.display=(f.mode==='all'||f.mode==='period')?'none':'block';
+    const per=host.querySelector('.hist-filter-period');if(per)per.style.display=f.mode==='period'?'grid':'none';
+    val.type=f.mode==='day'?'date':(f.mode==='week'?'week':(f.mode==='month'?'month':'number'));
     val.placeholder=f.mode==='year'?'annee':'';
     val.min=f.mode==='year'?'2000':'';
     val.max=f.mode==='year'?'2100':'';
     val.value=f.value||'';
+    if(start)start.value=f.start||'';
+    if(end)end.value=f.end||'';
+    if(article)article.value=f.article||'';
   };
-  sel.onchange=()=>{const f=HIST_FILTERS[key];f.mode=sel.value;f.value='';sync();loader();};
+  sel.onchange=()=>{const f=HIST_FILTERS[key];f.mode=sel.value;f.value='';f.start='';f.end='';sync();loader();};
   val.onchange=()=>{HIST_FILTERS[key].value=val.value;loader();};
+  if(start)start.onchange=()=>{HIST_FILTERS[key].start=start.value;loader();};
+  if(end)end.onchange=()=>{HIST_FILTERS[key].end=end.value;loader();};
+  if(article)article.onchange=()=>{HIST_FILTERS[key].article=article.value;loader();};
   sync();
+}
+function histArticleHTML(key){
+  const f=HIST_FILTERS[key]||HIST_FILTERS.production;
+  const opts=rows=>rows.map(r=>'<option value="'+esc(r.code)+'"'+(f.article===r.code?' selected':'')+'>'+esc(r.des)+'</option>').join('');
+  if(key==='production')return '<select class="hist-filter-article"><option value="">Tous produits finis</option>'+opts(finishedProductRefs())+'</select>';
+  return '<select class="hist-filter-article"><option value="">Tous articles</option><optgroup label="Produits finis">'+opts(finishedProductRefs())+'</optgroup><optgroup label="Matieres / emballages / autres">'+opts(nonFinishedRefs())+'</optgroup></select>';
 }
 function histFilterHTML(key){
   const f=HIST_FILTERS[key]||HIST_FILTERS.production;
   return '<div class="hist-filter"><select class="hist-filter-mode">'
     +'<option value="all"'+(f.mode==='all'?' selected':'')+'>Tout</option>'
+    +'<option value="day"'+(f.mode==='day'?' selected':'')+'>Jour</option>'
+    +'<option value="week"'+(f.mode==='week'?' selected':'')+'>Semaine</option>'
+    +'<option value="period"'+(f.mode==='period'?' selected':'')+'>Periode</option>'
     +'<option value="month"'+(f.mode==='month'?' selected':'')+'>Mois</option>'
     +'<option value="year"'+(f.mode==='year'?' selected':'')+'>Annee</option>'
-    +'<option value="date"'+(f.mode==='date'?' selected':'')+'>Date</option>'
-    +'</select><input class="hist-filter-value" value="'+esc(f.value||'')+'"><span>'+esc(histFilterText(f))+'</span></div>';
+    +'</select><input class="hist-filter-value" value="'+esc(f.value||'')+'"><div class="hist-filter-period"><input class="hist-filter-start" type="date" value="'+esc(f.start||'')+'"><input class="hist-filter-end" type="date" value="'+esc(f.end||'')+'"></div>'+histArticleHTML(key)+'<span>'+esc(histFilterText(f))+'</span></div>';
 }
 function histQty(v){return (typeof fmtq==='function')?fmtq(num(v)):String(v||'');}
+function histMatchArticle(row,key,isServer,article){
+  if(!article)return true;
+  const rec=isServer?(row&&row.payload||{}):row;
+  if(key==='production')return migrateProdRec(rec||{}).some(b=>b&&b.p&&productCodeOf(b.p)===article);
+  return [].concat((rec&&rec.finis)||[],(rec&&rec.mp)||[]).some(x=>x&&x.a&&refCode(x.a)===article);
+}
 function histMiniLines(rows,cols,max){
   rows=(rows||[]).filter(r=>r&&cols.some(c=>String(r[c[0]]||'').trim()));
   if(!rows.length)return '';
@@ -181,19 +317,61 @@ function histMiniLines(rows,cols,max){
   return h+'</div>';
 }
 function histProdMini(blocks){
-  return histMiniLines((blocks||[]).filter(b=>b&&b.p&&num(b.n)>0),[
-    ['p','Produit',v=>esc(typeof recipeProductLabel==='function'?recipeProductLabel(v):v)],
-    ['n','Qte',v=>'qte '+esc(histQty(v))]
-  ],4);
+  blocks=(blocks||[]).filter(b=>b&&b.p&&num(b.n)>0);
+  if(!blocks.length)return '';
+  let h='<div class="hist-mini hist-prod-mini">';
+  blocks.slice(0,4).forEach(b=>{
+    const waste=prodBlockWasteText(b);
+    h+='<div><span class="hist-tag">Production</span> '+esc(prodName(b.p))+' - qte <b class="hist-qty">'+esc(histQty(b.n))+'</b></div>';
+    if(waste)h+='<div><span class="hist-tag hist-tag-waste">Dechets</span> '+waste+'</div>';
+  });
+  if(blocks.length>4)h+='<div>+'+(blocks.length-4)+' autre(s)...</div>';
+  return h+'</div>';
 }
-function prodScotchTotal(rows,isServer){
-  return (rows||[]).reduce((sum,row)=>{
-    const rec=isServer?(row&&row.payload||{}):row;
-    return sum+num(rec&&rec.scotch);
-  },0);
+function prodScotchQty(rec){
+  const blocks=migrateProdRec(rec||{});
+  const byBlock=prodBlocksScotch(blocks);
+  return byBlock>0?byBlock:num(rec&&rec.scotch);
 }
 function prodScotchText(qty){
   return histQty(qty)+' bobine'+(num(qty)>1?'s':'');
+}
+function prodWasteTotals(rows,isServer){
+  return (rows||[]).reduce((tot,row)=>{
+    const rec=isServer?(row&&row.payload||{}):row;
+    migrateProdRec(rec||{}).forEach(b=>{
+      tot.emb+=num(b&&b.w_emb);
+      tot.film+=num(b&&b.w_film);
+      tot.mel+=num(b&&b.w_mel);
+      tot.scotch+=num(b&&b.scotch);
+    });
+    return tot;
+  },{emb:0,film:0,mel:0,scotch:0});
+}
+function prodWasteRefTotals(rows,isServer){
+  const out={};
+  (rows||[]).forEach(row=>{
+    const rec=isServer?(row&&row.payload||{}):row;
+    migrateProdRec(rec||{}).forEach(b=>{
+      prodBlockWasteDetails(b).forEach(x=>{
+        const k=x.kind+'|'+x.product+'|'+x.code;
+        if(!out[k])out[k]=Object.assign({},x,{qty:0});
+        out[k].qty+=num(x.qty);
+      });
+    });
+  });
+  return Object.keys(out).map(k=>out[k]).sort((a,b)=>String(a.product).localeCompare(String(b.product),'fr',{numeric:true})||String(a.kind).localeCompare(String(b.kind))||String(a.code).localeCompare(String(b.code),'fr',{numeric:true}));
+}
+function prodWasteRefRowsHTML(arr){
+  const merged={};
+  (arr||[]).forEach(x=>{
+    const k=x.kind+'|'+x.code;
+    if(!merged[k])merged[k]=Object.assign({},x,{qty:0});
+    merged[k].qty+=num(x.qty);
+  });
+  arr=Object.keys(merged).map(k=>merged[k]).sort((a,b)=>String(a.code).localeCompare(String(b.code),'fr',{numeric:true}));
+  if(!arr.length)return '';
+  return '<div class="hist-mini">'+arr.map(x=>'<div>'+esc(refName(x.code))+' : <b class="hist-qty">'+esc(histQty(x.qty))+'</b></div>').join('')+'</div>';
 }
 function histMovMini(rec){
   const rows=[];
@@ -202,7 +380,7 @@ function histMovMini(rec){
   return histMiniLines(rows,[
     ['t','Type',v=>esc(v)],
     ['a','Article',v=>esc(v)],
-    ['q','Qte',v=>'qte '+esc(histQty(v))],
+    ['q','Qte',v=>'qte <b class="hist-qty">'+esc(histQty(v))+'</b>'],
     ['exp','Peremption',v=>'peremption '+esc(v)]
   ],5);
 }
@@ -213,10 +391,11 @@ function renderProdHist(host,recs,serverRows){
   recs=histApply(recs,'production',false).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   serverRows=histApply(serverRows,'production',true).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));
   const srvClip=histClip(serverRows),locClip=histClip(recs);
-  const scotchTotal=prodScotchTotal(serverRows,true)+prodScotchTotal(recs,false);
+  const srvTotals=prodWasteTotals(serverRows,true),locTotals=prodWasteTotals(recs,false);
+  const totals={emb:srvTotals.emb+locTotals.emb,film:srvTotals.film+locTotals.film,mel:srvTotals.mel+locTotals.mel,scotch:srvTotals.scotch+locTotals.scotch};
   const totalBox=document.createElement('div');
   totalBox.style.cssText='background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px';
-  totalBox.innerHTML='<b>Total Scotch sur ce filtre</b> : '+esc(prodScotchText(scotchTotal));
+  totalBox.innerHTML='<b>Totaux sur ce filtre</b> : mélange <b class="hist-qty">'+esc(histQty(totals.mel))+'</b> kg · scotch <b class="hist-qty">'+esc(prodScotchText(totals.scotch))+'</b>'+prodWasteRefRowsHTML(prodWasteRefTotals(serverRows,true).concat(prodWasteRefTotals(recs,false)));
   host.append(totalBox);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
@@ -227,8 +406,8 @@ function renderProdHist(host,recs,serverRows){
       const np=blocks.filter(b=>b.p&&num(b.n)>0).length;
       const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
       const it=document.createElement('div');it.className='hist-item locked';
-      it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+np+' produit(s) - scotch '+prodScotchText(rec.scotch)+' - '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',scotch:rec.scotch||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
+      it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+np+' produit(s) - scotch '+prodScotchText(prodScotchQty(rec))+' - '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();setTimeout(()=>window.scrollTo(0,0),0);};
       it.append(open);host.append(it);
     });
     if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' production(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
@@ -243,8 +422,8 @@ function renderProdHist(host,recs,serverRows){
     const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
     const it=document.createElement('div');it.className='hist-item';
     it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.agent||'—')+' · '+np+' produit(s) · '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
-    const span=it.querySelector('.info span');if(span)span.append(document.createTextNode(' - scotch '+prodScotchText(rec.scotch)));
-    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',scotch:rec.scotch||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
+    const span=it.querySelector('.info span');if(span)span.append(document.createTextNode(' - scotch '+prodScotchText(prodScotchQty(rec))));
+    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();setTimeout(()=>window.scrollTo(0,0),0);};
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer cette production ?')){await idbDel(rec.id);loadProdHist();}};
     it.append(open,del);host.append(it);
   });
@@ -264,7 +443,7 @@ const MOVCFG={
 };
 let MOVF={sortie:null,entree:null};
 function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
-function movArts(catKind){return catKind==='finis'?finishedProductRefs():refsByCode(REFS.filter(r=>r.cat==='mp'));}
+function movArts(catKind){return catKind==='finis'?finishedProductRefs():nonFinishedRefs();}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
 function movValidLines(rows){return (rows||[]).filter(x=>x&&x.a&&num(x.q)>0);}
 function movIncompleteLines(rows){return (rows||[]).filter(x=>x&&num(x.q)>0&&!x.a);}
@@ -330,18 +509,18 @@ function renderMov(kind,focusSel){
   const app=$('#app');
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">'+c.title+'</h2>'
-    +'<p class="ref-hint">'+c.hint+'</p>'
-    +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
+    +'<button id="mvGoHist" class="hist-jump">Historique</button>'
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
     +movSectionHTML(mf,'mp','Matières premières / Échantillons',kind==='entree')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
-    +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="mvNote" rows="2" placeholder="remarque (option)">'+esc(mf.note)+'</textarea></div>'
+    +noteSectionHTML('mvNote',mf.note)
     +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
-    +'<div class="pf-sec"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
+    +'<div class="pf-sec" id="mvHistory"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
     +'</div>';
   const re=()=>renderMov(kind);
+  $('#mvGoHist').onclick=()=>scrollToHistory('mvHistory');
   $('#mvDate').onchange=e=>{mf.date=e.target.value;};
   $('#mvRef').oninput=e=>{mf.ref=e.target.value;};
   $('#mvNote').oninput=e=>{mf.note=e.target.value;};
@@ -374,7 +553,7 @@ function renderMovHist(host,kind,recs,serverRows){
       const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
       const it=document.createElement('div');it.className='hist-item locked';
       it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+esc(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span>'+histMovMini(rec)+'</div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
       it.append(open);host.append(it);
     });
     if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' ligne(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
@@ -387,7 +566,7 @@ function renderMovHist(host,kind,recs,serverRows){
     const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
     const it=document.createElement('div');it.className='hist-item';
     it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span>'+histMovMini(rec)+'</div>';
-    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);};
+    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer ?')){await idbDel(rec.id);loadMovHist(kind);}};
     it.append(open,del);host.append(it);
   });
@@ -442,7 +621,7 @@ function sipsPayloadSummary(type,payload){
   payload=payload||{};
   if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=sipsQualitySignedCount(v);const avg=sipsQualityAvgBatchTime(payload);return (i.numeroLot||'lot ?')+' - '+recipeProductLabel(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/2 signatures obligatoires'+(avg?' - moy. batch '+avg:'');}
   if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
-  if(type==='production'){const nb=(payload.blocks||[]).filter(b=>b.p&&num(b.n)>0).length;return (payload.date||'date ?')+' - '+nb+' production(s) - scotch '+prodScotchText(payload.scotch);}
+  if(type==='production'){const nb=(payload.blocks||[]).filter(b=>b.p&&num(b.n)>0).length;return (payload.date||'date ?')+' - '+nb+' production(s) - scotch '+prodScotchText(prodScotchQty(payload));}
   if(type==='inventory'){return (payload.date||'date ?')+' - '+(payload.filled||0)+' article(s) comptés';}
   return payload.title||payload.message||'';
 }
@@ -450,7 +629,7 @@ function sipsKV(rows){return '<div style="display:grid;grid-template-columns:rep
 function sipsLines(title,rows,cols){
   rows=(rows||[]).filter(r=>r&&cols.some(c=>String(r[c[0]]||'').trim()));
   if(!rows.length)return '';
-  return '<div style="margin-top:8px"><b style="font-size:12px;color:var(--steel-d)">'+esc(title)+'</b>'+rows.map((r,i)=>'<div style="font-size:12px;border-bottom:1px solid var(--line);padding:6px 0"><b>'+(i+1)+'.</b> '+cols.map(c=>{const v=r[c[0]];return v==null||v===''?'':'<span>'+esc(c[1])+': '+esc(v)+'</span>';}).filter(Boolean).join(' - ')+'</div>').join('')+'</div>';
+  return '<div class="sips-lines"><b>'+esc(title)+'</b>'+rows.map((r,i)=>'<div class="sips-line"><b>'+(i+1)+'.</b> '+cols.map(c=>{const v=r[c[0]];return v==null||v===''?'':'<span>'+esc(c[1])+': '+(c[2]?c[2](v,r):esc(v))+'</span>';}).filter(Boolean).join(' - ')+'</div>').join('')+'</div>';
 }
 function sipsSubmissionDetailHTML(s){
   const p=s.payload||{};
@@ -468,8 +647,8 @@ function sipsSubmissionDetailHTML(s){
       +sipsLines('Visas',visaRows,[['role','Role'],['nom','Nom'],['date','Date'],['signature','Signature']]);
   }
   if(s.type==='production'){
-    return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Scotch utilise',prodScotchText(p.scotch)],['Note',p.note]])
-      +sipsLines('Productions',p.blocks,[['p','Produit'],['n','Qte'],['w_emb','Dechet emb.'],['w_film','Dechet film'],['w_mel','Melange kg']]);
+    return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Scotch utilise',prodScotchText(prodScotchQty(p))],['Note',p.note]])
+      +sipsLines('Productions',migrateProdRec(p),[['p','Produit',v=>esc(prodName(v))],['n','Qte',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_emb','Dechet cartons/sacs',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_film','Dechet film',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_mel','Melange kg',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['scotch','Scotch bobines',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>']]);
   }
   if(s.type==='inventory'){
     const detail=Object.keys(p.detail||{}).map(code=>{

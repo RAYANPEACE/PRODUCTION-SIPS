@@ -166,15 +166,16 @@ function stockSheetHTML(data){
     const rs = data.rows.filter(x => x.grp === fam[0]);
     if (!rs.length) return;
     rs.sort((a, b) => String(a.code).localeCompare(String(b.code)));
-    h += '<section class="bil-sec"><div class="bil-sec-h" style="background:' + fam[2] + '">' + fam[1] + ' <span class="gn">(' + rs.length + ')</span></div><div class="bil-lines">';
+    h += '<details class="bil-sec stock-sec" data-stk-section><summary class="bil-sec-h" style="background:' + fam[2] + '"><span>' + fam[1] + ' <span class="gn">(' + rs.length + ')</span></span><span class="stk-fold"></span></summary><div class="bil-lines">';
     rs.forEach(x => {
       const ar = x.arrow > 0
         ? '<span title="en hausse" style="color:var(--green)">▲</span>'
         : (x.arrow < 0 ? '<span title="en baisse" style="color:var(--red)">▼</span>' : '<span title="stable" style="color:#9aa7b0">=</span>');
       const negStyle = x.stock < 0 ? ' style="color:var(--red)"' : '';
+      const fluxClass = x.flux > 0 ? 'pos' : (x.flux < 0 ? 'neg' : 'zero');
       h += '<div class="bil-line">'
         + '<div class="bl-id"><span class="bl-code">' + x.code + '</span> ' + esc(x.des) + '</div>'
-        + '<div class="bl-tp">base <b>' + fmtq(x.base) + '</b> · flux <b>' + (x.flux > 0 ? '+' : '') + fmtq(x.flux) + '</b></div>'
+        + '<div class="bl-tp">base <b>' + fmtq(x.base) + '</b> · flux <b class="stock-flux ' + fluxClass + '">' + (x.flux > 0 ? '+' : '') + fmtq(x.flux) + '</b></div>'
         + '<div class="bl-ec"><b' + negStyle + '>' + fmtq(x.stock) + ' ' + esc(x.unite) + '</b> ' + ar + '</div>';
       const isMp = x.lotKind === 'mp';
       const visibleLots = x.lots ? x.lots.filter(l => Math.abs(l.rest) > 1e-9 || l.imprecise) : [];
@@ -208,7 +209,7 @@ function stockSheetHTML(data){
       }
       h += '</div>';
     });
-    h += '</div></section>';
+    h += '</div></details>';
   });
   return h;
 }
@@ -230,5 +231,10 @@ async function renderStock(){
       const el = document.getElementById('stklots-' + b.dataset.stkToggle);
       if (el) el.style.display = (el.style.display === 'none') ? 'block' : 'none';
     };
+  });
+  body.querySelectorAll('[data-stk-section]').forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      if (d.open) setTimeout(function () { d.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 60);
+    });
   });
 }
