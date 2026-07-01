@@ -173,7 +173,8 @@ function stockSheetHTML(data){
         : (x.arrow < 0 ? '<span title="en baisse" style="color:var(--red)">▼</span>' : '<span title="stable" style="color:#9aa7b0">=</span>');
       const negStyle = x.stock < 0 ? ' style="color:var(--red)"' : '';
       const fluxClass = x.flux > 0 ? 'pos' : (x.flux < 0 ? 'neg' : 'zero');
-      h += '<div class="bil-line">'
+      const mvClass = x.arrow > 0 ? ' mv-up' : (x.arrow < 0 ? ' mv-down' : '');
+      h += '<div class="bil-line' + mvClass + '">'
         + '<div class="bl-id"><span class="bl-code">' + x.code + '</span> ' + esc(x.des) + '</div>'
         + '<div class="bl-tp">base <b>' + fmtq(x.base) + '</b> · flux <b class="stock-flux ' + fluxClass + '">' + (x.flux > 0 ? '+' : '') + fmtq(x.flux) + '</b></div>'
         + '<div class="bl-ec"><b' + negStyle + '>' + fmtq(x.stock) + ' ' + esc(x.unite) + '</b> ' + ar + '</div>';
@@ -217,10 +218,20 @@ function stockSheetHTML(data){
 async function renderStock(){
   const app = $('#app');
   app.innerHTML = '<div class="bilan-wrap">'
-    + '<div class="bil-ctrl"><button id="stkRefresh" class="bil-print">Actualiser</button></div>'
+    + '<div class="bil-ctrl stock-ctrl"><button id="stkRefresh" class="bil-print">Actualiser</button><button id="stkCollapseAll" class="bil-print">Tout replier</button></div>'
     + '<h2 class="prod-title">Etat de stock theorique</h2>'
     + '<div id="stkBody"><p class="ref-hint">Calcul du stock…</p></div></div>';
   const rb = $('#stkRefresh'); if (rb) rb.onclick = renderStock;
+  const cb = $('#stkCollapseAll'); if (cb) cb.onclick = function () {
+    document.querySelectorAll('#stkBody [data-stk-section]').forEach(function (d) { d.open = false; });
+  };
+  const ctrl = app.querySelector('.stock-ctrl');
+  if (ctrl) {
+    const header = document.querySelector('header');
+    const banner = document.getElementById('roBanner');
+    const off = (header ? header.offsetHeight : 0) + (banner && banner.style.display !== 'none' ? banner.offsetHeight : 0);
+    ctrl.style.top = off + 'px';
+  }
   let data;
   try { data = await computeStockData(); }
   catch (e) { const b = $('#stkBody'); if (b) b.innerHTML = '<p style="color:var(--red);font-size:13px">Stock indisponible : ' + esc(e.message) + '</p>'; return; }
@@ -234,7 +245,13 @@ async function renderStock(){
   });
   body.querySelectorAll('[data-stk-section]').forEach(function (d) {
     d.addEventListener('toggle', function () {
-      if (d.open) setTimeout(function () { d.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 60);
+      if (d.open) setTimeout(function () {
+        // Aligner le haut de la section juste sous la barre de boutons collee, sinon elle masque la 1re ligne.
+        const ctrl = document.querySelector('.stock-ctrl');
+        const barBottom = ctrl ? ctrl.getBoundingClientRect().bottom : 0;
+        const top = d.getBoundingClientRect().top;
+        window.scrollBy({ top: top - barBottom - 8, behavior: 'smooth' });
+      }, 60);
     });
   });
 }

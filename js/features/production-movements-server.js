@@ -33,9 +33,9 @@ function histWeekRange(v){
   return [s,d.toISOString().slice(0,10)];
 }
 function embType(p){const a=(typeof recipeProductRef==='function'&&recipeProductRef(p))||REFS.find(x=>x.code===p||x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
-function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',scotch:'',photos:[]};}
+function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',scotch:'',bobines:[],photos:[]};}
 function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
-function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||num(b.scotch)>0;}
+function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||num(b.scotch)>0||prodBobKg(b)>0;}
 function pfCompleteBlocks(pf){return (pf.blocks||[]).filter(b=>b&&b.p&&num(b.n)>0);}
 function pfMissingProductBlocks(pf){return (pf.blocks||[]).filter(b=>pfBlockHasInput(b)&&(!b.p||num(b.n)<=0));}
 function pfProductionGuard(pf){
@@ -94,6 +94,43 @@ function prodPackagingLabel(prod){
 function prodFilmLabel(prod){
   return prodWasteRefLabel(prodWasteIngredientRows(prod,'film'),'Film');
 }
+/* Applicabilite consommables selon le produit (pour griser les champs non pertinents). */
+function prodHasFilm(prod){return !!prod&&prodWasteIngredientRows(prod,'film').length>0;}
+function prodHasScotch(prod){return !!prod&&embType(prod)!=='sac';}
+/* Bobines film approvisionnees : liste de poids (kg) par bobine ; nb = nombre de poids saisis, total = somme.
+   Indicatif (mvt interne depot->atelier), aucun impact sur le calcul de stock. */
+function prodBobList(b){return (b&&Array.isArray(b.bobines))?b.bobines:[];}
+function prodBobCount(b){return prodBobList(b).filter(w=>num(w)>0).length;}
+function prodBobKg(b){return prodBobList(b).reduce((s,w)=>s+num(w),0);}
+function prodBobText(b){
+  const n=prodBobCount(b),kg=prodBobKg(b);
+  if(!n&&!(kg>0))return '';
+  return histQty(n)+' bobine'+(n>1?'s':'')+' · '+histQty(kg)+' kg';
+}
+function scotchRowHTML(b){
+  const on=prodHasScotch(b&&b.p);
+  return '<div class="pb-drow'+(on?'':' off')+'"><span class="pb-dl">Scotch (bobines)</span>'
+    +'<input class="pb-scotch" inputmode="decimal" placeholder="0" value="'+esc(b.scotch)+'"'
+    +(on?'':' disabled title="Pas de scotch pour ce produit (sac)"')+'></div>';
+}
+function bobineSectionHTML(b){
+  const prod=b&&b.p;
+  if(!prodHasFilm(prod)){
+    return '<div class="pb-drow off"><span class="pb-dl">Bobine film approvisionnée</span>'
+      +'<span class="pb-cons-off">'+(prod?'aucun film pour ce produit':'choisir un produit')+'</span></div>';
+  }
+  const list=prodBobList(b);
+  let rows='';
+  list.forEach((w,i)=>{
+    rows+='<div class="pb-bob-row"><span class="pb-bob-lbl">Bobine '+(i+1)+'</span>'
+      +'<input class="pb-bob" data-i="'+i+'" inputmode="decimal" placeholder="kg" value="'+esc(w)+'">'
+      +'<button type="button" class="pb-bob-del" data-i="'+i+'" title="supprimer">✕</button></div>';
+  });
+  return '<div class="pb-dl" style="margin-bottom:4px">Bobine film approvisionnée <span style="font-weight:400;color:var(--mute)">(1 poids/bobine · indicatif, hors stock)</span></div>'
+    +'<div class="pb-bob-list">'+rows+'</div>'
+    +'<button type="button" class="pb-bob-add">+ Ajouter une bobine</button>'
+    +'<div class="pb-bob-sum">'+prodBobCount(b)+' bobine(s) · '+esc(histQty(prodBobKg(b)))+' kg</div>';
+}
 function prodBlockWasteDetails(b){
   const out=[],prod=b&&b.p;
   const pack=num(b&&b.w_emb);
@@ -123,6 +160,7 @@ function prodBlockWasteText(b){
   const parts=prodBlockWasteDetails(b).sort((a,b)=>String(a.code).localeCompare(String(b.code),'fr',{numeric:true})).map(x=>esc(refName(x.code))+' : <b class="hist-qty">'+esc(histQty(x.qty))+'</b>');
   if(num(b&&b.w_mel)>0)parts.push('mélange '+histQty(b.w_mel)+' kg');
   if(num(b&&b.scotch)>0)parts.push('scotch '+prodScotchText(b.scotch));
+  const bob=prodBobText(b);if(bob)parts.push('bobine film '+bob);
   return parts.join(' · ');
 }
 async function prodSave(pf){
@@ -172,11 +210,14 @@ function renderProduction(focusBi){
     blocksH+='<div class="pb-card" data-bi="'+bi+'">'
       +'<div class="pb-h"><span>Production '+(bi+1)+'</span>'+(PF.blocks.length>1?'<button class="pb-del" title="supprimer">🗑</button>':'')+'</div>'
       +'<div class="pf-row"><select class="pb-p"><option value="">— produit fini —</option>'+finiOpts(b.p)+'</select><input class="pb-n" inputmode="numeric" placeholder="qté" value="'+esc(b.n)+'"></div>'
-      +'<div class="pb-dech"><div class="pf-h">Déchets / consommation</div>'
+      +'<div class="pb-dech"><div class="pf-h">Déchets</div>'
       +'<div class="pb-drow"><span class="pb-dl">'+esc(prodPackagingLabel(b.p))+'</span><input class="pb-emb" inputmode="decimal" placeholder="qté" value="'+esc(b.w_emb)+'"></div>'
-      +'<div class="pb-drow"><span class="pb-dl">'+esc(prodFilmLabel(b.p))+'</span><input class="pb-film" inputmode="decimal" placeholder="qté" value="'+esc(b.w_film)+'"></div>'
-      +'<div class="pb-drow"><span class="pb-dl">Mélange (kg)</span><input class="pb-mel" inputmode="decimal" placeholder="kg" value="'+esc(b.w_mel)+'"></div>'
-      +'<div class="pb-drow"><span class="pb-dl">Scotch (bobines)</span><input class="pb-scotch" inputmode="decimal" placeholder="0" value="'+esc(b.scotch)+'"></div></div>'
+      +'<div class="pb-drow"><span class="pb-dl">'+esc(prodFilmLabel(b.p))+' (déchet)</span><input class="pb-film" inputmode="decimal" placeholder="qté" value="'+esc(b.w_film)+'"></div>'
+      +'<div class="pb-drow"><span class="pb-dl">Mélange (kg)</span><input class="pb-mel" inputmode="decimal" placeholder="kg" value="'+esc(b.w_mel)+'"></div></div>'
+      +'<div class="pb-cons"><div class="pf-h">Consommables</div>'
+      +scotchRowHTML(b)
+      +bobineSectionHTML(b)
+      +'</div>'
       +'<div class="pf-h" style="margin-top:10px">Photo(s)</div><div class="pb-photos photo-row"></div>'
       +'</div>';
   });
@@ -201,7 +242,10 @@ function renderProduction(focusBi){
     card.querySelector('.pb-emb').oninput=e=>{b.w_emb=e.target.value;};
     const fl=card.querySelector('.pb-film');if(fl)fl.oninput=e=>{b.w_film=e.target.value;};
     card.querySelector('.pb-mel').oninput=e=>{b.w_mel=e.target.value;};
-    card.querySelector('.pb-scotch').oninput=e=>{b.scotch=e.target.value;};
+    const sc=card.querySelector('.pb-scotch');if(sc)sc.oninput=e=>{b.scotch=e.target.value;};
+    card.querySelectorAll('.pb-bob').forEach(inp=>{inp.oninput=e=>{if(!Array.isArray(b.bobines))b.bobines=[];b.bobines[+inp.dataset.i]=e.target.value;const s=card.querySelector('.pb-bob-sum');if(s)s.textContent=prodBobCount(b)+' bobine(s) · '+histQty(prodBobKg(b))+' kg';};});
+    card.querySelectorAll('.pb-bob-del').forEach(btn=>{btn.onclick=()=>{if(Array.isArray(b.bobines))b.bobines.splice(+btn.dataset.i,1);re();};});
+    const addBob=card.querySelector('.pb-bob-add');if(addBob)addBob.onclick=()=>{if(!Array.isArray(b.bobines))b.bobines=[];b.bobines.push('');re();};
     const delB=card.querySelector('.pb-del');if(delB)delB.onclick=()=>{PF.blocks.splice(bi,1);if(!PF.blocks.length)PF.blocks.push(freshBlock());re();};
     photoArrayUI(card.querySelector('.pb-photos'),b.photos,re);
   });
@@ -344,9 +388,11 @@ function prodWasteTotals(rows,isServer){
       tot.film+=num(b&&b.w_film);
       tot.mel+=num(b&&b.w_mel);
       tot.scotch+=num(b&&b.scotch);
+      tot.bobN+=prodBobCount(b);
+      tot.bobKg+=prodBobKg(b);
     });
     return tot;
-  },{emb:0,film:0,mel:0,scotch:0});
+  },{emb:0,film:0,mel:0,scotch:0,bobN:0,bobKg:0});
 }
 function prodWasteRefTotals(rows,isServer){
   const out={};
@@ -392,10 +438,11 @@ function renderProdHist(host,recs,serverRows){
   serverRows=histApply(serverRows,'production',true).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));
   const srvClip=histClip(serverRows),locClip=histClip(recs);
   const srvTotals=prodWasteTotals(serverRows,true),locTotals=prodWasteTotals(recs,false);
-  const totals={emb:srvTotals.emb+locTotals.emb,film:srvTotals.film+locTotals.film,mel:srvTotals.mel+locTotals.mel,scotch:srvTotals.scotch+locTotals.scotch};
+  const totals={emb:srvTotals.emb+locTotals.emb,film:srvTotals.film+locTotals.film,mel:srvTotals.mel+locTotals.mel,scotch:srvTotals.scotch+locTotals.scotch,bobN:srvTotals.bobN+locTotals.bobN,bobKg:srvTotals.bobKg+locTotals.bobKg};
   const totalBox=document.createElement('div');
   totalBox.style.cssText='background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px';
-  totalBox.innerHTML='<b>Totaux sur ce filtre</b> : mélange <b class="hist-qty">'+esc(histQty(totals.mel))+'</b> kg · scotch <b class="hist-qty">'+esc(prodScotchText(totals.scotch))+'</b>'+prodWasteRefRowsHTML(prodWasteRefTotals(serverRows,true).concat(prodWasteRefTotals(recs,false)));
+  const bobLine=(totals.bobN>0||totals.bobKg>0)?' · bobine film <b class="hist-qty">'+esc(histQty(totals.bobN))+'</b> bobine(s) (<b class="hist-qty">'+esc(histQty(totals.bobKg))+'</b> kg)':'';
+  totalBox.innerHTML='<b>Totaux sur ce filtre</b> : mélange <b class="hist-qty">'+esc(histQty(totals.mel))+'</b> kg · scotch <b class="hist-qty">'+esc(prodScotchText(totals.scotch))+'</b>'+bobLine+prodWasteRefRowsHTML(prodWasteRefTotals(serverRows,true).concat(prodWasteRefTotals(recs,false)));
   host.append(totalBox);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
@@ -647,8 +694,9 @@ function sipsSubmissionDetailHTML(s){
       +sipsLines('Visas',visaRows,[['role','Role'],['nom','Nom'],['date','Date'],['signature','Signature']]);
   }
   if(s.type==='production'){
+    const prodBlocks=migrateProdRec(p).map(b=>Object.assign({},b,{bobTxt:prodBobText(b)}));
     return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Scotch utilise',prodScotchText(prodScotchQty(p))],['Note',p.note]])
-      +sipsLines('Productions',migrateProdRec(p),[['p','Produit',v=>esc(prodName(v))],['n','Qte',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_emb','Dechet cartons/sacs',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_film','Dechet film',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_mel','Melange kg',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['scotch','Scotch bobines',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>']]);
+      +sipsLines('Productions',prodBlocks,[['p','Produit',v=>esc(prodName(v))],['n','Qte',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_emb','Dechet cartons/sacs',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_film','Dechet film',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_mel','Melange kg',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['scotch','Scotch bobines',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['bobTxt','Bobine film',v=>'<b class="hist-qty">'+esc(v)+'</b>']]);
   }
   if(s.type==='inventory'){
     const detail=Object.keys(p.detail||{}).map(code=>{
