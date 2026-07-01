@@ -422,6 +422,7 @@ function productionBlockHasInput(b) {
     || serverNum(b.w_film) > 0
     || serverNum(b.w_mel) > 0
     || serverNum(b.scotch) > 0
+    || (Array.isArray(b.bobines) && b.bobines.some(w => serverNum(w) > 0))
   ));
 }
 

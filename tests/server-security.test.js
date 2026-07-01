@@ -305,6 +305,8 @@ async function main() {
     // ---- [MVT] garde-fous serveur production / entree / sortie + historique valide ----
     const badProd = await api('POST', '/api/submissions', { token: adminToken,
       body: { type: 'production', payload: { kind: 'production', date: '2026-06-30', blocks: [{ p: '', n: '12' }] } } });
+    const bobineOnlyProd = await api('POST', '/api/submissions', { token: adminToken,
+      body: { type: 'production', payload: { kind: 'production', date: '2026-06-30', blocks: [{ p: 'DIAMO LAIT 20G X100', n: '12' }, { p: '', n: '', bobines: ['200'] }] } } });
     const badEntree = await api('POST', '/api/submissions', { token: adminToken,
       body: { type: 'entree', payload: { kind: 'entree', date: '2026-06-30', finis: [{ a: '', q: '4' }], mp: [] } } });
     const badSortie = await api('POST', '/api/submissions', { token: adminToken,
@@ -319,6 +321,7 @@ async function main() {
     const dupProd = await api('POST', '/api/submissions', { token: adminToken,
       body: { type: 'production', payload: goodProdPayload } });
     check('[MVT] production sans produit fini refusee par le serveur (400)', badProd.status === 400);
+    check('[MVT] bloc bobine-only (sans produit/qte) refuse, pas silencieusement supprime (400)', bobineOnlyProd.status === 400);
     check('[MVT] entree avec quantite mais sans article refusee (400)', badEntree.status === 400);
     check('[MVT] sortie avec quantite mais sans article refusee (400)', badSortie.status === 400);
     check('[MVT] production validee visible dans /api/records', valProd.status === 200 && prodRecords.status === 200 && !!prodArchived);

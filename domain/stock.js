@@ -99,6 +99,11 @@
     return ingredientCat(m, codeToRef) === 'mp';
   }
 
+  // Sacs plastique (ex. "SAC PLASTIQUE POUR KRAFT") exclus de la deduction stock : seul le kraft compte.
+  function isPlasticSachet(m) {
+    return ingredientText(m).indexOf('PLAST') >= 0;
+  }
+
   function addWeightedWaste(conso, recipe, qty, predicate, h, codeToRef) {
     if (!(qty > 0)) return;
     const rows = (recipe || []).filter(m => m && m.code && predicate(m, codeToRef) && h.num(m.qte) > 0);
@@ -111,7 +116,7 @@
     const pack = h.num(bk && bk.w_emb);
     if (pack > 0) {
       let rows = (recipe || []).filter(m => m && m.code && isCartonIngredient(m, codeToRef) && h.num(m.qte) > 0);
-      if (!rows.length) rows = (recipe || []).filter(m => m && m.code && isPackagingIngredient(m, codeToRef) && !isFilmIngredient(m, codeToRef) && h.num(m.qte) > 0);
+      if (!rows.length) rows = (recipe || []).filter(m => m && m.code && isPackagingIngredient(m, codeToRef) && !isFilmIngredient(m, codeToRef) && !isPlasticSachet(m) && h.num(m.qte) > 0);
       rows.forEach(m => addQty(conso, m.code, pack * h.num(m.qte), h));
     }
     addWeightedWaste(conso, recipe, h.num(bk && bk.w_film), isFilmIngredient, h, codeToRef);

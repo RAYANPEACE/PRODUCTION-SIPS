@@ -143,7 +143,9 @@ check('[STOCK] dechet emballage seul sans quantite produite ignore la ligne inco
 const packFluxWithProd = ctx.stockApplyMovements('2026-06-29', [{ date: '2026-06-30', blocks: [{ p: 'SAC P', n: 3, w_emb: 2 }] }], [], [], {
   refs: packRefs, recipes: packRecipes, today
 });
-check('[STOCK] dechet sac deduit chaque emballage de la recette', close(packFluxWithProd.conso.E1, 5) && close(packFluxWithProd.conso.E2, 5));
+// Kraft (E1) : recette 3*1 + dechet 2*1 = 5. Plastique (E2) : recette 3*1 seule, AUCUN dechet applique.
+check('[STOCK] dechet sac applique sur le kraft (recette 3 + dechet 2 = 5)', close(packFluxWithProd.conso.E1, 5));
+check('[STOCK] dechet sac PAS applique sur le sachet plastique (recette seule = 3)', close(packFluxWithProd.conso.E2, 3));
 
 // ====== E2 : lots de base REELS par bloc (tableau) ======
 // Deux lots de base dates distincts (issus de 2 blocs de l'inventaire) -> dates preservees.

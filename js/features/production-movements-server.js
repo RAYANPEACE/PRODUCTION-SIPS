@@ -70,33 +70,33 @@ function prodIsSacIngr(m){
   const txt=prodIngrText(m),cat=prodIngrCat(m);
   return txt.indexOf('SAC')>=0||cat==='plast'||cat==='emballage';
 }
+// Sacs plastique (ex. "SAC PLASTIQUE POUR KRAFT") : ni comptes en dechet, ni deduits du stock. Seul le kraft compte.
+function prodIsPlasticSachet(m){return prodIngrText(m).indexOf('PLAST')>=0;}
 function prodWasteIngredientRows(prod,kind){
   const recipe=prodRecipeRows(prod).filter(m=>m&&m.code&&num(m.qte)>0);
   if(kind==='film')return recipe.filter(prodIsFilmIngr);
   if(kind==='carton')return recipe.filter(prodIsCartonIngr);
-  if(kind==='sac')return recipe.filter(m=>prodIsSacIngr(m)&&!prodIsFilmIngr(m)&&!prodIsCartonIngr(m));
+  if(kind==='sac')return recipe.filter(m=>prodIsSacIngr(m)&&!prodIsFilmIngr(m)&&!prodIsCartonIngr(m)&&!prodIsPlasticSachet(m));
   return [];
 }
 function prodPackagingWasteRows(prod){
   const kind=embType(prod)==='sac'?'sac':'carton';
   let rows=prodWasteIngredientRows(prod,kind);
-  if(!rows.length)rows=prodRecipeRows(prod).filter(m=>m&&m.code&&num(m.qte)>0&&!prodIsFilmIngr(m)&&(prodIsCartonIngr(m)||prodIsSacIngr(m)));
+  if(!rows.length)rows=prodRecipeRows(prod).filter(m=>m&&m.code&&num(m.qte)>0&&!prodIsFilmIngr(m)&&!prodIsPlasticSachet(m)&&(prodIsCartonIngr(m)||prodIsSacIngr(m)));
   return rows;
 }
-function prodWasteRefLabel(rows,fallback){
-  rows=(rows||[]).filter(r=>r&&r.code);
-  if(!rows.length)return fallback;
-  return fallback+' ('+rows.map(r=>r.code+' - '+(prodRef(r.code).des||r.des||r.code)).join(' + ')+')';
-}
-function prodPackagingLabel(prod){
-  return prodWasteRefLabel(prodPackagingWasteRows(prod),'Cartons / sacs');
-}
-function prodFilmLabel(prod){
-  return prodWasteRefLabel(prodWasteIngredientRows(prod,'film'),'Film');
-}
+function prodPackagingLabel(prod){return embType(prod)==='sac'?'Sacs kraft':'Cartons';}
+function prodFilmLabel(prod){return 'Film';}
 /* Applicabilite consommables selon le produit (pour griser les champs non pertinents). */
 function prodHasFilm(prod){return !!prod&&prodWasteIngredientRows(prod,'film').length>0;}
 function prodHasScotch(prod){return !!prod&&embType(prod)!=='sac';}
+// Vide les consommables non applicables au produit courant : sinon des bobines/scotch saisis sur un
+// produit puis masques apres changement de produit seraient quand meme soumis (rattaches au mauvais produit).
+function prodNormalizeBlock(b){
+  if(!prodHasFilm(b&&b.p))b.bobines=[];
+  if(!prodHasScotch(b&&b.p))b.scotch='';
+  return b;
+}
 /* Bobines film approvisionnees : liste de poids (kg) par bobine ; nb = nombre de poids saisis, total = somme.
    Indicatif (mvt interne depot->atelier), aucun impact sur le calcul de stock. */
 function prodBobList(b){return (b&&Array.isArray(b.bobines))?b.bobines:[];}
@@ -166,6 +166,7 @@ function prodBlockWasteText(b){
 async function prodSave(pf){
   const blocks=pfProductionGuard(pf);
   if(!blocks)return false;
+  blocks.forEach(prodNormalizeBlock);
   const rec={id:'prod_'+Date.now(),kind:'prod',date:pf.date||todayStr(),agent:pf.agent||'',scotch:prodBlocksScotch(blocks),blocks:clone(blocks),note:pf.note,savedAt:Date.now()};
   rec._sig=localSig('prod',{date:rec.date,blocks:rec.blocks,note:rec.note||''});
   if(await findLocalDuplicate('prod',rec._sig,rec.id)){toast('Production deja enregistree dans l historique local');return false;}
@@ -174,6 +175,7 @@ async function prodSave(pf){
 async function prodSubmit(pf){
   const blocks=pfProductionGuard(pf);
   if(!blocks)return false;
+  blocks.forEach(prodNormalizeBlock);
   if(!pf.agent&&typeof USR!=='undefined'&&USR.nom)pf.agent=USR.nom;
   const payload={kind:'production',date:pf.date||todayStr(),agent:pf.agent||'',scotch:prodBlocksScotch(blocks),blocks:clone(blocks),note:pf.note||'',submittedAt:new Date().toISOString()};
   await sipsSubmit('production',payload,'Production '+(payload.date||''));
@@ -237,7 +239,7 @@ function renderProduction(focusBi){
   $('#pfNote').oninput=e=>{PF.note=e.target.value;};
   app.querySelectorAll('.pb-card').forEach(card=>{
     const bi=+card.dataset.bi;const b=PF.blocks[bi];
-    card.querySelector('.pb-p').onchange=e=>{b.p=e.target.value;re();};
+    card.querySelector('.pb-p').onchange=e=>{b.p=e.target.value;prodNormalizeBlock(b);re();};
     card.querySelector('.pb-n').oninput=e=>{b.n=e.target.value;};
     card.querySelector('.pb-emb').oninput=e=>{b.w_emb=e.target.value;};
     const fl=card.querySelector('.pb-film');if(fl)fl.oninput=e=>{b.w_film=e.target.value;};
