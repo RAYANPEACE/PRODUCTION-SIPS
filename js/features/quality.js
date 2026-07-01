@@ -124,24 +124,50 @@ function qCanSignRole(role){
   if(SESSION&&Array.isArray(SESSION.canSign))return SESSION.canSign.indexOf(role)>=0;
   return usrVisaKey()===role;
 }
+function qHasServerVisa(role){
+  var visa=QS.visas&&QS.visas[role];
+  return !!(visa&&visa.signature&&visa.serverStamp&&visa.serverStamp.by==='sips-server');
+}
 function qCanEditVisa(role){
   if(QS_SERVER_VIEW)return false;
   if(!qCanSignRole(role))return false;
-  if(QS_SERVER_PENDING_ID&&QS.visas&&QS.visas[role]&&QS.visas[role].signature)return false;
+  if(QS_SERVER_PENDING_ID&&qHasServerVisa(role))return false;
+  if(QS_SERVER_PENDING_ID&&qIsSecondQualityRole(role)&&qHasQualitySecondServerVisa())return false;
   return true;
 }
-function qRequiredQualityRoles(){
-  return ['operateur','responsableQualite'];
+function qQualitySecondRoles(){
+  return ['responsableQualite','responsableProd'];
+}
+function qQualitySignableRoles(){
+  return ['operateur','responsableQualite','responsableProd'];
+}
+function qIsSecondQualityRole(role){
+  return qQualitySecondRoles().indexOf(role)>=0;
+}
+function qHasQualitySecondSignature(visas){
+  visas=visas||QS.visas||{};
+  return qQualitySecondRoles().some(function(k){return visas[k]&&visas[k].signature;});
+}
+function qHasQualitySecondServerVisa(){
+  return qQualitySecondRoles().some(function(k){return qHasServerVisa(k);});
 }
 function qQualitySignedCount(visas){
   visas=visas||QS.visas||{};
-  return qRequiredQualityRoles().filter(function(k){return visas[k]&&visas[k].signature;}).length;
+  return (visas.operateur&&visas.operateur.signature?1:0)+(qHasQualitySecondSignature(visas)?1:0);
+}
+function qQualityKeyFromPayload(p){
+  var info=p&&p.informations||{};
+  var lot=String(info.numeroLot||'').trim().toUpperCase();
+  var dt=String((p&&p.date)||info.dateProduction||'').trim();
+  return lot&&dt?lot+'|'+dt:'';
 }
 function qMyPendingSignRole(){
   if(!QS_SERVER_PENDING_ID)return '';
-  return qRequiredQualityRoles().find(function(role){
-    return qCanSignRole(role)&&(!QS.visas[role]||!QS.visas[role].signature);
-  })||'';
+  if(!qHasServerVisa('operateur'))return qCanSignRole('operateur')?'operateur':'';
+  if(qHasQualitySecondServerVisa())return '';
+  if(qCanSignRole('responsableQualite'))return 'responsableQualite';
+  if(qCanSignRole('responsableProd'))return 'responsableProd';
+  return '';
 }
 function qClearServerQualityState(){
   QS_SERVER_VIEW=false;
@@ -232,7 +258,7 @@ async function renderQualite(){
   var app=$('#app');
   var h='<div class="q-wrap">';
   h+='<h2 class="q-title">Suivi Qualité — Fiche de Lot</h2>';
-  if(!QS_SERVER_VIEW&&!QS_SERVER_PENDING_ID&&SESSION&&qRequiredQualityRoles().some(function(role){return qCanSignRole(role);}))
+  if(!QS_SERVER_VIEW&&!QS_SERVER_PENDING_ID&&SESSION&&qQualitySignableRoles().some(function(role){return qCanSignRole(role);}))
     h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Les fiches serveur a signer apparaissent dans l historique en bas de cet onglet. Ouvrez la fiche, tracez votre signature, puis enregistrez la signature serveur.</p>';
   if(QS_SERVER_VIEW)h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Consultation officielle serveur : lecture seule. Utilisez PDF pour exporter, ou Nouvelle fiche pour reprendre la saisie locale.</p>';
   if(QS_CORRECTION_OF)h+='<p class="ref-hint" style="background:#fff3f0;border:1px solid #efc9c0;border-radius:8px;padding:8px 10px"><b>Correction demandee</b> : '+esc(QS_CORRECTION_NOTE||'Motif non renseigne')+'<br><small>Ancienne soumission : '+esc(QS_CORRECTION_OF.id||'')+'. Corrigez la fiche puis signez operateur avant resoumission.</small></p>';
@@ -310,7 +336,7 @@ async function renderQualite(){
   /* Section D: Visas */
   h+='<div class="q-sec open" id="qSecD"><div class="q-sec-h" onclick="this.parentElement.classList.toggle(\'open\')"><h3>D — Visas / Signatures</h3><span class="chev">▸</span></div>';
   h+='<div class="q-sec-body">';
-  var roles=[['operateur','Operateur'],['responsableProd','Responsable production'],['responsableQualite','Responsable qualite']];
+  var roles=[['operateur','Operateur'],['responsableProd','Chef d usine'],['responsableQualite','Responsable qualite']];
   roles.forEach(function(rr){
     var key=rr[0],label=rr[1];
     var v=QS.visas[key];
@@ -532,6 +558,9 @@ async function qSubmitServer(){
   var bErr=qValidateBatches();
   if(bErr){toast(bErr);return;}
   qComputeTimes();
+  var curKey=qQualityKeyFromPayload({date:QS.informations.dateProduction,informations:QS.informations});
+  var serverDuplicate=QSERVER_PENDING.find(function(s){return qQualityKeyFromPayload(s&&s.payload)===curKey;});
+  if(serverDuplicate){toast('Fiche deja en attente serveur : ouvrez-la dans "Fiches serveur a ouvrir / signer".');return;}
   const payload={id:QS.id||'batch_draft_'+Date.now(),date:QS.informations.dateProduction||todayStr(),informations:clone(QS.informations),matieresPremieres:clone(QS.matieresPremieres),melanges:clone(QS.melanges),visas:clone(QS.visas),submittedAt:new Date().toISOString()};
   if(QS_CORRECTION_OF){
     payload.correctionOf=clone(QS_CORRECTION_OF);
@@ -551,28 +580,50 @@ async function qLoadHist(){
   try{
     QSERVER_PENDING=[];
     QSERVER_CORRECTIONS=[];
-    try{
-      if(SESSION&&(SESSION.role==='admin'||qRequiredQualityRoles().some(function(role){return qCanSignRole(role);}))){
+    if(SESSION&&(SESSION.role==='admin'||qQualitySignableRoles().some(function(role){return qCanSignRole(role);}))){
+      try{
         var pdata=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload');
         QSERVER_PENDING=pdata.submissions||[];
+      }catch(pErr){}
+      try{
+        if(SESSION.role==='admin'||qCanSignRole('operateur')){
         var cdata=await sipsFetch('/api/submissions?status=rejected&type=quality&include=payload');
         QSERVER_CORRECTIONS=(cdata.submissions||[]).filter(function(s){return s&&s.correctionRequested;});
+        }
       }
-    }catch(pErr){}
+      catch(cErr){}
+    }
     QSERVER_RECORDS=(await sipsRecords('quality')).sort(function(a,b){return String(b.validatedAt||'').localeCompare(String(a.validatedAt||''));});
     var resumedCorrections={};
-    QSERVER_PENDING.forEach(function(s){var id=s&&s.payload&&s.payload.correctionOf&&s.payload.correctionOf.id;if(id)resumedCorrections[id]=1;});
-    QSERVER_RECORDS.forEach(function(r){var id=r&&r.payload&&r.payload.correctionOf&&r.payload.correctionOf.id;if(id)resumedCorrections[id]=1;});
+    var correctionsById={};
+    QSERVER_CORRECTIONS.forEach(function(s){if(s&&s.id)correctionsById[s.id]=s;});
+    function markResumedCorrection(id){
+      while(id&&!resumedCorrections[id]){
+        resumedCorrections[id]=1;
+        var parent=correctionsById[id];
+        id=parent&&parent.payload&&parent.payload.correctionOf&&parent.payload.correctionOf.id;
+      }
+    }
+    QSERVER_PENDING.forEach(function(s){markResumedCorrection(s&&s.payload&&s.payload.correctionOf&&s.payload.correctionOf.id);});
+    QSERVER_RECORDS.forEach(function(r){markResumedCorrection(r&&r.payload&&r.payload.correctionOf&&r.payload.correctionOf.id);});
     QSERVER_CORRECTIONS=QSERVER_CORRECTIONS.filter(function(s){return !resumedCorrections[s.id];});
+    var serverQualityKeys={};
+    QSERVER_PENDING.concat(QSERVER_CORRECTIONS).forEach(function(s){var k=qQualityKeyFromPayload(s&&s.payload);if(k)serverQualityKeys[k]=1;});
+    QSERVER_RECORDS.forEach(function(r){var k=qQualityKeyFromPayload(r&&r.payload);if(k)serverQualityKeys[k]=1;});
     var all=await idbAll();
-    var batches=all.filter(function(r){return String(r.id).indexOf('batch_')===0;}).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
+    var batches=all.filter(function(r){
+      if(String(r.id).indexOf('batch_')!==0)return false;
+      return !serverQualityKeys[qQualityKeyFromPayload(r)];
+    }).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
     var htm='';
     if(QSERVER_PENDING.length){
       htm+='<div style="font-size:12px;font-weight:800;color:#9a6500;margin:0 0 6px;text-transform:uppercase">Fiches serveur a ouvrir / signer</div>';
       QSERVER_PENDING.forEach(function(s,idx){
         var b=s.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=qQualitySignedCount(visas);
-        var mine=qRequiredQualityRoles().some(function(role){return qCanSignRole(role)&&(!visas[role]||!visas[role].signature);});
+        var opMissing=!(visas.operateur&&visas.operateur.signature);
+        var secondMissing=!qHasQualitySecondSignature(visas);
+        var mine=(opMissing&&qCanSignRole('operateur'))||(secondMissing&&(qCanSignRole('responsableQualite')||qCanSignRole('responsableProd')));
         htm+='<div class="q-hist-item">';
         htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'---'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+sigs+'/2 signature(s) obligatoires - '+(mine?'votre signature est attendue':'en attente admin/autre signature')+'</span></div>';
@@ -595,7 +646,7 @@ async function qLoadHist(){
       htm+='<div style="font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase">Validees serveur</div>';
       QSERVER_RECORDS.forEach(function(r,idx){
         var b=r.payload||{},info=b.informations||{},visas=b.visas||{};
-        var sigs=['operateur','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
+        var sigs=qQualitySignedCount(visas);
         htm+='<div class="q-hist-item">';
         htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'—'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date||info.dateProduction||'')+' — '+sigs+'/2 signature(s) obligatoires — officielle serveur</span></div>';
@@ -609,7 +660,7 @@ async function qLoadHist(){
     batches.forEach(function(b){
       var info=b.informations||{};
       var visas=b.visas||{};
-      var sigs=['operateur','responsableQualite'].filter(function(k){return visas[k]&&visas[k].signature;}).length;
+      var sigs=qQualitySignedCount(visas);
       htm+='<div class="q-hist-item">';
       htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'—'))+'</b>';
       htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+' — '+sigs+'/2 signature(s) obligatoires</span></div>';
@@ -685,6 +736,7 @@ async function qOpenSubmittedQuality(row){
 }
 
 async function qLoadCorrectionBatch(idx){
+  if(SESSION&&SESSION.role!=='admin'&&!qCanSignRole('operateur')){toast('Correction reservee a l operateur');return;}
   var row=QSERVER_CORRECTIONS[idx];
   if(!row||!row.payload){toast('Correction introuvable');return;}
   var rec=row.payload;
@@ -964,7 +1016,7 @@ async function qExportPDF(){
     /* Section D: Visas */
     newPageIfNeeded(120);
     drawText('D — Visas / Signatures',lm,y,{size:12,bold:true});y-=16;
-    var visaRoles=[['operateur','Operateur'],['responsableProd','Responsable production'],['responsableQualite','Responsable qualite']];
+    var visaRoles=[['operateur','Operateur'],['responsableProd','Chef d usine'],['responsableQualite','Responsable qualite']];
     for(var vi=0;vi<visaRoles.length;vi++){
       newPageIfNeeded(60);
       var vk=visaRoles[vi][0],vl=visaRoles[vi][1];

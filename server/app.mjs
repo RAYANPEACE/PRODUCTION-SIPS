@@ -542,11 +542,49 @@ function activeQualityLotConflict(db, lot) {
   return null;
 }
 
+function qualityCorrectionOfId(payload) {
+  return String(payload && payload.correctionOf && payload.correctionOf.id || '');
+}
+
+function pendingQualityCorrection(db, lot) {
+  if (!lot) return null;
+  const resumed = new Set();
+  const submissionsById = new Map((db.submissions || []).map(s => [s.id, s]));
+  function markResumed(id) {
+    while (id && !resumed.has(id)) {
+      resumed.add(id);
+      const s = submissionsById.get(id);
+      id = s && qualityCorrectionOfId(s.payload);
+    }
+  }
+  for (const s of db.submissions || []) {
+    if (s.type === 'quality' && s.status === 'submitted') {
+      markResumed(qualityCorrectionOfId(s.payload));
+    }
+  }
+  for (const r of db.records || []) {
+    if (r.type === 'quality') {
+      markResumed(qualityCorrectionOfId(r.payload));
+    }
+  }
+  return (db.submissions || [])
+    .filter(s => (
+      s.type === 'quality'
+      && s.status === 'rejected'
+      && s.correctionRequested
+      && qualityLot(s.payload) === lot
+      && !resumed.has(s.id)
+    ))
+    .sort((a, b) => String(b.decidedAt || b.createdAt || '').localeCompare(String(a.decidedAt || a.createdAt || '')))[0] || null;
+}
+
 const QUALITY_VISA_LABELS = {
   operateur: 'operateur',
+  responsableProd: 'chef d usine',
   responsableQualite: 'responsable qualite'
 };
 const QUALITY_VISA_ROLES = Object.keys(QUALITY_VISA_LABELS);
+const QUALITY_SECOND_VISA_ROLES = ['responsableQualite', 'responsableProd'];
 
 function isImageSignature(value) {
   return typeof value === 'string' && value.indexOf('data:image/') === 0;
@@ -610,14 +648,25 @@ async function validServerQualityVisa(payload, role) {
 
 async function missingQualitySignatures(payload) {
   const missing = [];
-  for (const role of QUALITY_VISA_ROLES) {
-    if (!(await validServerQualityVisa(payload, role))) missing.push(QUALITY_VISA_LABELS[role]);
-  }
+  if (!(await validServerQualityVisa(payload, 'operateur'))) missing.push(QUALITY_VISA_LABELS.operateur);
+  const hasSecond = await validServerQualityVisa(payload, 'responsableQualite')
+    || await validServerQualityVisa(payload, 'responsableProd');
+  if (!hasSecond) missing.push('responsable qualite ou chef d usine');
   return missing;
 }
 
+async function qualitySignatureOrderError(payload) {
+  const hasSecond = await validServerQualityVisa(payload, 'responsableQualite')
+      || await validServerQualityVisa(payload, 'responsableProd');
+  if (hasSecond
+      && !(await validServerQualityVisa(payload, 'operateur'))) {
+    return 'Signature operateur requise avant signature de validation qualite';
+  }
+  return '';
+}
+
 function canSignQuality(user) {
-  return user && roleCanSign(user.role).some(role => role === 'operateur' || role === 'responsableQualite');
+  return user && roleCanSign(user.role).some(role => role === 'operateur' || role === 'responsableQualite' || role === 'responsableProd');
 }
 
 // Securite (faille A) : a la soumission, on ne fait JAMAIS confiance aux visas
@@ -1373,10 +1422,11 @@ async function handleApiRoutes(req, res, url) {
       return sendJson(res, 401, { ok: false, error: 'Connexion requise' });
     }
     if (includePayload) {
-      const qualitySignerRead = type === 'quality' && ['submitted', 'rejected'].indexOf(status) >= 0 && canSignQuality(user);
+      const qualitySubmittedSignerRead = type === 'quality' && status === 'submitted' && canSignQuality(user);
+      const qualityRejectedOwnerRead = type === 'quality' && status === 'rejected' && !!user && roleCanSign(user.role).indexOf('operateur') >= 0;
       // Recomptage : un compte connecte peut lire SES PROPRES inventaires rejetes (avec payload.st).
       const invOwnerRead = type === 'inventory' && status === 'rejected' && !!user;
-      if (!qualitySignerRead && !invOwnerRead && !admin) {
+      if (!qualitySubmittedSignerRead && !qualityRejectedOwnerRead && !invOwnerRead && !admin) {
         return sendJson(res, 401, { ok: false, error: 'Acces admin requis' });
       }
     }
@@ -1402,6 +1452,13 @@ async function handleApiRoutes(req, res, url) {
     // Un non-admin ne voit QUE ses propres soumissions inventaire rejetees.
     if (type === 'inventory' && status === 'rejected' && !admin) {
       rows = user ? rows.filter(s => s.author && s.author.id === user.id) : [];
+    }
+    // Une correction qualite repart uniquement chez l'auteur de la fiche rejetee.
+    // Le responsable qualite signera la nouvelle soumission apres visa operateur.
+    if (type === 'quality' && status === 'rejected' && !admin) {
+      rows = (user && roleCanSign(user.role).indexOf('operateur') >= 0)
+        ? rows.filter(s => s.correctionRequested && s.author && s.author.id === user.id)
+        : [];
     }
     rows = rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return sendJson(res, 200, { ok: true, submissions: rows.map(includePayload ? fullSubmission : publicSubmission) });
@@ -1434,6 +1491,28 @@ async function handleApiRoutes(req, res, url) {
       audit(db, 'submission.rejected_payload', user.nom, { type, error: validationError });
       await writeDb(db);
       return sendJson(res, 400, { ok: false, error: validationError });
+    }
+    if (type === 'quality') {
+      const lot = qualityLot(body.payload);
+      const correction = pendingQualityCorrection(db, lot);
+      if (correction) {
+        if (qualityCorrectionOfId(body.payload) !== correction.id) {
+          audit(db, 'submission.duplicate_lot', user.nom, { id: correction.id, type, lot });
+          await writeDb(db);
+          return sendJson(res, 409, {
+            ok: false,
+            duplicateLot: true,
+            error: 'Correction qualite en attente pour le lot ' + lot + '. Reprenez la correction depuis l historique operateur.'
+          });
+        }
+        if (correction.author && correction.author.id && correction.author.id !== user.id) {
+          return sendJson(res, 403, { ok: false, error: 'Seul l operateur auteur de la fiche rejetee peut resoumettre cette correction' });
+        }
+      }
+      const orderError = await qualitySignatureOrderError(body.payload);
+      if (orderError) {
+        return sendJson(res, 400, { ok: false, error: orderError });
+      }
     }
     const hash = submissionHash(type, body.payload);
     const activeRecord = db.records.find(r => r.hash === hash && recordStatus(r) !== 'cancelled');
@@ -1497,6 +1576,16 @@ async function handleApiRoutes(req, res, url) {
     if (!sub) return sendJson(res, 404, { ok: false, error: 'Soumission introuvable' });
     if (sub.type !== 'quality') return sendJson(res, 400, { ok: false, error: 'Soumission non qualite' });
     if (sub.status !== 'submitted') return sendJson(res, 409, { ok: false, error: 'Soumission deja traitee' });
+    if (QUALITY_SECOND_VISA_ROLES.indexOf(role) >= 0 && !(await validServerQualityVisa(sub.payload, 'operateur'))) {
+      return sendJson(res, 409, { ok: false, error: 'Signature operateur requise avant signature de validation qualite' });
+    }
+    if (QUALITY_SECOND_VISA_ROLES.indexOf(role) >= 0) {
+      for (const otherRole of QUALITY_SECOND_VISA_ROLES) {
+        if (otherRole !== role && await validServerQualityVisa(sub.payload, otherRole)) {
+          return sendJson(res, 409, { ok: false, error: 'Validation qualite deja signee' });
+        }
+      }
+    }
     sub.payload = sub.payload || {};
     sub.payload.visas = sub.payload.visas || {};
     // Faille I : append-once. Un visa serveur valide n'est jamais ecrase.

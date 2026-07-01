@@ -204,6 +204,59 @@ async function main() {
     check('[I] 1re signature operateur acceptee', sign1.status === 200);
     check('[I] 2e signature du meme role doit etre refusee (409 append-once)', sign2.status === 409);
 
+    // ---- [QWF] workflow qualite : operateur d'abord, correction reservee a l'auteur ----
+    const rqOrder = await makeUser(adminToken, 'responsableQualite', 'order');
+    const subOrder = await api('POST', '/api/submissions', { token: adminToken, body: qualityPayload('LOT-ORDER') });
+    const orderId = subOrder.json && subOrder.json.submission && subOrder.json.submission.id;
+    const rqBeforeOp = await api('POST', '/api/submissions/' + orderId + '/quality-sign', { token: rqOrder, body: { role: 'responsableQualite', visa: { signature: SIG } } });
+    const opThen = await api('POST', '/api/submissions/' + orderId + '/quality-sign', { token: op1, body: { role: 'operateur', visa: { signature: SIG } } });
+    const rqAfterOp = await api('POST', '/api/submissions/' + orderId + '/quality-sign', { token: rqOrder, body: { role: 'responsableQualite', visa: { signature: SIG } } });
+    check('[QWF] responsable qualite ne signe pas avant le visa operateur', rqBeforeOp.status === 409);
+    check('[QWF] responsable qualite signe apres le visa operateur', opThen.status === 200 && rqAfterOp.status === 200);
+
+    const chefSub = await api('POST', '/api/submissions', { token: op1, body: qualityPayload('LOT-CHEF', { operateur: { signature: SIG } }) });
+    const chefId = chefSub.json && chefSub.json.submission && chefSub.json.submission.id;
+    const chefSign = await api('POST', '/api/submissions/' + chefId + '/quality-sign', { token: adminToken, body: { role: 'responsableProd', visa: { signature: SIG } } });
+    const chefValidate = await api('POST', '/api/submissions/' + chefId + '/validate', { token: adminToken, body: {} });
+    check('[QWF] chef usine peut remplacer la signature responsable qualite et valider',
+      chefSub.status === 201 && chefSign.status === 200 && chefValidate.status === 200);
+
+    const corrBody = qualityPayload('LOT-CORR', { operateur: { signature: SIG } });
+    const corrSub = await api('POST', '/api/submissions', { token: op1, body: corrBody });
+    const corrId = corrSub.json && corrSub.json.submission && corrSub.json.submission.id;
+    await api('POST', '/api/submissions/' + corrId + '/reject', { token: adminToken, body: { correction: true, note: 'date expiration a corriger' } });
+    const rqCorrections = await api('GET', '/api/submissions?status=rejected&type=quality&include=payload', { token: rqOrder });
+    const opCorrections = await api('GET', '/api/submissions?status=rejected&type=quality&include=payload', { token: op1 });
+    const rqDuplicateCorrection = await api('POST', '/api/submissions', {
+      token: rqOrder,
+      body: qualityPayload('LOT-CORR', { responsableQualite: { signature: SIG } })
+    });
+    const fixedBody = qualityPayload('LOT-CORR', { operateur: { signature: SIG } });
+    fixedBody.payload.correctionOf = { id: corrId };
+    const opResubmitCorrection = await api('POST', '/api/submissions', { token: op1, body: fixedBody });
+    const fixedId = opResubmitCorrection.json && opResubmitCorrection.json.submission && opResubmitCorrection.json.submission.id;
+    const rqSignFixed = await api('POST', '/api/submissions/' + fixedId + '/quality-sign', { token: rqOrder, body: { role: 'responsableQualite', visa: { signature: SIG } } });
+    check('[QWF] correction qualite rejetee non exposee au responsable qualite',
+      rqCorrections.status === 401 || (rqCorrections.status === 200 && !(rqCorrections.json.submissions || []).some(s => s.id === corrId)));
+    check('[QWF] correction qualite rejetee exposee a son operateur auteur',
+      opCorrections.status === 200 && (opCorrections.json.submissions || []).some(s => s.id === corrId));
+    check('[QWF] resoumission doublon du responsable qualite bloquee pendant correction', rqDuplicateCorrection.status === 409);
+    check('[QWF] operateur resoumet la correction puis le responsable qualite signe',
+      opResubmitCorrection.status === 201 && rqSignFixed.status === 200);
+
+    const chainFirst = await api('POST', '/api/submissions', { token: op1, body: qualityPayload('LOT-CHAIN', { operateur: { signature: SIG } }) });
+    const chainFirstId = chainFirst.json && chainFirst.json.submission && chainFirst.json.submission.id;
+    await api('POST', '/api/submissions/' + chainFirstId + '/reject', { token: adminToken, body: { correction: true, note: 'correction 1' } });
+    const chainSecondBody = qualityPayload('LOT-CHAIN', { operateur: { signature: SIG } });
+    chainSecondBody.payload.correctionOf = { id: chainFirstId };
+    const chainSecond = await api('POST', '/api/submissions', { token: op1, body: chainSecondBody });
+    const chainSecondId = chainSecond.json && chainSecond.json.submission && chainSecond.json.submission.id;
+    await api('POST', '/api/submissions/' + chainSecondId + '/reject', { token: adminToken, body: { correction: true, note: 'correction 2' } });
+    const chainThirdBody = qualityPayload('LOT-CHAIN', { operateur: { signature: SIG } });
+    chainThirdBody.payload.correctionOf = { id: chainSecondId };
+    const chainThird = await api('POST', '/api/submissions', { token: op1, body: chainThirdBody });
+    check('[QWF] une 2e correction peut etre resoumise sans etre bloquee par l ancien rejet parent', chainThird.status === 201);
+
     // ---- [A] visas qualite legacy/corrompus : image seule != visa serveur ----
     const rq1 = await makeUser(adminToken, 'responsableQualite', 'rqone');
     const subLegacy = await api('POST', '/api/submissions', { token: adminToken, body: qualityPayload('LOT-LEGACY') });

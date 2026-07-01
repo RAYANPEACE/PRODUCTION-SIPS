@@ -573,13 +573,15 @@ async function sipsRefreshNotifications(){
         counts.serveur=(counts.serveur||0)+((data.submissions||[]).length);
       }catch(e){}
     }
-    if(hasTab('qualite')&&SESSION&&Array.isArray(SESSION.canSign)&&SESSION.canSign.some(function(r){return r==='operateur'||r==='responsableQualite';})){
+    if(hasTab('qualite')&&SESSION&&Array.isArray(SESSION.canSign)&&SESSION.canSign.some(function(r){return r==='operateur'||r==='responsableQualite'||r==='responsableProd';})){
       try{
         const q=await sipsFetch('/api/submissions?status=submitted&type=quality&include=payload');
         const qRows=q.submissions||[];
         const need=(q.submissions||[]).filter(function(s){
           const v=(s.payload&&s.payload.visas)||{};
-          return SESSION.canSign.some(function(role){return (role==='operateur'||role==='responsableQualite')&&(!v[role]||!v[role].signature);});
+          const opMissing=!(v.operateur&&v.operateur.signature);
+          const secondMissing=!((v.responsableQualite&&v.responsableQualite.signature)||(v.responsableProd&&v.responsableProd.signature));
+          return (opMissing&&SESSION.canSign.indexOf('operateur')>=0)||(secondMissing&&(SESSION.canSign.indexOf('responsableQualite')>=0||SESSION.canSign.indexOf('responsableProd')>=0));
         }).length;
         counts.qualite=(counts.qualite||0)+need;
         const c=await sipsFetch('/api/submissions?status=rejected&type=quality&include=payload');

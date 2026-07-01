@@ -1,5 +1,5 @@
 /* ====== PROFIL UTILISATEUR ====== */
-var USR_ROLES=[['operateur','Opérateur'],['responsableProd','Responsable production'],['responsableQualite','Responsable qualité']];
+var USR_ROLES=[['operateur','Opérateur'],['responsableProd','Chef d usine'],['responsableQualite','Responsable qualité']];
 var USR=lsGet('lep_usr',{nom:'',poste:''});
 function usrVisaKey(){return USR.poste||'';}
 function usrUpdateBar(){

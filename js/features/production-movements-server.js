@@ -10,7 +10,7 @@ const HIST_FILTERS={
 };
 function embType(p){const a=(typeof recipeProductRef==='function'&&recipeProductRef(p))||REFS.find(x=>x.code===p||x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
 function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',perso:[],photos:[]};}
-function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
+function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),scotch:'',blocks:[freshBlock()],note:''};}
 function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||(b.perso||[]).some(x=>x.lbl&&num(x.qte)>0);}
 function pfCompleteBlocks(pf){return (pf.blocks||[]).filter(b=>b&&b.p&&num(b.n)>0);}
 function pfMissingProductBlocks(pf){return (pf.blocks||[]).filter(b=>pfBlockHasInput(b)&&(!b.p||num(b.n)<=0));}
@@ -24,8 +24,8 @@ function pfProductionGuard(pf){
 async function prodSave(pf){
   const blocks=pfProductionGuard(pf);
   if(!blocks)return false;
-  const rec={id:'prod_'+Date.now(),kind:'prod',date:pf.date||todayStr(),agent:pf.agent||'',blocks:clone(blocks),note:pf.note,savedAt:Date.now()};
-  rec._sig=localSig('prod',{date:rec.date,blocks:rec.blocks,note:rec.note||''});
+  const rec={id:'prod_'+Date.now(),kind:'prod',date:pf.date||todayStr(),agent:pf.agent||'',scotch:pf.scotch||'',blocks:clone(blocks),note:pf.note,savedAt:Date.now()};
+  rec._sig=localSig('prod',{date:rec.date,scotch:rec.scotch||'',blocks:rec.blocks,note:rec.note||''});
   if(await findLocalDuplicate('prod',rec._sig,rec.id)){toast('Production deja enregistree dans l historique local');return false;}
   try{await idbPut(rec);toast('Production enregistrée');return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
@@ -33,7 +33,7 @@ async function prodSubmit(pf){
   const blocks=pfProductionGuard(pf);
   if(!blocks)return false;
   if(!pf.agent&&typeof USR!=='undefined'&&USR.nom)pf.agent=USR.nom;
-  const payload={kind:'production',date:pf.date||todayStr(),agent:pf.agent||'',blocks:clone(blocks),note:pf.note||'',submittedAt:new Date().toISOString()};
+  const payload={kind:'production',date:pf.date||todayStr(),agent:pf.agent||'',scotch:pf.scotch||'',blocks:clone(blocks),note:pf.note||'',submittedAt:new Date().toISOString()};
   await sipsSubmit('production',payload,'Production '+(payload.date||''));
   return true;
 }
@@ -75,7 +75,7 @@ function renderProduction(focusBi){
     +'<h2 class="prod-title">Production</h2>'
     +'<p class="ref-hint">Une <b>production = un bloc</b> (produit + ses déchets + ses photos). Ajoute un bloc par article fabriqué. Date vide = aujourd\u2019hui.</p>'
     +'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Vos saisies precedentes sont dans l’<b>historique en bas de page</b>. Utilisez le bouton <b>Exporter</b> (Accueil) pour sauvegarder toutes vos donnees.</p>'
-    +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
+    +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label><label>Scotch utilise (bobines)<input id="pfScotch" inputmode="decimal" placeholder="0" value="'+esc(PF.scotch||'')+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
     +'<div class="pf-sec"><div class="pf-h">Note</div><textarea id="pfNote" rows="2" placeholder="remarque (option)">'+esc(PF.note)+'</textarea></div>'
@@ -84,6 +84,7 @@ function renderProduction(focusBi){
     +'</div>';
   const re=()=>renderProduction();
   $('#pfDate').onchange=e=>{PF.date=e.target.value;};
+  $('#pfScotch').oninput=e=>{PF.scotch=e.target.value;};
   $('#pfNote').oninput=e=>{PF.note=e.target.value;};
   app.querySelectorAll('.pb-card').forEach(card=>{
     const bi=+card.dataset.bi;const b=PF.blocks[bi];
@@ -185,6 +186,15 @@ function histProdMini(blocks){
     ['n','Qte',v=>'qte '+esc(histQty(v))]
   ],4);
 }
+function prodScotchTotal(rows,isServer){
+  return (rows||[]).reduce((sum,row)=>{
+    const rec=isServer?(row&&row.payload||{}):row;
+    return sum+num(rec&&rec.scotch);
+  },0);
+}
+function prodScotchText(qty){
+  return histQty(qty)+' bobine'+(num(qty)>1?'s':'');
+}
 function histMovMini(rec){
   const rows=[];
   (rec.finis||[]).forEach(x=>{if(x&&x.a&&num(x.q)>0)rows.push({t:'PF',a:x.a,q:x.q,exp:''});});
@@ -203,6 +213,11 @@ function renderProdHist(host,recs,serverRows){
   recs=histApply(recs,'production',false).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
   serverRows=histApply(serverRows,'production',true).sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));
   const srvClip=histClip(serverRows),locClip=histClip(recs);
+  const scotchTotal=prodScotchTotal(serverRows,true)+prodScotchTotal(recs,false);
+  const totalBox=document.createElement('div');
+  totalBox.style.cssText='background:#f7faf8;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px';
+  totalBox.innerHTML='<b>Total Scotch sur ce filtre</b> : '+esc(prodScotchText(scotchTotal));
+  host.append(totalBox);
   if(serverRows.length){
     const h=document.createElement('div');h.style.cssText='font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase';
     h.textContent='Validees serveur';host.append(h);
@@ -212,8 +227,8 @@ function renderProdHist(host,recs,serverRows){
       const np=blocks.filter(b=>b.p&&num(b.n)>0).length;
       const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
       const it=document.createElement('div');it.className='hist-item locked';
-      it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+np+' produit(s) - '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
+      it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+np+' produit(s) - scotch '+prodScotchText(rec.scotch)+' - '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',scotch:rec.scotch||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
       it.append(open);host.append(it);
     });
     if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' production(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
@@ -228,7 +243,8 @@ function renderProdHist(host,recs,serverRows){
     const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
     const it=document.createElement('div');it.className='hist-item';
     it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.agent||'—')+' · '+np+' produit(s) · '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
-    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
+    const span=it.querySelector('.info span');if(span)span.append(document.createTextNode(' - scotch '+prodScotchText(rec.scotch)));
+    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',scotch:rec.scotch||'',blocks:clone(blocks),note:rec.note||''};renderProduction();};
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer cette production ?')){await idbDel(rec.id);loadProdHist();}};
     it.append(open,del);host.append(it);
   });
@@ -418,11 +434,15 @@ function sipsQualityBatchRows(payload){
     return Object.assign({},b,{duree:d});
   });
 }
+function sipsQualitySignedCount(visas){
+  visas=visas||{};
+  return (visas.operateur&&visas.operateur.signature?1:0)+((visas.responsableQualite&&visas.responsableQualite.signature)||(visas.responsableProd&&visas.responsableProd.signature)?1:0);
+}
 function sipsPayloadSummary(type,payload){
   payload=payload||{};
-  if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=['operateur','responsableQualite'].filter(k=>v[k]&&v[k].signature).length;const avg=sipsQualityAvgBatchTime(payload);return (i.numeroLot||'lot ?')+' - '+recipeProductLabel(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/2 signatures obligatoires'+(avg?' - moy. batch '+avg:'');}
+  if(type==='quality'){const i=payload.informations||{},v=payload.visas||{};const sigs=sipsQualitySignedCount(v);const avg=sipsQualityAvgBatchTime(payload);return (i.numeroLot||'lot ?')+' - '+recipeProductLabel(i.refProduit||'produit ?')+' - '+(i.dateProduction||payload.date||'date ?')+' - '+sigs+'/2 signatures obligatoires'+(avg?' - moy. batch '+avg:'');}
   if(type==='sortie'||type==='entree'){const nf=((payload.finis||[]).filter(x=>x.a&&num(x.q)>0).length);const nm=((payload.mp||[]).filter(x=>x.a&&num(x.q)>0).length);return (payload.date||'date ?')+' - '+(payload.ref||'sans ref')+' - '+nf+' fini(s), '+nm+' MP';}
-  if(type==='production'){const nb=(payload.blocks||[]).filter(b=>b.p&&num(b.n)>0).length;return (payload.date||'date ?')+' - '+nb+' production(s)';}
+  if(type==='production'){const nb=(payload.blocks||[]).filter(b=>b.p&&num(b.n)>0).length;return (payload.date||'date ?')+' - '+nb+' production(s) - scotch '+prodScotchText(payload.scotch);}
   if(type==='inventory'){return (payload.date||'date ?')+' - '+(payload.filled||0)+' article(s) comptés';}
   return payload.title||payload.message||'';
 }
@@ -441,14 +461,14 @@ function sipsSubmissionDetailHTML(s){
   }
   if(s.type==='quality'){
     const i=p.informations||{},v=p.visas||{};
-    const visaRows=['operateur','responsableProd','responsableQualite'].map(k=>{const x=v[k]||{};return {role:k==='operateur'?'Operateur':(k==='responsableProd'?'Resp. production':'Resp. qualite'),nom:x.nom||'',date:x.date||'',signature:x.signature?'oui':'non'};});
+    const visaRows=['operateur','responsableProd','responsableQualite'].map(k=>{const x=v[k]||{};return {role:k==='operateur'?'Operateur':(k==='responsableProd'?'Chef d usine':'Resp. qualite'),nom:x.nom||'',date:x.date||'',signature:x.signature?'oui':'non'};});
     return sipsKV([['Produit',recipeProductLabel(i.refProduit)],['Lot',i.numeroLot],['Date production',frDate(i.dateProduction||p.date)],['Heure debut',i.heureDebut],['Heure fin',i.heureFin],['Temps moyen/batch',sipsQualityAvgBatchTime(p)],['Quantite produite',i.quantiteProduite?i.quantiteProduite+' kg':''],['Taille batch',i.tailleBatch?i.tailleBatch+' kg':''],['Correction de',p.correctionOf&&p.correctionOf.id],['Motif correction',p.correctionNote]])
       +sipsLines('Matieres premieres',p.matieresPremieres,[['designation','Designation'],['code','Code'],['refFournisseur','Ref fournisseur'],['dateProd','Date prod'],['dateExp','Date exp']])
       +sipsLines('Batches / melanges',sipsQualityBatchRows(p),[['batchNum','Batch'],['heureDebut','Debut'],['heureFin','Fin'],['duree','Duree']])
       +sipsLines('Visas',visaRows,[['role','Role'],['nom','Nom'],['date','Date'],['signature','Signature']]);
   }
   if(s.type==='production'){
-    return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Note',p.note]])
+    return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Scotch utilise',prodScotchText(p.scotch)],['Note',p.note]])
       +sipsLines('Productions',p.blocks,[['p','Produit'],['n','Qte'],['w_emb','Dechet emb.'],['w_film','Dechet film'],['w_mel','Melange kg']]);
   }
   if(s.type==='inventory'){
@@ -516,7 +536,7 @@ function sipsSubmissionHTML(s){
   const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
   const summary=sipsPayloadSummary(s.type,s.payload);
   const qVisas=(s.payload&&s.payload.visas)||{};
-  const qReady=s.type!=='quality'||['operateur','responsableQualite'].every(k=>qVisas[k]&&qVisas[k].signature);
+  const qReady=s.type!=='quality'||!!(qVisas.operateur&&qVisas.operateur.signature&&((qVisas.responsableQualite&&qVisas.responsableQualite.signature)||(qVisas.responsableProd&&qVisas.responsableProd.signature)));
   const actions=s.status==='submitted'
     ?(s.type==='inventory'
        ?'<button data-act="compare">Comparer au stock (Bilan)</button><button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>'
