@@ -540,7 +540,10 @@ function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),
 let MOV_SUG={matricule:[],chauffeur:[],dest_sortie:[],dest_entree:[]};
 function sugGet(key){const v=lsGet(key,[]);return Array.isArray(v)?v:[];}
 function sugAdd(key,val){val=String(val==null?'':val).trim();if(!val)return;let list=sugGet(key).filter(v=>v!==val);list.unshift(val);if(list.length>50)list=list.slice(0,50);lsSet(key,list);}
-function movRefCombined(mf){return [mf.matricule,mf.chauffeur,mf.dest].map(v=>String(v||'').trim()).filter(Boolean).join(' · ');}
+/* Repli sur mf.ref (finding legacy) : un vieux mouvement n'a que `ref` (pas de champs
+   structures matricule/chauffeur/dest), et le formulaire ne l'edite pas. Sans ce repli,
+   le resave ecraserait la ref historique par '' et changerait la signature de doublon. */
+function movRefCombined(mf){const c=[mf.matricule,mf.chauffeur,mf.dest].map(v=>String(v||'').trim()).filter(Boolean).join(' · ');return c||String(mf.ref||'').trim();}
 function movRememberSuggestions(kind,mf){(MOVCFG[kind].fields||[]).forEach(f=>sugAdd(f.sug,mf[f.key]));}
 function sugUniq(arr){const seen={},out=[];(arr||[]).forEach(v=>{v=String(v||'').trim();if(v&&!seen[v]){seen[v]=1;out.push(v);}});return out;}
 /* Liste fusionnée (partagé serveur d'abord, puis local) pour un champ donné. */

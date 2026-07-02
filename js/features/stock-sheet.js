@@ -96,6 +96,10 @@ async function computeStockData(){
   if (!src) src = await stockLocalSource();
   const bm = stockBaseMap(src.baseST);
   const baseMap = bm.baseMap, baseLotsMap = bm.baseLots;
+  // includeStartDate:true : les mouvements DATES du jour de la base sont ajoutes sur le compte
+  // physique. CORRECT ici car l'inventaire est TOUJOURS compte en DEBUT de journee, avant toute
+  // production/entree/sortie du jour (convention terrain confirmee) — donc aucun double-comptage.
+  // Si un jour on compte en cours de journee, il faudra des horodatages compte vs mouvement.
   const fl = stockApplyMovements(src.baseDate, src.prod, src.entree, src.sortie, { refs: REFS, recipes: RECF, num: num, round2: round2, includeStartDate: true });
   const rows = [];
   REFS.forEach(r => {

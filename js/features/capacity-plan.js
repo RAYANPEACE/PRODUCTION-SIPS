@@ -163,18 +163,23 @@ async function refreshLiveStock(){
   // Capacité, Plan et Stock affichent toujours la même valeur. computeStockData
   // inclut les mouvements du jour de l'inventaire de base (includeStartDate:true)
   // et privilégie le serveur (repli local). Voir js/features/stock-sheet.js.
-  LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,baseKind:'',nbMov:0};
+  LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,baseKind:'',nbMov:0,err:false};
   try{
     const data=await computeStockData();
     (data.rows||[]).forEach(r=>{LIVESTOCK[r.code]=num(r.stock);});
     const m=data.meta||{};
     LIVEMETA={hasBase:!!m.hasBase,baseDate:m.baseDate||null,baseKind:m.baseKind||'',nbMov:m.nbMov||0};
   }catch(e){
-    LIVESTOCK=null;   // repli : stockDispo() retombe sur inventaire courant / ETAT
+    // Lecture serveur incomplete (echec partiel) : pas de stock fiable. stockDispo() retombe
+    // sur l'etat manuel officiel (JAMAIS le brouillon en cours), et on signale la degradation.
+    LIVESTOCK=null; LIVEMETA.err=true;
   }
 }
 /* Note explicative affichée sur Capacité / Plan */
 function liveStockNote(){
+  if(LIVEMETA&&LIVEMETA.err){
+    return '⚠️ <b>Lecture serveur incomplete</b> : stock non fiable, repli sur l’état de stock manuel. Vérifie la connexion puis Actualiser.';
+  }
   if(LIVEMETA&&LIVEMETA.hasBase){
     const src=LIVEMETA.baseKind==='inventory'
       ?('dernier inventaire <b>validé 🔒</b> du <b>'+esc(LIVEMETA.baseDate||'?')+'</b>')
@@ -189,8 +194,9 @@ function liveStockNote(){
 function stockDispo(code){
   if(!code)return 0;
   if(LIVESTOCK&&code in LIVESTOCK)return LIVESTOCK[code];
-  const r=REFS.find(x=>x.code===code);
-  if(r&&ST.c[code]&&ST.c[code].counted)return round2(total(r));
+  // Repli : etat de stock manuel officiel. JAMAIS le brouillon d'inventaire en cours (non
+  // valide, comptage partiel) — sinon un echec serveur partiel (LIVESTOCK=null) ferait
+  // planifier Capacite/Plan sur des chiffres en cours de saisie. Conforme au commentaire ci-dessus.
   const v=ETAT[code];return (v!=null&&v!=='')?num(v):0;
 }
 function catOf(code){const r=REFS.find(x=>x.code===code);return (r&&r.cat)||SEED_CAT[code]||'';}
@@ -224,7 +230,10 @@ async function inkFetchProductions(){
   try{
     const rows=(typeof sipsRecords==='function')?await sipsRecords('production'):[];
     if(rows&&rows.length){
-      list=rows.map(r=>{const p=r.payload||{};return {date:String(p.date||''),blocks:p.blocks||[],order:String(r.validatedAt||p.submittedAt||'')};}).filter(x=>x.blocks.length);
+      // Ordre de FABRICATION = submittedAt (saisie au poste), PAS validatedAt (workflow admin,
+      // peut valider dans le desordre) : sinon 2 productions du meme jour avec changement de
+      // cartouche ferment les cycles dans le mauvais ordre et faussent rendement/encre restante.
+      list=rows.map(r=>{const p=r.payload||{};return {date:String(p.date||''),blocks:p.blocks||[],order:String(p.submittedAt||r.validatedAt||'')};}).filter(x=>x.blocks.length);
     }
   }catch(e){}
   if(!list.length){
