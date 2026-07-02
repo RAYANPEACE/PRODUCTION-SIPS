@@ -42,18 +42,25 @@ function qMPsFromRecipe(produit){
 }
 
 async function qNextLotNum(){
+  // Le max doit inclure le SERVEUR : un operateur qui SOUMET sans garder de fiche locale
+  // n'a aucun batch_ en idb -> sinon le numero reste bloque sur LOT-001.
+  // ponytail: numerotation cote client (plus haut LOT vu partout +1). Deux fiches creees au
+  // meme instant peuvent viser le meme numero ; le dedup lot|date (local + serveur) l'attrape.
+  // Passer a une attribution serveur si les collisions deviennent un vrai probleme.
+  var max=0;
+  function scan(numeroLot){var m=String(numeroLot||'').match(/LOT-(\d+)/i);if(m){var n=parseInt(m[1],10);if(n>max)max=n;}}
+  function scanRec(r){var p=(r&&r.payload)||r||{};if(p&&p.informations)scan(p.informations.numeroLot);}
+  try{(await idbAll()).forEach(function(r){if(String(r.id).indexOf('batch_')===0)scanRec(r);});}catch(e){}
+  (QSERVER_RECORDS||[]).forEach(scanRec);(QSERVER_PENDING||[]).forEach(scanRec);   // deja en memoire (offline)
   try{
-    var all=await idbAll();
-    var max=0;
-    all.forEach(function(r){
-      if(String(r.id).indexOf('batch_')===0&&r.informations&&r.informations.numeroLot){
-        var m=r.informations.numeroLot.match(/LOT-(\d+)/);
-        if(m){var n=parseInt(m[1],10);if(n>max)max=n;}
-      }
-    });
-    var next=max+1;
-    return 'LOT-'+String(next).padStart(3,'0');
-  }catch(e){return 'LOT-001';}
+    var res=await Promise.all([
+      sipsRecords('quality',{timeoutMs:1800}).catch(function(){return [];}),
+      sipsFetch('/api/submissions?status=submitted&type=quality&include=payload',{timeoutMs:1800}).catch(function(){return {submissions:[]};})
+    ]);
+    (res[0]||[]).forEach(scanRec);
+    ((res[1]&&res[1].submissions)||[]).forEach(scanRec);
+  }catch(e){}
+  return 'LOT-'+String(max+1).padStart(3,'0');
 }
 
 /* --- Computed helpers --- */
