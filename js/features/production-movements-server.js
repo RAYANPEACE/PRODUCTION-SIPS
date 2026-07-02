@@ -2,6 +2,8 @@
 function todayStr(){const d=new Date();const p=n=>(n<10?'0':'')+n;return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 function frDate(s){if(!s)return '—';const m=String(s).split('-');return m.length===3?m[2]+'/'+m[1]+'/'+m[0]:s;}
 let PF=null;
+let PFVIEW=null,PF_BACKUP=null;                              // production : fiche serveur vue en lecture seule + brouillon stashe
+let MOVVIEW={sortie:null,entree:null},MOV_BACKUP={sortie:null,entree:null};
 const HIST_MAX=80;
 const HIST_FILTERS={
   production:{mode:'all',value:'',start:'',end:'',article:''},
@@ -253,17 +255,27 @@ function renderProduction(focusBi){
       +'<div class="pf-h" style="margin-top:10px">Photo(s)</div><div class="pb-photos photo-row"></div>'
       +'</div>';
   });
+  const view=!!PFVIEW,sub=PFVIEW;
   app.innerHTML='<div class="prod-wrap">'
-    +'<h2 class="prod-title">Production</h2>'
-    +'<button id="pfGoHist" class="hist-jump">Aller à Historique ⬇</button>'
+    +'<h2 class="prod-title">Production'+(view?' — consultation':'')+'</h2>'
+    +(view?'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Fiche serveur en <b>lecture seule</b>. Valide / Rejette en bas, ou ← Retour.</p>':'<button id="pfGoHist" class="hist-jump">Aller à Historique ⬇</button>')
     +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
-    +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
+    +(view?'':'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>')
     +noteSectionHTML('pfNote',PF.note)
-    +'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>'
-    +'<div class="pf-sec" id="pfHistory"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>'
+    +(view?'<div class="pf-actions"><button id="pfViewBack" class="b-sec">← Retour</button><button id="pfViewValidate" class="b-go">✅ Valider</button><button id="pfViewReject" class="del">🚫 Rejeter</button></div>'
+          :'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>')
+    +(view?'':'<div id="pfPending"></div><div class="pf-sec" id="pfHistory"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>')
     +'</div>';
   const re=()=>renderProduction();
+  if(view){
+    app.querySelectorAll('.pb-card').forEach(card=>{const bi=+card.dataset.bi;const b=PF.blocks[bi];photoRowReadonly(card.querySelector('.pb-photos'),b&&b.photos);});
+    app.querySelectorAll('input,select,textarea,button').forEach(el=>{if(['pfViewBack','pfViewValidate','pfViewReject'].indexOf(el.id)<0)el.disabled=true;});
+    $('#pfViewBack').onclick=prodExitView;
+    $('#pfViewValidate').onclick=async()=>{if(await sipsDecide(sub.id,'validate'))prodExitView();};
+    $('#pfViewReject').onclick=async()=>{if(await sipsDecide(sub.id,'reject'))prodExitView();};
+    window.scrollTo(0,0);return;
+  }
   $('#pfGoHist').onclick=()=>scrollToHistory('pfHistory');
   $('#pfDate').onchange=e=>{PF.date=e.target.value;};
   $('#pfNote').oninput=e=>{PF.note=e.target.value;};
@@ -288,6 +300,7 @@ function renderProduction(focusBi){
   $('#pfSave').onclick=async()=>{if(await prodSave(PF))loadProdHist();};
   $('#pfNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){PF=freshPF();renderProduction();}};
   loadProdHist();
+  sipsLoadPendingInto('pfPending','production',sipsViewProductionForm);
   if(focusBi!=null){const c=app.querySelector('.pb-card[data-bi="'+focusBi+'"]');if(c)setTimeout(()=>scrollCardIntoView(c),60);}
 }
 function migrateProdRec(rec){
@@ -398,13 +411,13 @@ function histMiniLines(rows,cols,max){
 function histProdMini(blocks){
   blocks=(blocks||[]).filter(b=>b&&b.p&&num(b.n)>0);
   if(!blocks.length)return '';
+  // Compact : 1 ligne par produit (nom ×qte, dechets en incise) au lieu de 2 lignes taguees.
   let h='<div class="hist-mini hist-prod-mini">';
-  blocks.slice(0,4).forEach(b=>{
+  blocks.slice(0,6).forEach(b=>{
     const waste=prodBlockWasteText(b);
-    h+='<div><span class="hist-tag">Production</span> '+hlLaity(prodName(b.p))+' - qte <b class="hist-qty">'+esc(histQty(b.n))+'</b></div>';
-    if(waste)h+='<div><span class="hist-tag hist-tag-waste">Dechets</span> '+waste+'</div>';
+    h+='<div class="hist-prow">'+hlLaity(prodName(b.p))+' ×<b class="hist-qty">'+esc(histQty(b.n))+'</b>'+(waste?' <span class="hist-waste">· déchets '+waste+'</span>':'')+'</div>';
   });
-  if(blocks.length>4)h+='<div>+'+(blocks.length-4)+' autre(s)...</div>';
+  if(blocks.length>6)h+='<div>+'+(blocks.length-6)+' autre(s)...</div>';
   return h+'</div>';
 }
 function prodScotchQty(rec){
@@ -680,19 +693,29 @@ function renderMov(kind,focusSel){
   if(!mf.finis||!mf.finis.length)mf.finis=[{a:'',q:''}];
   if(!mf.mp||!mf.mp.length)mf.mp=[{a:'',q:''}];
   const app=$('#app');
+  const view=!!MOVVIEW[kind],sub=MOVVIEW[kind];
   app.innerHTML='<div class="prod-wrap">'
-    +'<h2 class="prod-title">'+c.title+'</h2>'
-    +'<button id="mvGoHist" class="hist-jump">Aller à Historique ⬇</button>'
+    +'<h2 class="prod-title">'+c.title+(view?' — consultation':'')+'</h2>'
+    +(view?'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Fiche serveur en <b>lecture seule</b>. Valide / Rejette en bas, ou ← Retour.</p>':'<button id="mvGoHist" class="hist-jump">Aller à Historique ⬇</button>')
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +movFieldsHTML(kind,mf)
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
     +movSectionHTML(mf,'mp','Matières premières / Échantillons',kind==='entree')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +noteSectionHTML('mvNote',mf.note)
-    +'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>'
-    +'<div class="pf-sec" id="mvHistory"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>'
+    +(view?'<div class="pf-actions"><button id="mvViewBack" class="b-sec">← Retour</button><button id="mvViewValidate" class="b-go">✅ Valider</button><button id="mvViewReject" class="del">🚫 Rejeter</button></div>'
+          :'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>')
+    +(view?'':'<div id="mvPending"></div><div class="pf-sec" id="mvHistory"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>')
     +'</div>';
   const re=()=>renderMov(kind);
+  if(view){
+    photoRowReadonly($('#mvPhotos'),mf.photos);
+    app.querySelectorAll('input,select,textarea,button').forEach(el=>{if(['mvViewBack','mvViewValidate','mvViewReject'].indexOf(el.id)<0)el.disabled=true;});
+    $('#mvViewBack').onclick=()=>movExitView(kind);
+    $('#mvViewValidate').onclick=async()=>{if(await sipsDecide(sub.id,'validate'))movExitView(kind);};
+    $('#mvViewReject').onclick=async()=>{if(await sipsDecide(sub.id,'reject'))movExitView(kind);};
+    window.scrollTo(0,0);return;
+  }
   $('#mvGoHist').onclick=()=>scrollToHistory('mvHistory');
   $('#mvDate').onchange=e=>{mf.date=e.target.value;};
   app.querySelectorAll('.mv-fld').forEach(inp=>{inp.oninput=e=>{mf[e.target.dataset.key]=e.target.value;};});
@@ -716,6 +739,7 @@ function renderMov(kind,focusSel){
   $('#mvSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await movSubmit(kind,mf);}finally{b.disabled=false;b.textContent=t;}};
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
+  sipsLoadPendingInto('mvPending',kind,sipsViewMovementForm);
   refreshMovSuggestions();   // fusionne les suggestions partagées (serveur) dans les datalists
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
 }
@@ -893,37 +917,48 @@ async function sipsReviewDecide(id,kind,targets){
   }
   switchTab('serveur');
 }
-/* Photos d'une soumission (mouvement : payload.photos ; production : photos par bloc). */
-function sipsSubmissionPhotos(s){
-  const p=s.payload||{};
-  let imgs=[];
-  if(s.type==='production'){(migrateProdRec(p)||[]).forEach(b=>{((b&&b.photos)||[]).forEach(ph=>imgs.push(ph));});}
-  else{((p.photos)||[]).forEach(ph=>imgs.push(ph));}
-  imgs=imgs.filter(Boolean);
-  if(!imgs.length)return '';
-  return '<div class="sips-view-photos"><b>Photos ('+imgs.length+')</b><div class="sips-photo-grid">'
-    +imgs.map(ph=>'<img class="sips-photo" src="'+esc(ph)+'">').join('')+'</div></div>';
+/* ---- Consultation LECTURE SEULE d'une soumission serveur DANS son formulaire (prod/entree/sortie).
+   Comme pour Qualite : le "Voir" est sur l'onglet respectif, pas sur Serveur. On charge le payload
+   dans le formulaire reel, en lecture seule, sans ecraser le brouillon en cours (stashe + restaure). */
+function photoRowReadonly(host,arr){
+  if(!host)return;host.innerHTML='';
+  const imgs=(arr||[]).filter(Boolean);
+  if(!imgs.length){host.innerHTML='<span style="font-size:12px;color:var(--mute)">Aucune photo</span>';return;}
+  imgs.forEach(b=>{const th=document.createElement('img');th.className='photo-thumb';th.src=b;th.onclick=()=>openLightbox('Photo',b);host.append(th);});
 }
-/* Vue plein ecran LECTURE SEULE d'une soumission (production/entree/sortie) avant validation :
-   memes details que la liste mais en grand + photos. N'altere PAS le brouillon en cours de saisie
-   (on ne charge rien dans les formulaires editables). Valider/Rejeter delegue a sipsDecide. */
-function sipsOpenSubmissionView(s){
-  if(!s){toast('Soumission introuvable');return;}
-  const p=s.payload||{};
-  const who=p.agent||(s.author&&s.author.name)||'—';
-  const dt=frDate(p.date||(p.informations&&p.informations.dateProduction)||'');
-  const app=$('#app');
-  app.innerHTML='<div class="prod-wrap sips-view">'
-    +'<div class="bil-ctrl"><button id="svBack" class="b-sec">← Retour serveur</button>'
-    +'<button id="svValidate" class="b-go">✅ Valider</button>'
-    +'<button id="svReject" class="del">🚫 Rejeter</button></div>'
-    +'<h2 class="prod-title">'+esc(sipsTypeLabel(s.type))+' — '+esc(who)+' '+esc(dt)+'</h2>'
-    +'<div class="sips-view-body">'+sipsSubmissionDetailHTML(s)+sipsSubmissionPhotos(s)+'</div></div>';
-  $('#svBack').onclick=()=>switchTab('serveur');
-  $('#svValidate').onclick=async()=>{if(await sipsDecide(s.id,'validate'))switchTab('serveur');};
-  $('#svReject').onclick=async()=>{if(await sipsDecide(s.id,'reject'))switchTab('serveur');};
-  app.querySelectorAll('.sips-photo').forEach(im=>{im.onclick=()=>openLightbox('Photo',im.src);});
-  window.scrollTo(0,0);
+function prodPFfromPayload(p){p=p||{};return {date:p.date||'',agent:p.agent||'',blocks:clone(migrateProdRec(p)),note:p.note||''};}
+function movMFfromPayload(p){p=p||{};return {date:p.date||'',agent:p.agent||'',ref:p.ref||'',matricule:p.matricule||'',chauffeur:p.chauffeur||'',dest:p.dest||'',finis:(p.finis&&p.finis.length?clone(p.finis):[{a:'',q:''}]),mp:(p.mp&&p.mp.length?clone(p.mp):[{a:'',q:''}]),photos:clone(p.photos||[]),note:p.note||''};}
+function sipsViewProductionForm(s){
+  if(!s||!s.payload){toast('Fiche introuvable');return;}
+  if(!PFVIEW)PF_BACKUP=PF;                       // stashe le brouillon operateur une seule fois
+  PF=prodPFfromPayload(s.payload);PFVIEW=s;switchTab('prod');
+}
+function prodExitView(){PF=PF_BACKUP||freshPF();PF_BACKUP=null;PFVIEW=null;switchTab('prod');}
+function sipsViewMovementForm(s){
+  if(!s||!s.payload){toast('Fiche introuvable');return;}
+  const kind=s.type;if(kind!=='sortie'&&kind!=='entree')return;
+  if(!MOVVIEW[kind])MOV_BACKUP[kind]=MOVF[kind];
+  MOVF[kind]=movMFfromPayload(s.payload);MOVVIEW[kind]=s;switchTab(kind==='entree'?'entree':'sorties');
+}
+function movExitView(kind){MOVF[kind]=MOV_BACKUP[kind]||freshMov();MOV_BACKUP[kind]=null;MOVVIEW[kind]=null;switchTab(kind==='entree'?'entree':'sorties');}
+/* Liste des soumissions EN ATTENTE (non validees) d'un type, avec bouton Voir. Reservee aux
+   valideurs (onglet Serveur present). Rendue dans le formulaire de l'onglet correspondant. */
+async function sipsLoadPendingInto(hostId,type,onView){
+  const host=$('#'+hostId);if(!host)return;
+  if(!(typeof hasTab==='function'&&hasTab('serveur'))){host.innerHTML='';return;}
+  let rows=[];
+  try{const d=await sipsFetch('/api/submissions?status=submitted&type='+type+'&include=payload',{headers:sipsAdminHeaders()});rows=d.submissions||[];}
+  catch(e){host.innerHTML='';return;}
+  if(!rows.length){host.innerHTML='';return;}
+  let h='<div class="pf-sec"><div class="pf-h" style="color:#9a6500">En attente de validation ('+rows.length+')</div>';
+  rows.forEach((s,idx)=>{
+    const p=s.payload||{};let meta;
+    if(type==='production'){const bl=migrateProdRec(p);meta=(p.agent?esc(p.agent)+' - ':'')+bl.filter(b=>b.p&&num(b.n)>0).length+' produit(s) - '+bl.reduce((a,b)=>a+((b.photos||[]).length),0)+' photo(s)';}
+    else{const nf=(p.finis||[]).filter(x=>x.a&&num(x.q)>0).length,nm=(p.mp||[]).filter(x=>x.a&&num(x.q)>0).length;meta=(p.agent?esc(p.agent)+' - ':'')+esc(p.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+((p.photos||[]).length)+' photo(s)';}
+    h+='<div class="hist-item"><div class="info"><b>'+frDate(p.date)+'</b><span>'+meta+'</span></div><button data-vsub="'+idx+'">Voir</button></div>';
+  });
+  h+='</div>';host.innerHTML=h;
+  host.querySelectorAll('[data-vsub]').forEach(b=>b.onclick=()=>onView(rows[+b.dataset.vsub]));
 }
 function sipsSubmissionHTML(s){
   const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
@@ -931,11 +966,10 @@ function sipsSubmissionHTML(s){
   const summary=sipsPayloadSummary(s.type,s.payload);
   const qVisas=(s.payload&&s.payload.visas)||{};
   const qReady=s.type!=='quality'||!!(qVisas.operateur&&qVisas.operateur.signature&&((qVisas.responsableQualite&&qVisas.responsableQualite.signature)||(qVisas.responsableProd&&qVisas.responsableProd.signature)));
-  const canView=['production','entree','sortie'].indexOf(s.type)>=0;
   const actions=s.status==='submitted'
     ?(s.type==='inventory'
        ?'<button data-act="compare">Comparer au stock (Bilan)</button><button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>'
-       :(canView?'<button data-act="view">Voir la fiche</button>':'')+(qReady?'<button data-act="validate">Valider</button>':'<button disabled title="Signatures obligatoires manquantes">Validation bloquee</button>')+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>')
+       :(qReady?'<button data-act="validate">Valider</button>':'<button disabled title="Signatures obligatoires manquantes">Validation bloquee</button>')+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>')
     :'';
   const hint=s.type==='quality'?'<p class="ref-hint" style="flex-basis:100%;margin:4px 0 0">Ouverture et signature : onglet Qualite, section Fiches serveur a ouvrir / signer.</p>':'';
   return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+actions+hint+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
@@ -1074,7 +1108,7 @@ function bindSyncBox(){
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
   if(!subs||!records)return;   // vue plein ecran (Voir la fiche) : hosts absents, rien a recharger
-  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>{const sub=rows.find(x=>x.id===id);if(b.dataset.act==='compare'){b.onclick=()=>sipsOpenInventoryReview(sub);}else if(b.dataset.act==='view'){b.onclick=()=>sipsOpenSubmissionView(sub);}else{b.onclick=()=>sipsDecide(id,b.dataset.act);}});});}
+  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>{const sub=rows.find(x=>x.id===id);if(b.dataset.act==='compare'){b.onclick=()=>sipsOpenInventoryReview(sub);}else{b.onclick=()=>sipsDecide(id,b.dataset.act);}});});}
   catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi avec un compte admin ou renseigne le PIN serveur.':'')+'</p>';}
   try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=(data.records||[]).slice().sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}

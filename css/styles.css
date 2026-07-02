@@ -159,9 +159,9 @@
   .hist-item.locked{background:#f3f8f4;border-radius:8px}
   .hist-mini{display:grid;gap:2px;margin-top:5px;font-size:12px;color:#3f4f5c;line-height:1.35}
   .hist-mini div{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere}
-  .hist-prod-mini{gap:5px}
-  .hist-tag{display:inline-block;min-width:76px;margin-right:5px;padding:2px 6px;border-radius:6px;background:#eef8f1;color:var(--green);font-size:10px;font-weight:800;text-transform:uppercase;text-align:center}
-  .hist-tag-waste{background:#fff4e4;color:#9a6500}
+  .hist-prod-mini{gap:3px}
+  .hist-prow{overflow-wrap:anywhere;font-size:12px}
+  .hist-waste{color:#9a6500;font-size:11px}
   .hist-filter{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;align-items:center;margin:0 0 10px}
   .hist-filter select,.hist-filter input{height:39px;border:1.5px solid var(--line);border-radius:8px;background:#fbfcfb;padding:0 9px;font-size:13px;box-sizing:border-box;min-width:0}
   .hist-filter .hist-filter-article,.hist-filter .hist-filter-period{grid-column:1/3}
@@ -424,13 +424,6 @@
   .sips-lines>b{font-size:12px;color:var(--steel-d)}
   .sips-line{font-size:12px;border-bottom:1px solid var(--line);padding:6px 0;overflow-wrap:anywhere;line-height:1.4}
   .sips-line span{display:inline;min-width:0}
-  /* Vue plein ecran « Voir la fiche » (soumission serveur en lecture seule) */
-  .sips-view .bil-ctrl{position:sticky;top:0;z-index:2;background:var(--bg,#fff);padding:6px 0}
-  .sips-view-body{margin-top:6px}
-  .sips-view-photos{margin-top:12px}
-  .sips-view-photos>b{font-size:12px;color:var(--steel-d)}
-  .sips-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-top:6px}
-  .sips-photo{width:100%;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer}
   .an-note{font-size:11px;color:var(--mute);margin-top:6px}
   .cmp-sel{display:flex;gap:8px;align-items:center;margin-bottom:10px}
   .cmp-sel select{flex:1;min-width:0;border:1.5px solid var(--line);border-radius:8px;padding:8px;font-size:13px;background:#fbfcfb}
