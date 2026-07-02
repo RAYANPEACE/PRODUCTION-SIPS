@@ -6,7 +6,8 @@ const HIST_MAX=80;
 const HIST_FILTERS={
   production:{mode:'all',value:'',start:'',end:'',article:''},
   sortie:{mode:'all',value:'',start:'',end:'',article:''},
-  entree:{mode:'all',value:'',start:'',end:'',article:''}
+  entree:{mode:'all',value:'',start:'',end:'',article:''},
+  qualite:{mode:'all',value:'',start:'',end:'',article:''}
 };
 function refName(value){
   const r=REFS.find(x=>x.code===value||x.des===value);
@@ -361,7 +362,7 @@ function bindHistFilter(host,key,loader){
 function histArticleHTML(key){
   const f=HIST_FILTERS[key]||HIST_FILTERS.production;
   const opts=rows=>rows.map(r=>'<option value="'+esc(r.code)+'"'+(f.article===r.code?' selected':'')+'>'+laityOpt(r.des)+'</option>').join('');
-  if(key==='production')return '<select class="hist-filter-article"><option value="">Tous produits finis</option>'+opts(finishedProductRefs())+'</select>';
+  if(key==='production'||key==='qualite')return '<select class="hist-filter-article"><option value="">Tous produits finis</option>'+opts(finishedProductRefs())+'</select>';
   return '<select class="hist-filter-article"><option value="">Tous articles</option><optgroup label="Produits finis">'+opts(finishedProductRefs())+'</optgroup><optgroup label="Matieres / emballages / autres">'+opts(nonFinishedRefs())+'</optgroup></select>';
 }
 function histFilterHTML(key){
@@ -380,6 +381,7 @@ function histMatchArticle(row,key,isServer,article){
   if(!article)return true;
   const rec=isServer?(row&&row.payload||{}):row;
   if(key==='production')return migrateProdRec(rec||{}).some(b=>b&&b.p&&productCodeOf(b.p)===article);
+  if(key==='qualite')return productCodeOf((rec&&rec.informations||{}).refProduit)===article;
   return [].concat((rec&&rec.finis)||[],(rec&&rec.mp)||[]).some(x=>x&&x.a&&refCode(x.a)===article);
 }
 function histMiniLines(rows,cols,max){

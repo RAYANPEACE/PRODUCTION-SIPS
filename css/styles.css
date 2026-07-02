@@ -791,6 +791,11 @@
   .q-actions .q-json{background:#23394a;color:#cfe0ee}
   .q-actions .q-import-json{background:#f3f7fc;color:var(--steel-d);border:1.5px solid var(--steel)}
   .q-actions .q-new{background:#eef0ee;color:var(--ink);border:1.5px solid var(--line)}
+  .q-recap{margin:4px 0 12px;padding:10px 12px;border:1.5px solid #cfe0f2;border-radius:9px;background:#f2f7fd}
+  .q-recap-total{font-size:13px;font-weight:700;color:var(--steel-d);margin-bottom:6px}
+  .q-recap-row{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;border-top:1px dashed #d6e4f2}
+  .q-recap-row b{font-family:ui-monospace,monospace;white-space:nowrap}
+  .q-recap-empty{color:var(--mute);font-style:italic;font-size:12px;background:#fbfcfb;border-color:var(--line)}
   .q-hist-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:11px 0;border-bottom:1px solid var(--line)}
   .q-hist-item .info{flex:1;min-width:140px}
   .q-hist-item .info b{font-size:14px}

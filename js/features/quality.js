@@ -22,6 +22,7 @@ var QS_CORRECTION_NOTE='';
 var QSERVER_RECORDS=[];
 var QSERVER_PENDING=[];
 var QSERVER_CORRECTIONS=[];
+var QLOCAL_BATCHES=[];
 var _qSigPads={};
 
 function qIsMP(code){
@@ -400,6 +401,8 @@ async function renderQualite(){
 
   /* History */
   h+='<div id="qHistory" style="margin-top:20px"><h3 style="font-size:14px;font-weight:700;margin-bottom:8px">Historique des fiches</h3>';
+  h+='<div id="qHistFilter"></div>';
+  h+='<div id="qHistRecap"></div>';
   h+='<div id="qHistList"></div></div>';
 
   h+='</div>';
@@ -602,6 +605,22 @@ async function qSubmitServer(){
 }
 
 /* --- History --- */
+/* Recap tonnage : fiches VALIDEES serveur uniquement (choix terrain), sur tout le filtre
+   courant (pas seulement les lignes affichees). Global + detail par produit fini. */
+function qKg(kg){return (typeof fmtq==='function'?fmtq(num(kg)):String(num(kg)))+' kg';}
+function qRecapHTML(recordsF){
+  var recap={},total=0;
+  (recordsF||[]).forEach(function(o){
+    var info=((o.r.payload||{}).informations)||{};
+    var kg=num(info.quantiteProduite);if(kg<=0)return;
+    var code=productCodeOf(info.refProduit)||String(info.refProduit||'?');
+    recap[code]=(recap[code]||0)+kg;total+=kg;
+  });
+  if(!total)return '<div class="q-recap q-recap-empty">Aucune fiche validée serveur pour ce filtre.</div>';
+  var codes=Object.keys(recap).sort(function(a,b){return recap[b]-recap[a];});
+  var rows=codes.map(function(c){return '<div class="q-recap-row"><span>'+hlLaity(recipeProductLabel(c))+'</span><b>'+esc(qKg(recap[c]))+'</b></div>';}).join('');
+  return '<div class="q-recap"><div class="q-recap-total">Tonnage validé serveur : <b>'+esc(qKg(total))+'</b> — '+codes.length+' produit(s)</div>'+rows+'</div>';
+}
 async function qLoadHist(){
   var list=$('#qHistList');if(!list)return;
   try{
@@ -642,10 +661,22 @@ async function qLoadHist(){
       if(String(r.id).indexOf('batch_')!==0)return false;
       return !serverQualityKeys[qQualityKeyFromPayload(r)];
     }).sort(function(a,b){return (b.savedAt||0)-(a.savedAt||0);});
+    QLOCAL_BATCHES=batches;
+    /* Filtres temporel + produit fini (memes composants que Entree/Sortie/Production).
+       Le loader re-execute qLoadHist (re-fetch serveur), comme les autres onglets. */
+    var qf=$('#qHistFilter');
+    if(qf){qf.innerHTML=histFilterHTML('qualite');bindHistFilter(qf,'qualite',qLoadHist);}
+    var QF=HIST_FILTERS.qualite;
+    function qPass(row,isServer){return histMatchDate(histRecDate(row,isServer),QF)&&histMatchArticle(row,'qualite',isServer,QF.article);}
+    var pendingF=QSERVER_PENDING.map(function(s,idx){return {s:s,idx:idx};}).filter(function(o){return qPass(o.s,true);});
+    var corrF=QSERVER_CORRECTIONS.map(function(s,idx){return {s:s,idx:idx};}).filter(function(o){return qPass(o.s,true);});
+    var recordsF=QSERVER_RECORDS.map(function(r,idx){return {r:r,idx:idx};}).filter(function(o){return qPass(o.r,true);});
+    var batchesF=batches.filter(function(b){return qPass(b,false);});
+    var recapEl=$('#qHistRecap');if(recapEl)recapEl.innerHTML=qRecapHTML(recordsF);
     var htm='';
-    if(QSERVER_PENDING.length){
+    if(pendingF.length){
       htm+='<div style="font-size:12px;font-weight:800;color:#9a6500;margin:0 0 6px;text-transform:uppercase">Fiches serveur a ouvrir / signer</div>';
-      QSERVER_PENDING.forEach(function(s,idx){
+      pendingF.forEach(function(o){var s=o.s,idx=o.idx;
         var b=s.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=qQualitySignedCount(visas);
         var mine=typeof sipsNeedsMyQualitySignature==='function'
@@ -658,9 +689,9 @@ async function qLoadHist(){
         htm+='</div>';
       });
     }
-    if(QSERVER_CORRECTIONS.length){
+    if(corrF.length){
       htm+='<div style="font-size:12px;font-weight:800;color:var(--red);margin:10px 0 6px;text-transform:uppercase">Corrections demandees</div>';
-      QSERVER_CORRECTIONS.forEach(function(s,idx){
+      corrF.forEach(function(o){var s=o.s,idx=o.idx;
         var b=s.payload||{},info=b.informations||{};
         htm+='<div class="q-hist-item">';
         htm+='<div class="info"><b>'+hlLaity(recipeProductLabel(info.refProduit||'---'))+'</b>';
@@ -669,9 +700,9 @@ async function qLoadHist(){
         htm+='</div>';
       });
     }
-    if(QSERVER_RECORDS.length){
+    if(recordsF.length){
       htm+='<div style="font-size:12px;font-weight:800;color:var(--green);margin:0 0 6px;text-transform:uppercase">Validees serveur</div>';
-      QSERVER_RECORDS.forEach(function(r,idx){
+      recordsF.forEach(function(o){var r=o.r,idx=o.idx;
         var b=r.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=qQualitySignedCount(visas);
         htm+='<div class="q-hist-item">';
@@ -681,10 +712,10 @@ async function qLoadHist(){
         htm+='</div>';
       });
     }
-    if(batches.length){
-      htm+='<div style="font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(QSERVER_RECORDS.length?'10px':'0')+' 0 6px;text-transform:uppercase">Locales sur cet appareil</div>';
+    if(batchesF.length){
+      htm+='<div style="font-size:12px;font-weight:800;color:var(--steel-d);margin:'+(recordsF.length?'10px':'0')+' 0 6px;text-transform:uppercase">Locales sur cet appareil</div>';
     }
-    batches.forEach(function(b){
+    batchesF.forEach(function(b){
       var info=b.informations||{};
       var visas=b.visas||{};
       var sigs=qQualitySignedCount(visas);
@@ -695,7 +726,7 @@ async function qLoadHist(){
       htm+='<button class="del" data-qdel="'+esc(b.id)+'">Suppr</button>';
       htm+='</div>';
     });
-    list.innerHTML=htm||'<p style="color:var(--mute);font-size:13px">Aucune fiche enregistree.</p>';
+    list.innerHTML=htm||'<p style="color:var(--mute);font-size:13px">Aucune fiche pour ce filtre.</p>';
     qBindHistButtons(list);
   }catch(e){list.innerHTML='<p style="color:var(--red)">Erreur chargement</p>';}
 }
