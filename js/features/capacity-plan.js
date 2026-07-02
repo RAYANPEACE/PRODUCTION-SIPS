@@ -513,7 +513,7 @@ function renderPlan(){
   let h='<div class="plan-wrap">';
   h+='<div class="bil-src">'+liveStockNote()+'</div>';
   h+='<p class="ref-hint">Pour chaque produit : une <b>priorité</b> (obligatoire pour l\u2019activer), puis <b>soit</b> une <b>quantité</b> ferme <b>soit</b> une <b>part %</b> du reste. Les quantités fermes sont produites d\u2019abord (par priorité), puis le stock restant est partagé au prorata du tonnage selon les % (somme ≤ 100 %).</p>';
-  h+='<div class="plan-pick"><select id="planPick"><option value="">Choisir un produit fini</option>'+addable.map(p=>'<option value="'+esc(p)+'"'+(isLaity(recipeProductLabel(p))?' class="laity"':'')+'>'+hlLaity(recipeProductLabel(p))+'</option>').join('')+'</select><button id="planAdd" type="button">+ Ajouter</button></div>';
+  h+='<div class="plan-pick"><select id="planPick"><option value="">Choisir un produit fini</option>'+addable.map(p=>'<option value="'+esc(p)+'">'+laityOpt(recipeProductLabel(p))+'</option>').join('')+'</select><button id="planAdd" type="button">+ Ajouter</button></div>';
   h+='<button id="planReset" class="plan-reset" type="button">Repartir a zero</button>';
   h+='<div class="plan-rows">';
   if(!rows.length)h+='<p class="hist-empty">Aucun produit dans ce plan. Choisis un produit fini puis ajoute-le.</p>';

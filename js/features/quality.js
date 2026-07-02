@@ -296,7 +296,7 @@ async function renderQualite(){
   h+='<option value="">— Choisir —</option>';
   var curProd=currentRecipeProductCode(QS.informations.refProduit);if(curProd&&curProd!==QS.informations.refProduit)QS.informations.refProduit=curProd;
   var prods=recipeKeys();
-  prods.forEach(function(p){h+='<option value="'+esc(p)+'"'+(productCodeOf(QS.informations.refProduit)===p?' selected':'')+(isLaity(recipeProductLabel(p))?' class="laity"':'')+'>'+esc(recipeProductLabel(p))+'</option>';});
+  prods.forEach(function(p){h+='<option value="'+esc(p)+'"'+(productCodeOf(QS.informations.refProduit)===p?' selected':'')+'>'+laityOpt(recipeProductLabel(p))+'</option>';});
   h+='</select></div>';
   h+='<div class="q-field"><label>Date de production</label><input type="date" id="qDateProd" value="'+esc(QS.informations.dateProduction)+'" onchange="QS.informations.dateProduction=this.value"></div>';
   h+='<div class="q-field"><label>Heure debut<small>Auto (1er batch)</small></label><input type="text" id="qHDeb" value="'+esc(QS.informations.heureDebut)+'" readonly></div>';

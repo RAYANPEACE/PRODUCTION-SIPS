@@ -233,7 +233,7 @@ function renderProduction(focusBi){
   if(!PF.agent&&typeof USR!=='undefined'&&USR.nom)PF.agent=USR.nom;
   if(!PF.blocks||!PF.blocks.length)PF.blocks=[freshBlock()];
   const app=$('#app');
-  const finiOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}${isLaity(recipeProductLabel(p))?' class="laity"':''}>${esc(recipeProductLabel(p))}</option>`).join('');
+  const finiOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}>${laityOpt(recipeProductLabel(p))}</option>`).join('');
   let blocksH='';
   PF.blocks.forEach((b,bi)=>{
     const current=currentRecipeProductCode(b.p);if(current&&current!==b.p)b.p=current;
@@ -360,7 +360,7 @@ function bindHistFilter(host,key,loader){
 }
 function histArticleHTML(key){
   const f=HIST_FILTERS[key]||HIST_FILTERS.production;
-  const opts=rows=>rows.map(r=>'<option value="'+esc(r.code)+'"'+(f.article===r.code?' selected':'')+(isLaity(r.des)?' class="laity"':'')+'>'+esc(r.des)+'</option>').join('');
+  const opts=rows=>rows.map(r=>'<option value="'+esc(r.code)+'"'+(f.article===r.code?' selected':'')+'>'+laityOpt(r.des)+'</option>').join('');
   if(key==='production')return '<select class="hist-filter-article"><option value="">Tous produits finis</option>'+opts(finishedProductRefs())+'</select>';
   return '<select class="hist-filter-article"><option value="">Tous articles</option><optgroup label="Produits finis">'+opts(finishedProductRefs())+'</optgroup><optgroup label="Matieres / emballages / autres">'+opts(nonFinishedRefs())+'</optgroup></select>';
 }
@@ -637,7 +637,7 @@ async function movSubmit(kind,mf){
 }
 function movSectionHTML(mf,sec,title,withExp){
   const arts=movArts(sec);
-  const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}${isLaity(r.des)?' class="laity"':''}>${esc(r.des)}</option>`).join('');
+  const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}>${laityOpt(r.des)}</option>`).join('');
   const expCell=x=>withExp?`<input class="mv-exp" type="date" title="date de péremption" value="${esc(x.exp||'')}">`:'';
   let rows=mf[sec].map((x,i)=>`<div class="pf-row${withExp?' pf-row-exp':''}" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}">${expCell(x)}<button class="mv-del" title="retirer">✕</button></div>`).join('');
   const hint=withExp?'<small style="display:block;font-size:11px;color:var(--mute);margin:2px 0 6px">Renseigne la date de péremption de chaque matière (suivi FEFO).</small>':'';
