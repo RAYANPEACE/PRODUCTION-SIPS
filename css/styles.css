@@ -801,3 +801,7 @@
   /* Produit LAITY en bleu : le distinguer de DIAMO partout dans l'UI */
   .laity{color:#1565c0;font-weight:700}
   option.laity{color:#1565c0;font-weight:700}
+  /* Champs évolutifs des mouvements (matricule, chauffeur, destinataire/provenance) */
+  .mv-flds{display:grid;gap:8px}
+  .mv-fld-lbl{display:flex;flex-direction:column;gap:3px;font-size:12px;font-weight:600;color:var(--mute)}
+  .mv-fld{width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb}

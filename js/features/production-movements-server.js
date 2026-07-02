@@ -487,11 +487,38 @@ async function loadProdHist(){
   try{const serverRows=await sipsRecords('production');if($('#pfHist')===host)renderProdHist(host,recs,serverRows);}catch(e){}
 }
 const MOVCFG={
- sortie:{title:'Sorties',word:'SORTIE',icon:'🚚',refLabel:'Véhicule / plaque / destinataire',refPlace:'ex. camion 1234-AB / labo',pfx:'sortie_',saved:'Sortie enregistrée',hint:'Enregistre une sortie : produits finis expédiés et/ou matières & échantillons (les deux possibles). Date vide = aujourd\u2019hui. Photo véhicule/plaque depuis la galerie.'},
- entree:{title:'Entrées',word:'ENTRÉE',icon:'📦',refLabel:'Fournisseur / référence / BL',refPlace:'ex. fournisseur, n° BL, container',pfx:'entree_',saved:'Entrée enregistrée',hint:'Enregistre une entrée : réceptions de matières premières et/ou retours de produits finis. Date vide = aujourd\u2019hui. Photo si nécessaire.'}
+ sortie:{title:'Sorties',word:'SORTIE',icon:'🚚',refLabel:'Véhicule / plaque / destinataire',refPlace:'ex. camion 1234-AB / labo',pfx:'sortie_',saved:'Sortie enregistrée',hint:'Enregistre une sortie : produits finis expédiés et/ou matières & échantillons (les deux possibles). Date vide = aujourd\u2019hui. Photo véhicule/plaque depuis la galerie.',
+   fieldsTitle:'Transport & destinataire',fields:[
+     {key:'matricule',label:'Matricule véhicule',sug:'lep_sug_matricule',place:'ex. 1234 TU 56'},
+     {key:'chauffeur',label:'Chauffeur',sug:'lep_sug_chauffeur',place:'ex. nom du chauffeur'},
+     {key:'dest',label:'Destinataire',sug:'lep_sug_dest',place:'ex. client / labo'}
+   ]},
+ entree:{title:'Entrées',word:'ENTRÉE',icon:'📦',refLabel:'Fournisseur / référence / BL',refPlace:'ex. fournisseur, n° BL, container',pfx:'entree_',saved:'Entrée enregistrée',hint:'Enregistre une entrée : réceptions de matières premières et/ou retours de produits finis. Date vide = aujourd\u2019hui. Photo si nécessaire.',
+   fieldsTitle:'Transport & provenance',fields:[
+     {key:'matricule',label:'Matricule véhicule',sug:'lep_sug_matricule',place:'ex. 1234 TU 56'},
+     {key:'chauffeur',label:'Chauffeur',sug:'lep_sug_chauffeur',place:'ex. nom du chauffeur'},
+     {key:'dest',label:'Provenance',sug:'lep_sug_provenance',place:'ex. fournisseur'}
+   ]}
 };
 let MOVF={sortie:null,entree:null};
-function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
+function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',matricule:'',chauffeur:'',dest:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
+/* Suggestions évolutives (datalist) persistées en localStorage : une valeur saisie puis
+   validée revient dans les suggestions de la prochaine saisie (matricule, chauffeur, etc.). */
+function sugGet(key){const v=lsGet(key,[]);return Array.isArray(v)?v:[];}
+function sugAdd(key,val){val=String(val==null?'':val).trim();if(!val)return;let list=sugGet(key).filter(v=>v!==val);list.unshift(val);if(list.length>50)list=list.slice(0,50);lsSet(key,list);}
+function movRefCombined(mf){return [mf.matricule,mf.chauffeur,mf.dest].map(v=>String(v||'').trim()).filter(Boolean).join(' · ');}
+function movRememberSuggestions(kind,mf){(MOVCFG[kind].fields||[]).forEach(f=>sugAdd(f.sug,mf[f.key]));}
+function movFieldsHTML(kind,mf){
+  const c=MOVCFG[kind];
+  const flds=(c.fields||[]).map(f=>{
+    const dlId='dl_'+kind+'_'+f.key;
+    const opts=sugGet(f.sug).map(v=>'<option value="'+esc(v)+'"></option>').join('');
+    return '<label class="mv-fld-lbl">'+esc(f.label)
+      +'<input class="mv-fld" data-key="'+f.key+'" list="'+dlId+'" value="'+esc(mf[f.key]||'')+'" placeholder="'+esc(f.place||'')+'" autocomplete="off">'
+      +'<datalist id="'+dlId+'">'+opts+'</datalist></label>';
+  }).join('');
+  return '<div class="pf-sec"><div class="pf-h">'+esc(c.fieldsTitle||c.refLabel)+'</div><div class="mv-flds">'+flds+'</div></div>';
+}
 function movArts(catKind){return catKind==='finis'?finishedProductRefs():nonFinishedRefs();}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
 function movValidLines(rows){return (rows||[]).filter(x=>x&&x.a&&num(x.q)>0);}
@@ -526,18 +553,19 @@ async function movSave(kind,mf){
   if(!movPeremptionGuard(kind,mf))return false;
   const c=MOVCFG[kind];
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
-  const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(lines.finis),mp:clone(lines.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
+  const rec={id:c.pfx+Date.now(),kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:movRefCombined(mf),matricule:mf.matricule||'',chauffeur:mf.chauffeur||'',dest:mf.dest||'',finis:clone(lines.finis),mp:clone(lines.mp),photos:clone(mf.photos||[]),note:mf.note,savedAt:Date.now()};
   rec._sig=localSig(kind,{date:rec.date,ref:rec.ref,finis:rec.finis,mp:rec.mp,note:rec.note||''});
   if(await findLocalDuplicate(kind,rec._sig,rec.id)){toast(c.word+' deja enregistree dans l historique local');return false;}
-  try{await idbPut(rec);toast(c.saved);return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
+  try{await idbPut(rec);movRememberSuggestions(kind,mf);toast(c.saved);return true;}catch(e){toast('Échec de l\u2019enregistrement');return false;}
 }
 async function movSubmit(kind,mf){
   const lines=movInputGuard(kind,mf);
   if(!lines)return false;
   if(!movPeremptionGuard(kind,mf))return false;
   if(!mf.agent&&typeof USR!=='undefined'&&USR.nom)mf.agent=USR.nom;
-  const payload={kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:mf.ref||'',finis:clone(lines.finis),mp:clone(lines.mp),photos:clone(mf.photos||[]),note:mf.note||'',submittedAt:new Date().toISOString()};
+  const payload={kind:kind,date:mf.date||todayStr(),agent:mf.agent||'',ref:movRefCombined(mf),matricule:mf.matricule||'',chauffeur:mf.chauffeur||'',dest:mf.dest||'',finis:clone(lines.finis),mp:clone(lines.mp),photos:clone(mf.photos||[]),note:mf.note||'',submittedAt:new Date().toISOString()};
   await sipsSubmit(kind,payload,MOVCFG[kind].word+' '+(payload.date||''));
+  movRememberSuggestions(kind,mf);
   return true;
 }
 function movSectionHTML(mf,sec,title,withExp){
@@ -560,7 +588,7 @@ function renderMov(kind,focusSel){
     +'<h2 class="prod-title">'+c.title+'</h2>'
     +'<button id="mvGoHist" class="hist-jump">Historique</button>'
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
-    +'<div class="pf-sec"><div class="pf-h">'+c.refLabel+'</div><input id="mvRef" placeholder="'+esc(c.refPlace)+'" value="'+esc(mf.ref)+'" style="width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb"></div>'
+    +movFieldsHTML(kind,mf)
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
     +movSectionHTML(mf,'mp','Matières premières / Échantillons',kind==='entree')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
@@ -571,7 +599,7 @@ function renderMov(kind,focusSel){
   const re=()=>renderMov(kind);
   $('#mvGoHist').onclick=()=>scrollToHistory('mvHistory');
   $('#mvDate').onchange=e=>{mf.date=e.target.value;};
-  $('#mvRef').oninput=e=>{mf.ref=e.target.value;};
+  app.querySelectorAll('.mv-fld').forEach(inp=>{inp.oninput=e=>{mf[e.target.dataset.key]=e.target.value;};});
   $('#mvNote').oninput=e=>{mf.note=e.target.value;};
   app.querySelectorAll('.pf-row[data-sec]').forEach(row=>{const sec=row.dataset.sec;const i=+row.dataset.li;
     row.querySelector('.mv-a').onchange=e=>{mf[sec][i].a=e.target.value;};
@@ -602,7 +630,7 @@ function renderMovHist(host,kind,recs,serverRows){
       const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
       const it=document.createElement('div');it.className='hist-item locked';
       it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+esc(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span>'+histMovMini(rec)+'</div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',matricule:rec.matricule||'',chauffeur:rec.chauffeur||'',dest:rec.dest||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
       it.append(open);host.append(it);
     });
     if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' ligne(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
@@ -615,7 +643,7 @@ function renderMovHist(host,kind,recs,serverRows){
     const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
     const it=document.createElement('div');it.className='hist-item';
     it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>'+(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span>'+histMovMini(rec)+'</div>';
-    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
+    const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',matricule:rec.matricule||'',chauffeur:rec.chauffeur||'',dest:rec.dest||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
     const del=document.createElement('button');del.className='del';del.textContent='Suppr.';del.onclick=async()=>{if(confirm('Supprimer ?')){await idbDel(rec.id);loadMovHist(kind);}};
     it.append(open,del);host.append(it);
   });
