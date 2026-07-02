@@ -3,7 +3,7 @@ const SEED_PLAN={"DIAMO LAIT 5KG":{prio:1,objectif:207,part:''},"DIAMO LAIT 20G 
 let PLAN=lsGet('lep_plan',null); if(PLAN===null){PLAN=clone(SEED_PLAN);lsSet('lep_plan',PLAN);}
 const SEED_ARRETS=[{lbl:'Démarrage',min:30,freq:'once'},{lbl:'Changement de bobine',min:30,freq:'parprod'},{lbl:'Fin de production',min:30,freq:'once'}];
 const SEED_MACHINES=[
- {id:'m20',nom:'Machine 20 g',pistes:6,cadence:40,arrets:clone(SEED_ARRETS),prods:[{p:'DIAMO LAIT 20G X100',sachetsUb:100,debit:''},{p:'DIAMO CAFE AU LAIT 30G X 50',sachetsUb:50,debit:''},{p:'CARTON LAITY 20G',sachetsUb:100,debit:''}]},
+ {id:'m20',nom:'Machine 20 g',pistes:6,cadence:40,encre:true,arrets:clone(SEED_ARRETS),prods:[{p:'DIAMO LAIT 20G X100',sachetsUb:100,debit:''},{p:'DIAMO CAFE AU LAIT 30G X 50',sachetsUb:50,debit:''},{p:'CARTON LAITY 20G',sachetsUb:100,debit:''}]},
  {id:'m400',nom:'Machine 400 g',pistes:1,cadence:30,arrets:clone(SEED_ARRETS),prods:[{p:'DIAMO LAIT 400G X 10',sachetsUb:10,debit:''}]},
  {id:'msac',nom:'Machine sacs (5 / 10 kg)',pistes:'',cadence:'',arrets:clone(SEED_ARRETS),prods:[{p:'DIAMO LAIT 5KG',sachetsUb:'',debit:30},{p:'DIAMO LAIT 10KG',sachetsUb:'',debit:18}]}
 ];
@@ -12,6 +12,7 @@ let MACHINES_MIGRATED=false;
 MACHINES.forEach(m=>{
   if(!Array.isArray(m.arrets))m.arrets=clone(SEED_ARRETS);
   if(!m.mode)m.mode=num(m.cadence)>0?'sachets':'direct';
+  if(m.id==='m20'&&m.encre===undefined){m.encre=true;MACHINES_MIGRATED=true;}
   if(m.id==='m400'&&m.mode==='sachets'){
     if(!(num(m.pistes)>0)){m.pistes=1;MACHINES_MIGRATED=true;}
     if(!(num(m.cadence)>0)){m.cadence=30;MACHINES_MIGRATED=true;}
@@ -22,6 +23,10 @@ if(MACHINES_MIGRATED)lsSet('lep_machines',MACHINES);
 let PRODCFG=lsGet('lep_prodcfg',{heuresQuart:8,quartsJour:1,parallele:false});
 function saveMachines(push){lsSet('lep_machines',MACHINES);if(push!==false&&typeof scheduleReferentialsPush==='function')scheduleReferentialsPush();}
 function machineForProd(prod){const code=productCodeOf(prod);for(const m of MACHINES){const e=(m.prods||[]).find(x=>productCodeOf(x.p)===code);if(e)return {m:m,e:e};}return null;}
+/* Encre : un produit « utilise de l'encre » s'il est fabriqué par une machine marquée encre. */
+function prodUsesInk(prod){const f=machineForProd(prod);return !!(f&&f.m&&f.m.encre);}
+/* Sachets par carton (u.b.) d'un produit selon la config machine (100 pour 20g/laity, 50 café). */
+function prodSachetsPerCarton(prod){const f=machineForProd(prod);return f?num(f.e.sachetsUb):0;}
 function prodDebit(prod){
   const f=machineForProd(prod);if(!f)return null;
   const calc=(num(f.m.pistes)>0&&num(f.m.cadence)>0&&num(f.e.sachetsUb)>0)?num(f.m.pistes)*num(f.m.cadence)*60/num(f.e.sachetsUb):0;
@@ -192,6 +197,110 @@ function catOf(code){const r=REFS.find(x=>x.code===code);return (r&&r.cat)||SEED
 function poidsUnite(prod){return recipeForProduct(prod).reduce((s,m)=>s+(catOf(m.code)==='mp'?num(m.qte):0),0);}
 function matNom(m){return m.des||m.code||'?';}
 
+/* ====== ENCRE / CARTOUCHES (machine à encre, ex. 6 pistes) ======
+   Un « cycle de cartouches » = période entre deux changements. On compte en SACHETS
+   (chapelets) : sachets = cartons × sachets/carton + déchets film convertis en sachets.
+   Le champ inkBefore d'un bloc coupe la production : cartons avant → cycle qui se ferme,
+   cartons après → nouveau cycle ; les déchets de ce bloc sont répartis au prorata.
+   Rendement appris = moyenne des cycles COMPLETS (entre 2 changements) ; le segment initial
+   (cartouches déjà entamées) et le cycle en cours sont partiels et exclus de la moyenne. */
+let INKDATA=null;   // résultat de computeInkCycles(), ou null si non calculé
+function ingrIsFilm(m){
+  const r=REFS.find(x=>x.code===(m&&m.code));const cat=(r&&r.cat)||'';
+  const txt=String(((m&&m.des)||'')+' '+((m&&m.code)||'')).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
+  return cat==='film'||txt.indexOf('FILM')>=0;
+}
+function prodFilmPerCarton(prod){return recipeForProduct(prod).reduce((s,m)=>s+(ingrIsFilm(m)?num(m.qte):0),0);}
+/* Sachets imprimés par un bloc de production (cartons + déchets film convertis). */
+function inkBlockSachets(b){
+  const spc=prodSachetsPerCarton(b.p);const cartons=num(b.n);
+  const fpc=prodFilmPerCarton(b.p);
+  const wasteSachets=fpc>0?(num(b.w_film)/fpc)*spc:0;
+  return {cartons:cartons,spc:spc,prod:cartons*spc,waste:wasteSachets,total:cartons*spc+wasteSachets};
+}
+/* Récupère les productions (serveur prioritaire, repli local), triées dans l'ordre de fabrication. */
+async function inkFetchProductions(){
+  let list=[];
+  try{
+    const rows=(typeof sipsRecords==='function')?await sipsRecords('production'):[];
+    if(rows&&rows.length){
+      list=rows.map(r=>{const p=r.payload||{};return {date:String(p.date||''),blocks:p.blocks||[],order:String(r.validatedAt||p.submittedAt||'')};}).filter(x=>x.blocks.length);
+    }
+  }catch(e){}
+  if(!list.length){
+    try{
+      const recs=(await idbAll()).filter(r=>String(r.id).indexOf('prod_')===0);
+      list=recs.map(r=>({date:String(r.date||''),blocks:r.blocks||[],order:r.savedAt||0})).filter(x=>x.blocks.length);
+    }catch(e){}
+  }
+  return list.sort((a,b)=>String(a.date).localeCompare(String(b.date))||(a.order>b.order?1:a.order<b.order?-1:0));
+}
+/* Construit les cycles de cartouches à partir des productions ordonnées. */
+async function computeInkCycles(){
+  const prods=await inkFetchProductions();
+  let acc=0;                 // sachets du cycle en cours
+  let changes=0;             // nb de changements rencontrés
+  let lastChangeDate=null;   // date du dernier changement (début du cycle en cours)
+  let firstProdDate=null;
+  const fullCycles=[];       // cycles complets (entre 2 changements) : {total,startDate,endDate}
+  let hasInk=false;
+  prods.forEach(p=>{
+    (p.blocks||[]).forEach(b=>{
+      if(!b||!b.p||!prodUsesInk(b.p)||num(b.n)<=0)return;
+      hasInk=true;if(!firstProdDate)firstProdDate=p.date;
+      const s=inkBlockSachets(b);
+      if(b.inkChange){
+        const before=Math.max(0,Math.min(num(b.inkBefore),s.cartons));
+        const frac=s.cartons>0?before/s.cartons:0;
+        const beforeSachets=before*s.spc+s.waste*frac;
+        const afterSachets=(s.cartons-before)*s.spc+s.waste*(1-frac);
+        const closeTotal=acc+beforeSachets;
+        if(changes>0)fullCycles.push({total:closeTotal,startDate:lastChangeDate,endDate:p.date});
+        // le 1er changement clôt un segment partiel (cartouches non neuves au départ) : ignoré
+        changes++;lastChangeDate=p.date;acc=afterSachets;
+      }else{
+        acc+=s.total;
+      }
+    });
+  });
+  const totals=fullCycles.map(c=>c.total);
+  const avgYield=totals.length?totals.reduce((a,b)=>a+b,0)/totals.length:0;
+  return {
+    hasInk:hasInk,
+    nCycles:totals.length,
+    avgYield:avgYield,
+    fullCycles:fullCycles,
+    current:{sachets:acc,since:lastChangeDate||firstProdDate||null,hasChange:changes>0}
+  };
+}
+async function refreshInk(){try{INKDATA=await computeInkCycles();}catch(e){INKDATA=null;}}
+/* Produits qui utilisent de l'encre (pour l'affichage par référence). */
+function inkProducts(){return recipeKeys().filter(p=>prodUsesInk(p));}
+/* Bloc indicatif encre pour l'onglet Capacité. */
+function inkCapHTML(){
+  const d=INKDATA;
+  if(!d||!d.hasInk)return '';
+  let h='<div class="ink-cap"><h3>🖊️ Encre / cartouches (indicatif)</h3>';
+  if(d.nCycles<1){
+    h+='<div class="ink-muted">En apprentissage : aucun cycle complet enregistré. Renseigne un « changement de cartouches » à chaque remplacement (dans Production) pour estimer le rendement.</div>';
+    if(d.current&&d.current.sachets>0)h+='<div class="ink-line">Cycle en cours depuis <b>'+esc(frDate(d.current.since)||'?')+'</b> : ~<b>'+fmtq(Math.round(d.current.sachets))+'</b> sachets imprimés.</div>';
+    return h+'</div>';
+  }
+  const avg=d.avgYield;
+  h+='<div class="ink-line">Rendement moyen appris : ~<b>'+fmtq(Math.round(avg))+'</b> sachets / jeu de cartouches <span class="ink-muted">('+d.nCycles+' cycle'+(d.nCycles>1?'s':'')+' complet'+(d.nCycles>1?'s':'')+')</span></div>';
+  const printed=d.current?d.current.sachets:0;
+  const remain=Math.max(0,avg-printed);
+  h+='<div class="ink-line">Cycle en cours depuis <b>'+esc(frDate(d.current.since)||'?')+'</b> : ~<b>'+fmtq(Math.round(printed))+'</b> sachets imprimés · restant espéré ~<b>'+fmtq(Math.round(remain))+'</b> sachets avant le prochain changement.</div>';
+  h+='<div class="ink-muted" style="margin:6px 0 2px">Par produit (jeu neuf → restant du cycle en cours) :</div>';
+  inkProducts().forEach(p=>{
+    const spc=prodSachetsPerCarton(p);if(!(spc>0))return;
+    const maxCartons=Math.floor(avg/spc);
+    const remainCartons=Math.floor(remain/spc);
+    h+='<div class="ink-prod"><span>'+hlLaity(recipeProductLabel(p))+'</span><b>'+fmtq(maxCartons)+' cartons/jeu · reste ~'+fmtq(remainCartons)+'</b></div>';
+  });
+  return h+'</div>';
+}
+
 /* ---------- CAPACITÉ ---------- */
 function computeCapaciteFromStock(stockMap){
   return recipeKeys().map(prod=>{
@@ -215,6 +324,7 @@ function renderCapacite(){
   let h='<div class="cap-wrap">';
   h+='<p class="ref-hint">Production possible par produit avec le <b>stock disponible</b>. Calcul autonome par produit : non cumulable (matières partagées).</p>';
   h+='<div class="bil-src">'+liveStockNote()+'</div>';
+  h+=inkCapHTML();
   h+='<button id="capPDF" class="bil-print" style="width:100%;margin:4px 0 12px">📄 Exporter PDF (capacité & stock)</button>';
   res.forEach(p=>{
     const capN=p.cap==null?0:Math.floor(p.cap);

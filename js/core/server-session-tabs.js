@@ -676,6 +676,7 @@ async function switchTab(id){
   const fm=$('#footMain');if(fm)fm.style.display=isC?'':'none';
   // Capacité & Plan : stock « vivant » = dernier inventaire + flux depuis sa date (calcul async une fois à l'entrée)
   if(id==='capacite'||id==='plan'){try{await refreshLiveStock();}catch(e){}}
+  if(id==='capacite'&&typeof refreshInk==='function'){try{await refreshInk();}catch(e){}}
   if(isC){render();}
   else if(id==='accueil'){renderAccueil();}
   else if(id==='ref'){renderRef();}
@@ -913,6 +914,7 @@ function renderMachines(body){
     });
     const modeSel='<div class="mach-mode"><label>Cadence définie par</label><select class="mc-mode"><option value="sachets"'+(hasCad?' selected':'')+'>Pistes × sachets/min (calculé)</option><option value="direct"'+(!hasCad?' selected':'')+'>Débit direct par produit</option></select></div>';
     h+='<div class="mach-card" data-mi="'+mi+'"><div class="mach-h"><input class="mc-nom" value="'+esc(m.nom||'')+'" placeholder="nom de la machine"><button class="mc-del" title="supprimer">🗑</button></div>'
+      +'<label class="mc-encre-lbl"><input type="checkbox" class="mc-encre"'+(m.encre?' checked':'')+'> Utilise de l’encre (suivi cartouches)</label>'
       +modeSel
       +(hasCad?'<div class="mach-cfg2"><label>Pistes<input class="mc-pi" inputmode="decimal" value="'+esc(m.pistes)+'"></label><label>Sachets/min<input class="mc-ca" inputmode="decimal" value="'+esc(m.cadence)+'"></label></div>':'')
       +'<div class="mach-prods">'+prows+'<button class="mp-add">+ produit</button></div>'
@@ -928,6 +930,7 @@ function renderMachines(body){
     const mi=+card.dataset.mi;const m=MACHINES[mi];
     card.querySelector('.mc-nom').oninput=e=>{m.nom=e.target.value;save();};
     card.querySelector('.mc-mode').onchange=e=>{m.mode=e.target.value;save();renderRef();};
+    const enEl=card.querySelector('.mc-encre');if(enEl)enEl.onchange=e=>{m.encre=e.target.checked;save();};
     const piEl=card.querySelector('.mc-pi');if(piEl){piEl.oninput=e=>{m.pistes=e.target.value;save();};piEl.onchange=()=>renderRef();}
     const caEl=card.querySelector('.mc-ca');if(caEl){caEl.oninput=e=>{m.cadence=e.target.value;save();};caEl.onchange=()=>renderRef();}
     card.querySelector('.mc-del').onclick=()=>{if(confirm('Supprimer cette machine ?')){MACHINES.splice(mi,1);save();renderRef();}};

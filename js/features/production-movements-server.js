@@ -33,7 +33,7 @@ function histWeekRange(v){
   return [s,d.toISOString().slice(0,10)];
 }
 function embType(p){const a=(typeof recipeProductRef==='function'&&recipeProductRef(p))||REFS.find(x=>x.code===p||x.des===p);if(a&&(a.m==='sac'||a.m==='vrac'))return 'sac';return 'carton';}
-function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',scotch:'',bobines:[],photos:[]};}
+function freshBlock(){return {p:'',n:'',w_emb:'',w_film:'',w_mel:'',scotch:'',bobines:[],inkChange:false,inkBefore:'',photos:[]};}
 function freshPF(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),blocks:[freshBlock()],note:''};}
 function pfBlockHasInput(b){return (b.p&&num(b.n)>0)||num(b.w_emb)>0||num(b.w_film)>0||num(b.w_mel)>0||num(b.scotch)>0||prodBobKg(b)>0;}
 function pfCompleteBlocks(pf){return (pf.blocks||[]).filter(b=>b&&b.p&&num(b.n)>0);}
@@ -95,7 +95,17 @@ function prodHasScotch(prod){return !!prod&&embType(prod)!=='sac';}
 function prodNormalizeBlock(b){
   if(!prodHasFilm(b&&b.p))b.bobines=[];
   if(!prodHasScotch(b&&b.p))b.scotch='';
+  if(typeof prodUsesInk==='function'&&!prodUsesInk(b&&b.p)){b.inkChange=false;b.inkBefore='';}
   return b;
+}
+/* Section « changement de cartouches » : uniquement pour les produits d'une machine à encre. */
+function inkSectionHTML(b){
+  if(typeof prodUsesInk!=='function'||!prodUsesInk(b&&b.p))return '';
+  const on=!!(b&&b.inkChange);
+  return '<div class="pb-ink"><label class="pb-ink-tog"><input type="checkbox" class="pb-ink-chk"'+(on?' checked':'')+'> 🖊️ Changement de cartouches d’encre sur cette production</label>'
+    +'<div class="pb-ink-detail'+(on?'':' off')+'"><span class="pb-dl">Cartons imprimés AVANT le changement</span>'
+    +'<input class="pb-ink-before" inputmode="numeric" placeholder="ex. 300" value="'+esc((b&&b.inkBefore)||'')+'">'
+    +'<div class="pb-ink-hint">Avant → ancien jeu de cartouches ; après → nouveau jeu. Saisir les productions dans l’ordre de fabrication.</div></div></div>';
 }
 /* Bobines film approvisionnees : liste de poids (kg) par bobine ; nb = nombre de poids saisis, total = somme.
    Indicatif (mvt interne depot->atelier), aucun impact sur le calcul de stock. */
@@ -113,21 +123,27 @@ function scotchRowHTML(b){
     +'<input class="pb-scotch" inputmode="decimal" placeholder="0" value="'+esc(b.scotch)+'"'
     +(on?'':' disabled title="Pas de scotch pour ce produit (sac)"')+'></div>';
 }
+function bobRowsHTML(b){
+  return prodBobList(b).map((w,i)=>'<div class="pb-bob-row"><span class="pb-bob-lbl">Bobine '+(i+1)+'</span>'
+    +'<input class="pb-bob" data-i="'+i+'" inputmode="decimal" placeholder="kg" value="'+esc(w)+'">'
+    +'<button type="button" class="pb-bob-del" data-i="'+i+'" title="supprimer">✕</button></div>').join('');
+}
+/* Met à jour la liste des bobines EN PLACE (sans re-render global) pour ne pas
+   faire remonter l'écran sur mobile. */
+function bobUpdateSum(card,b){const s=card.querySelector('.pb-bob-sum');if(s)s.textContent=prodBobCount(b)+' bobine(s) · '+histQty(prodBobKg(b))+' kg';}
+function bobBind(card,b){
+  card.querySelectorAll('.pb-bob').forEach(inp=>{inp.oninput=()=>{if(!Array.isArray(b.bobines))b.bobines=[];b.bobines[+inp.dataset.i]=inp.value;bobUpdateSum(card,b);};});
+  card.querySelectorAll('.pb-bob-del').forEach(btn=>{btn.onclick=()=>{if(Array.isArray(b.bobines))b.bobines.splice(+btn.dataset.i,1);bobRefresh(card,b);};});
+}
+function bobRefresh(card,b){const list=card.querySelector('.pb-bob-list');if(list)list.innerHTML=bobRowsHTML(b);bobBind(card,b);bobUpdateSum(card,b);}
 function bobineSectionHTML(b){
   const prod=b&&b.p;
   if(!prodHasFilm(prod)){
     return '<div class="pb-drow off"><span class="pb-dl">Bobine film approvisionnée</span>'
       +'<span class="pb-cons-off">'+(prod?'aucun film pour ce produit':'choisir un produit')+'</span></div>';
   }
-  const list=prodBobList(b);
-  let rows='';
-  list.forEach((w,i)=>{
-    rows+='<div class="pb-bob-row"><span class="pb-bob-lbl">Bobine '+(i+1)+'</span>'
-      +'<input class="pb-bob" data-i="'+i+'" inputmode="decimal" placeholder="kg" value="'+esc(w)+'">'
-      +'<button type="button" class="pb-bob-del" data-i="'+i+'" title="supprimer">✕</button></div>';
-  });
   return '<div class="pb-dl" style="margin-bottom:4px">Bobine film approvisionnée <span style="font-weight:400;color:var(--mute)">(1 poids/bobine · indicatif, hors stock)</span></div>'
-    +'<div class="pb-bob-list">'+rows+'</div>'
+    +'<div class="pb-bob-list">'+bobRowsHTML(b)+'</div>'
     +'<button type="button" class="pb-bob-add">+ Ajouter une bobine</button>'
     +'<div class="pb-bob-sum">'+prodBobCount(b)+' bobine(s) · '+esc(histQty(prodBobKg(b)))+' kg</div>';
 }
@@ -220,6 +236,7 @@ function renderProduction(focusBi){
       +scotchRowHTML(b)
       +bobineSectionHTML(b)
       +'</div>'
+      +inkSectionHTML(b)
       +'<div class="pf-h" style="margin-top:10px">Photo(s)</div><div class="pb-photos photo-row"></div>'
       +'</div>';
   });
@@ -245,9 +262,11 @@ function renderProduction(focusBi){
     const fl=card.querySelector('.pb-film');if(fl)fl.oninput=e=>{b.w_film=e.target.value;};
     card.querySelector('.pb-mel').oninput=e=>{b.w_mel=e.target.value;};
     const sc=card.querySelector('.pb-scotch');if(sc)sc.oninput=e=>{b.scotch=e.target.value;};
-    card.querySelectorAll('.pb-bob').forEach(inp=>{inp.oninput=e=>{if(!Array.isArray(b.bobines))b.bobines=[];b.bobines[+inp.dataset.i]=e.target.value;const s=card.querySelector('.pb-bob-sum');if(s)s.textContent=prodBobCount(b)+' bobine(s) · '+histQty(prodBobKg(b))+' kg';};});
-    card.querySelectorAll('.pb-bob-del').forEach(btn=>{btn.onclick=()=>{if(Array.isArray(b.bobines))b.bobines.splice(+btn.dataset.i,1);re();};});
-    const addBob=card.querySelector('.pb-bob-add');if(addBob)addBob.onclick=()=>{if(!Array.isArray(b.bobines))b.bobines=[];b.bobines.push('');re();};
+    bobBind(card,b);
+    const addBob=card.querySelector('.pb-bob-add');if(addBob)addBob.onclick=()=>{if(!Array.isArray(b.bobines))b.bobines=[];b.bobines.push('');bobRefresh(card,b);};
+    const inkChk=card.querySelector('.pb-ink-chk');
+    if(inkChk)inkChk.onchange=e=>{b.inkChange=e.target.checked;const d=card.querySelector('.pb-ink-detail');if(d)d.classList.toggle('off',!e.target.checked);if(!e.target.checked){b.inkBefore='';const bf=card.querySelector('.pb-ink-before');if(bf)bf.value='';}};
+    const inkBf=card.querySelector('.pb-ink-before');if(inkBf)inkBf.oninput=e=>{b.inkBefore=e.target.value;};
     const delB=card.querySelector('.pb-del');if(delB)delB.onclick=()=>{PF.blocks.splice(bi,1);if(!PF.blocks.length)PF.blocks.push(freshBlock());re();};
     photoArrayUI(card.querySelector('.pb-photos'),b.photos,re);
   });
