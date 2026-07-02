@@ -193,6 +193,10 @@ function authConfirmPassword(label){
       try{var r=await sipsFetch('/api/auth/verify-password',{method:'POST',body:JSON.stringify({password:p})});if(!r.ok){err.textContent='Mot de passe incorrect';err.style.display='';return;}close(true);}
       catch(e){err.textContent=e.message||'Erreur serveur';err.style.display='';}
     };
+    // Entree dans le champ mot de passe = confirmer (comme cliquer Confirmer).
+    var passEl=dlg.querySelector('#confirmPass');
+    passEl.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();dlg.querySelector('#confirmOk').click();}});
+    setTimeout(function(){passEl.focus();},30);
   });
 }
 // Resout l'etat d'authentification au demarrage.

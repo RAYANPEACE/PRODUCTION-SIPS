@@ -831,7 +831,7 @@ function sipsSubmissionDetailHTML(s){
   if(s.type==='production'){
     const prodBlocks=migrateProdRec(p).map(b=>Object.assign({},b,{bobTxt:prodBobText(b)}));
     return sipsKV([['Date',frDate(p.date)],['Operateur',p.agent],['Scotch utilise',prodScotchText(prodScotchQty(p))],['Note',p.note]])
-      +sipsLines('Productions',prodBlocks,[['p','Produit',v=>esc(prodName(v))],['n','Qte',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_emb','Dechet cartons/sacs',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_film','Dechet film',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_mel','Melange kg',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['scotch','Scotch bobines',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['bobTxt','Bobine film',v=>'<b class="hist-qty">'+esc(v)+'</b>']]);
+      +sipsLines('Productions',prodBlocks,[['p','Produit',v=>esc(prodName(v))],['n','Qte',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_emb','Dechet cartons/sacs',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_film','Dechet film',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['w_mel','Dechet melange (kg)',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['scotch','Scotch bobines',v=>'<b class="hist-qty">'+esc(histQty(v))+'</b>'],['bobTxt','Bobine film',v=>'<b class="hist-qty">'+esc(v)+'</b>']]);
   }
   if(s.type==='inventory'){
     const detail=Object.keys(p.detail||{}).map(code=>{
@@ -893,16 +893,49 @@ async function sipsReviewDecide(id,kind,targets){
   }
   switchTab('serveur');
 }
+/* Photos d'une soumission (mouvement : payload.photos ; production : photos par bloc). */
+function sipsSubmissionPhotos(s){
+  const p=s.payload||{};
+  let imgs=[];
+  if(s.type==='production'){(migrateProdRec(p)||[]).forEach(b=>{((b&&b.photos)||[]).forEach(ph=>imgs.push(ph));});}
+  else{((p.photos)||[]).forEach(ph=>imgs.push(ph));}
+  imgs=imgs.filter(Boolean);
+  if(!imgs.length)return '';
+  return '<div class="sips-view-photos"><b>Photos ('+imgs.length+')</b><div class="sips-photo-grid">'
+    +imgs.map(ph=>'<img class="sips-photo" src="'+esc(ph)+'">').join('')+'</div></div>';
+}
+/* Vue plein ecran LECTURE SEULE d'une soumission (production/entree/sortie) avant validation :
+   memes details que la liste mais en grand + photos. N'altere PAS le brouillon en cours de saisie
+   (on ne charge rien dans les formulaires editables). Valider/Rejeter delegue a sipsDecide. */
+function sipsOpenSubmissionView(s){
+  if(!s){toast('Soumission introuvable');return;}
+  const p=s.payload||{};
+  const who=p.agent||(s.author&&s.author.name)||'—';
+  const dt=frDate(p.date||(p.informations&&p.informations.dateProduction)||'');
+  const app=$('#app');
+  app.innerHTML='<div class="prod-wrap sips-view">'
+    +'<div class="bil-ctrl"><button id="svBack" class="b-sec">← Retour serveur</button>'
+    +'<button id="svValidate" class="b-go">✅ Valider</button>'
+    +'<button id="svReject" class="del">🚫 Rejeter</button></div>'
+    +'<h2 class="prod-title">'+esc(sipsTypeLabel(s.type))+' — '+esc(who)+' '+esc(dt)+'</h2>'
+    +'<div class="sips-view-body">'+sipsSubmissionDetailHTML(s)+sipsSubmissionPhotos(s)+'</div></div>';
+  $('#svBack').onclick=()=>switchTab('serveur');
+  $('#svValidate').onclick=async()=>{if(await sipsDecide(s.id,'validate'))switchTab('serveur');};
+  $('#svReject').onclick=async()=>{if(await sipsDecide(s.id,'reject'))switchTab('serveur');};
+  app.querySelectorAll('.sips-photo').forEach(im=>{im.onclick=()=>openLightbox('Photo',im.src);});
+  window.scrollTo(0,0);
+}
 function sipsSubmissionHTML(s){
   const actor=s.author&&s.author.name?(' - '+esc(s.author.name)):'';
   const status=s.status==='submitted'?'En attente':(s.status==='validated'?'Validee':'Rejetee');
   const summary=sipsPayloadSummary(s.type,s.payload);
   const qVisas=(s.payload&&s.payload.visas)||{};
   const qReady=s.type!=='quality'||!!(qVisas.operateur&&qVisas.operateur.signature&&((qVisas.responsableQualite&&qVisas.responsableQualite.signature)||(qVisas.responsableProd&&qVisas.responsableProd.signature)));
+  const canView=['production','entree','sortie'].indexOf(s.type)>=0;
   const actions=s.status==='submitted'
     ?(s.type==='inventory'
        ?'<button data-act="compare">Comparer au stock (Bilan)</button><button data-act="validate">Valider</button><button class="del" data-act="reject">Rejeter</button>'
-       :(qReady?'<button data-act="validate">Valider</button>':'<button disabled title="Signatures obligatoires manquantes">Validation bloquee</button>')+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>')
+       :(canView?'<button data-act="view">Voir la fiche</button>':'')+(qReady?'<button data-act="validate">Valider</button>':'<button disabled title="Signatures obligatoires manquantes">Validation bloquee</button>')+(s.type==='quality'?'<button class="del" data-act="correction">Demander correction</button>':'')+'<button class="del" data-act="reject">Rejeter</button>')
     :'';
   const hint=s.type==='quality'?'<p class="ref-hint" style="flex-basis:100%;margin:4px 0 0">Ouverture et signature : onglet Qualite, section Fiches serveur a ouvrir / signer.</p>':'';
   return '<div class="hist-item" data-sub="'+esc(s.id)+'"><div class="info"><b>'+esc(sipsTypeLabel(s.type))+' - '+status+'</b><span>'+esc(summary)+actor+' - '+new Date(s.createdAt).toLocaleString('fr-FR')+'</span></div>'+actions+hint+'<div style="flex-basis:100%">'+sipsSubmissionDetailHTML(s)+'</div></div>';
@@ -1040,24 +1073,26 @@ function bindSyncBox(){
 }
 async function sipsLoadServeur(){
   const subs=$('#srvSubs'),records=$('#srvRecords');
-  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>{const sub=rows.find(x=>x.id===id);if(b.dataset.act==='compare'){b.onclick=()=>sipsOpenInventoryReview(sub);}else{b.onclick=()=>sipsDecide(id,b.dataset.act);}});});}
+  if(!subs||!records)return;   // vue plein ecran (Voir la fiche) : hosts absents, rien a recharger
+  try{const data=await sipsFetch('/api/submissions?status=submitted&include=payload',{headers:sipsAdminHeaders()});const rows=data.submissions||[];subs.innerHTML=rows.length?rows.map(sipsSubmissionHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucune soumission en attente.</p>';subs.querySelectorAll('[data-sub]').forEach(el=>{const id=el.dataset.sub;el.querySelectorAll('button[data-act]').forEach(b=>{const sub=rows.find(x=>x.id===id);if(b.dataset.act==='compare'){b.onclick=()=>sipsOpenInventoryReview(sub);}else if(b.dataset.act==='view'){b.onclick=()=>sipsOpenSubmissionView(sub);}else{b.onclick=()=>sipsDecide(id,b.dataset.act);}});});}
   catch(e){subs.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les soumissions : '+esc(e.message)+(String(e.message).indexOf('admin')>=0?' - connecte-toi avec un compte admin ou renseigne le PIN serveur.':'')+'</p>';}
-  try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=data.records||[];records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
+  try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=(data.records||[]).slice().sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
 }
 async function sipsDecide(id,act){
   const isCorrection=act==='correction';
   const apiAct=isCorrection?'reject':act;
   const label=apiAct==='validate'?'valider':(isCorrection?'demander correction sur':'rejeter');
-  if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return;
+  if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return false;
   const note=apiAct==='reject'?prompt(isCorrection?'Correction demandee ? La fiche sera conservee et reprise par l operateur.':'Motif du rejet ?','Correction demandee'):null;
-  if(apiAct==='reject'&&note===null)return;
-  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return;
+  if(apiAct==='reject'&&note===null)return false;
+  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return false;
   const row=document.querySelector('[data-sub="'+id+'"]');
   if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
-  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+apiAct,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||'',correction:isCorrection})});toast(apiAct==='validate'?'Soumission validee':(isCorrection?'Correction demandee':'Soumission rejetee'));}
+  let ok=false;
+  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+apiAct,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||'',correction:isCorrection})});toast(apiAct==='validate'?'Soumission validee':(isCorrection?'Correction demandee':'Soumission rejetee'));ok=true;}
   catch(e){
-    if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();}
+    if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();ok=true;}
     else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}
   }
   // Resynchronise la liste avec le serveur dans tous les cas : un element deja
@@ -1066,6 +1101,7 @@ async function sipsDecide(id,act){
   // Met aussi a jour la pastille de notifications (sinon elle reste figee
   // jusqu'au prochain refresh complet de la page).
   try{await sipsRefreshNotifications();}catch(e){}
+  return ok;
 }
 async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');
