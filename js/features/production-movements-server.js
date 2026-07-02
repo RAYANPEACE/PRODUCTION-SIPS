@@ -255,15 +255,15 @@ function renderProduction(focusBi){
       +'<div class="pf-h" style="margin-top:10px">Photo(s)</div><div class="pb-photos photo-row"></div>'
       +'</div>';
   });
-  const view=!!PFVIEW,sub=PFVIEW;
+  const view=!!PFVIEW,sub=PFVIEW,ro=!!(sub&&sub.ro);   // ro = fiche VALIDEE consultee (pas de decision)
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production'+(view?' — consultation':'')+'</h2>'
-    +(view?'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Fiche serveur en <b>lecture seule</b>. Valide / Rejette en bas, ou ← Retour.</p>':'<button id="pfGoHist" class="hist-jump">Aller à Historique ⬇</button>')
+    +(view?'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Fiche serveur en <b>lecture seule</b>. '+(ro?'← Retour pour revenir.':'Valide / Rejette en bas, ou ← Retour.')+'</p>':'<button id="pfGoHist" class="hist-jump">Aller à Historique ⬇</button>')
     +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +(view?'':'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>')
     +noteSectionHTML('pfNote',PF.note)
-    +(view?'<div class="pf-actions"><button id="pfViewBack" class="b-sec">← Retour</button><button id="pfViewValidate" class="b-go">✅ Valider</button><button id="pfViewReject" class="del">🚫 Rejeter</button></div>'
+    +(view?('<div class="pf-actions"><button id="pfViewBack" class="b-sec">← Retour</button>'+(ro?'':'<button id="pfViewValidate" class="b-go">✅ Valider</button><button id="pfViewReject" class="del">🚫 Rejeter</button>')+'</div>')
           :'<div class="pf-actions"><button id="pfSubmit" class="b-go">Soumettre au serveur</button><button id="pfSave" class="b-sec">Enregistrer localement</button><button id="pfNew" class="b-sec">Nouvelle fiche</button></div>')
     +(view?'':'<div id="pfPending"></div><div class="pf-sec" id="pfHistory"><div class="pf-h">Historique des productions</div><div id="pfHist">Chargement…</div></div>')
     +'</div>';
@@ -272,8 +272,10 @@ function renderProduction(focusBi){
     app.querySelectorAll('.pb-card').forEach(card=>{const bi=+card.dataset.bi;const b=PF.blocks[bi];photoRowReadonly(card.querySelector('.pb-photos'),b&&b.photos);});
     app.querySelectorAll('input,select,textarea,button').forEach(el=>{if(['pfViewBack','pfViewValidate','pfViewReject'].indexOf(el.id)<0)el.disabled=true;});
     $('#pfViewBack').onclick=prodExitView;
-    $('#pfViewValidate').onclick=async()=>{if(await sipsDecide(sub.id,'validate'))prodExitView();};
-    $('#pfViewReject').onclick=async()=>{if(await sipsDecide(sub.id,'reject'))prodExitView();};
+    const pfVv=$('#pfViewValidate'),pfVr=$('#pfViewReject');
+    // Boutons desactives AVANT sipsDecide (pas de ligne data-sub ici : sinon double-tap = requetes concurrentes)
+    if(pfVv)pfVv.onclick=async()=>{pfVv.disabled=pfVr.disabled=true;if(await sipsDecide(sub.id,'validate'))prodExitView();else pfVv.disabled=pfVr.disabled=false;};
+    if(pfVr)pfVr.onclick=async()=>{pfVv.disabled=pfVr.disabled=true;if(await sipsDecide(sub.id,'reject'))prodExitView();else pfVv.disabled=pfVr.disabled=false;};
     window.scrollTo(0,0);return;
   }
   $('#pfGoHist').onclick=()=>scrollToHistory('pfHistory');
@@ -502,7 +504,7 @@ function renderProdHist(host,recs,serverRows){
       const ph=blocks.reduce((s,b)=>s+((b.photos||[]).length),0);
       const it=document.createElement('div');it.className='hist-item locked';
       it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+np+' produit(s) - scotch '+prodScotchText(prodScotchQty(rec))+' - '+ph+' photo(s)</span>'+histProdMini(blocks)+'</div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{PF={date:rec.date,agent:rec.agent||'',blocks:clone(blocks),note:rec.note||''};renderProduction();setTimeout(()=>window.scrollTo(0,0),0);};
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>sipsViewValidatedProd(rec);
       it.append(open);host.append(it);
     });
     if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' production(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
@@ -693,17 +695,17 @@ function renderMov(kind,focusSel){
   if(!mf.finis||!mf.finis.length)mf.finis=[{a:'',q:''}];
   if(!mf.mp||!mf.mp.length)mf.mp=[{a:'',q:''}];
   const app=$('#app');
-  const view=!!MOVVIEW[kind],sub=MOVVIEW[kind];
+  const view=!!MOVVIEW[kind],sub=MOVVIEW[kind],ro=!!(sub&&sub.ro);   // ro = fiche VALIDEE consultee (pas de decision)
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">'+c.title+(view?' — consultation':'')+'</h2>'
-    +(view?'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Fiche serveur en <b>lecture seule</b>. Valide / Rejette en bas, ou ← Retour.</p>':'<button id="mvGoHist" class="hist-jump">Aller à Historique ⬇</button>')
+    +(view?'<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Fiche serveur en <b>lecture seule</b>. '+(ro?'← Retour pour revenir.':'Valide / Rejette en bas, ou ← Retour.')+'</p>':'<button id="mvGoHist" class="hist-jump">Aller à Historique ⬇</button>')
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +movFieldsHTML(kind,mf)
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
     +movSectionHTML(mf,'mp','Matières premières / Échantillons',kind==='entree')
     +'<div class="pf-sec"><div class="pf-h">Photo(s)</div><div id="mvPhotos" class="photo-row"></div></div>'
     +noteSectionHTML('mvNote',mf.note)
-    +(view?'<div class="pf-actions"><button id="mvViewBack" class="b-sec">← Retour</button><button id="mvViewValidate" class="b-go">✅ Valider</button><button id="mvViewReject" class="del">🚫 Rejeter</button></div>'
+    +(view?('<div class="pf-actions"><button id="mvViewBack" class="b-sec">← Retour</button>'+(ro?'':'<button id="mvViewValidate" class="b-go">✅ Valider</button><button id="mvViewReject" class="del">🚫 Rejeter</button>')+'</div>')
           :'<div class="pf-actions"><button id="mvSubmit" class="b-go">Soumettre au serveur</button><button id="mvSave" class="b-sec">Enregistrer localement</button><button id="mvNew" class="b-sec">Nouvelle fiche</button></div>')
     +(view?'':'<div id="mvPending"></div><div class="pf-sec" id="mvHistory"><div class="pf-h">Historique des '+(kind==='entree'?'entrées':'sorties')+'</div><div id="mvHist">Chargement…</div></div>')
     +'</div>';
@@ -712,8 +714,10 @@ function renderMov(kind,focusSel){
     photoRowReadonly($('#mvPhotos'),mf.photos);
     app.querySelectorAll('input,select,textarea,button').forEach(el=>{if(['mvViewBack','mvViewValidate','mvViewReject'].indexOf(el.id)<0)el.disabled=true;});
     $('#mvViewBack').onclick=()=>movExitView(kind);
-    $('#mvViewValidate').onclick=async()=>{if(await sipsDecide(sub.id,'validate'))movExitView(kind);};
-    $('#mvViewReject').onclick=async()=>{if(await sipsDecide(sub.id,'reject'))movExitView(kind);};
+    const mvVv=$('#mvViewValidate'),mvVr=$('#mvViewReject');
+    // Boutons desactives AVANT sipsDecide (pas de ligne data-sub ici : sinon double-tap = requetes concurrentes)
+    if(mvVv)mvVv.onclick=async()=>{mvVv.disabled=mvVr.disabled=true;if(await sipsDecide(sub.id,'validate'))movExitView(kind);else mvVv.disabled=mvVr.disabled=false;};
+    if(mvVr)mvVr.onclick=async()=>{mvVv.disabled=mvVr.disabled=true;if(await sipsDecide(sub.id,'reject'))movExitView(kind);else mvVv.disabled=mvVr.disabled=false;};
     window.scrollTo(0,0);return;
   }
   $('#mvGoHist').onclick=()=>scrollToHistory('mvHistory');
@@ -759,7 +763,7 @@ function renderMovHist(host,kind,recs,serverRows){
       const nf=(rec.finis||[]).filter(x=>x.a&&num(x.q)>0).length;const nm=(rec.mp||[]).filter(x=>x.a&&num(x.q)>0).length;const ph=(rec.photos||[]).length;
       const it=document.createElement('div');it.className='hist-item locked';
       it.innerHTML='<div class="info"><b>'+frDate(rec.date)+'</b><span>VALIDEE serveur - '+(rec.agent?esc(rec.agent)+' - ':'')+esc(rec.ref||'—')+' - '+nf+' fini(s) - '+nm+' MP - '+ph+' photo(s)</span>'+histMovMini(rec)+'</div>';
-      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>{MOVF[kind]={date:rec.date,agent:rec.agent||'',ref:rec.ref||'',matricule:rec.matricule||'',chauffeur:rec.chauffeur||'',dest:rec.dest||'',finis:(rec.finis&&rec.finis.length?clone(rec.finis):[{a:'',q:''}]),mp:(rec.mp&&rec.mp.length?clone(rec.mp):[{a:'',q:''}]),photos:clone(rec.photos||[]),note:rec.note||''};renderMov(kind);setTimeout(()=>window.scrollTo(0,0),0);};
+      const open=document.createElement('button');open.textContent='Voir';open.onclick=()=>sipsViewValidatedMov(kind,rec);
       it.append(open);host.append(it);
     });
     if(srvClip.hidden){const p=document.createElement('p');p.className='hist-more';p.textContent=srvClip.hidden+' ligne(s) serveur masquee(s) par la limite d affichage.';host.append(p);}
@@ -934,6 +938,12 @@ function sipsViewProductionForm(s){
   PF=prodPFfromPayload(s.payload);PFVIEW=s;switchTab('prod');
 }
 function prodExitView(){PF=PF_BACKUP||freshPF();PF_BACKUP=null;PFVIEW=null;switchTab('prod');}
+/* Consultation d'une fiche VALIDEE (historique serveur) : lecture seule SANS Valider/Rejeter,
+   et sans ecraser le brouillon en cours (stashe/restaure comme la vue des soumissions). */
+function sipsViewValidatedProd(payload){
+  if(!PFVIEW)PF_BACKUP=PF;
+  PF=prodPFfromPayload(payload);PFVIEW={ro:true};switchTab('prod');
+}
 function sipsViewMovementForm(s){
   if(!s||!s.payload){toast('Fiche introuvable');return;}
   const kind=s.type;if(kind!=='sortie'&&kind!=='entree')return;
@@ -941,6 +951,12 @@ function sipsViewMovementForm(s){
   MOVF[kind]=movMFfromPayload(s.payload);MOVVIEW[kind]=s;switchTab(kind==='entree'?'entree':'sorties');
 }
 function movExitView(kind){MOVF[kind]=MOV_BACKUP[kind]||freshMov();MOV_BACKUP[kind]=null;MOVVIEW[kind]=null;switchTab(kind==='entree'?'entree':'sorties');}
+/* Consultation d'un mouvement VALIDE (historique serveur) : lecture seule sans decision ni ecrasement du brouillon. */
+function sipsViewValidatedMov(kind,payload){
+  if(kind!=='sortie'&&kind!=='entree')return;
+  if(!MOVVIEW[kind])MOV_BACKUP[kind]=MOVF[kind];
+  MOVF[kind]=movMFfromPayload(payload);MOVVIEW[kind]={ro:true};switchTab(kind==='entree'?'entree':'sorties');
+}
 /* Liste des soumissions EN ATTENTE (non validees) d'un type, avec bouton Voir. Reservee aux
    valideurs (onglet Serveur present). Rendue dans le formulaire de l'onglet correspondant. */
 async function sipsLoadPendingInto(hostId,type,onView){
