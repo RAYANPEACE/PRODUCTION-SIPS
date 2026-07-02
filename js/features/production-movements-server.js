@@ -1129,29 +1129,39 @@ async function sipsLoadServeur(){
   try{const data=await sipsFetch('/api/records?status=validated',{headers:sipsAdminHeaders()});const rows=(data.records||[]).slice().sort((a,b)=>String(b.validatedAt||'').localeCompare(String(a.validatedAt||'')));records.innerHTML=rows.length?rows.map(sipsRecordHTML).join(''):'<p style="color:#6a7280;font-size:13px;margin:0">Aucun enregistrement valide dans la base centrale.</p>';records.querySelectorAll('[data-rec]').forEach(el=>{const id=el.dataset.rec;const b=el.querySelector('button[data-act="cancel"]');if(b)b.onclick=()=>sipsCancelRecord(id);});}
   catch(e){records.innerHTML='<p style="color:var(--red);font-size:13px;margin:0">Impossible de charger les donnees validees : '+esc(e.message)+'</p>';}
 }
+// Garde d'unicite par soumission : une seule decision en vol a la fois pour un id donne,
+// quelle que soit la surface (liste Serveur, vue consultation prod/mouvement, double-tap,
+// deux onglets). C'est LE point de serialisation cote client — les boutons desactives dans
+// les vues ne sont qu'un retour visuel par-dessus cette garde. (Le serveur garde sa propre
+// serialisation a faire, cf. audit concurrence.)
+const sipsDecideInFlight={};
 async function sipsDecide(id,act){
-  const isCorrection=act==='correction';
-  const apiAct=isCorrection?'reject':act;
-  const label=apiAct==='validate'?'valider':(isCorrection?'demander correction sur':'rejeter');
-  if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return false;
-  const note=apiAct==='reject'?prompt(isCorrection?'Correction demandee ? La fiche sera conservee et reprise par l operateur.':'Motif du rejet ?','Correction demandee'):null;
-  if(apiAct==='reject'&&note===null)return false;
-  if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return false;
-  const row=document.querySelector('[data-sub="'+id+'"]');
-  if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
-  let ok=false;
-  try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+apiAct,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||'',correction:isCorrection})});toast(apiAct==='validate'?'Soumission validee':(isCorrection?'Correction demandee':'Soumission rejetee'));ok=true;}
-  catch(e){
-    if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();ok=true;}
-    else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}
-  }
-  // Resynchronise la liste avec le serveur dans tous les cas : un element deja
-  // traite (ailleurs / double-clic) disparait au lieu de rester affiche.
-  try{await sipsLoadServeur();}catch(e){}
-  // Met aussi a jour la pastille de notifications (sinon elle reste figee
-  // jusqu'au prochain refresh complet de la page).
-  try{await sipsRefreshNotifications();}catch(e){}
-  return ok;
+  if(sipsDecideInFlight[id])return false;   // decision deja en cours pour cette soumission
+  sipsDecideInFlight[id]=true;
+  try{
+    const isCorrection=act==='correction';
+    const apiAct=isCorrection?'reject':act;
+    const label=apiAct==='validate'?'valider':(isCorrection?'demander correction sur':'rejeter');
+    if(!confirm(label.charAt(0).toUpperCase()+label.slice(1)+' cette soumission ?'))return false;
+    const note=apiAct==='reject'?prompt(isCorrection?'Correction demandee ? La fiche sera conservee et reprise par l operateur.':'Motif du rejet ?','Correction demandee'):null;
+    if(apiAct==='reject'&&note===null)return false;
+    if(typeof authConfirmPassword==='function'&&!(await authConfirmPassword(label+' cette soumission')))return false;
+    const row=document.querySelector('[data-sub="'+id+'"]');
+    if(row){row.style.opacity=.55;row.querySelectorAll('button').forEach(b=>b.disabled=true);}
+    let ok=false;
+    try{await sipsFetch('/api/submissions/'+encodeURIComponent(id)+'/'+apiAct,{method:'POST',headers:sipsAdminHeaders(),body:JSON.stringify({actor:(typeof USR!=='undefined'&&USR.nom)||'admin',note:note||'',correction:isCorrection})});toast(apiAct==='validate'?'Soumission validee':(isCorrection?'Correction demandee':'Soumission rejetee'));ok=true;}
+    catch(e){
+      if(/trait/i.test(e.message||'')){toast('Deja traitee - liste mise a jour');if(row)row.remove();ok=true;}
+      else{toast('Erreur serveur : '+e.message);if(row){row.style.opacity='';row.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+    }
+    // Resynchronise la liste avec le serveur dans tous les cas : un element deja
+    // traite (ailleurs / double-clic) disparait au lieu de rester affiche.
+    try{await sipsLoadServeur();}catch(e){}
+    // Met aussi a jour la pastille de notifications (sinon elle reste figee
+    // jusqu'au prochain refresh complet de la page).
+    try{await sipsRefreshNotifications();}catch(e){}
+    return ok;
+  }finally{delete sipsDecideInFlight[id];}
 }
 async function sipsCancelRecord(id){
   const reason=prompt('Motif pour annuler cet enregistrement validé ?','Erreur de saisie');
