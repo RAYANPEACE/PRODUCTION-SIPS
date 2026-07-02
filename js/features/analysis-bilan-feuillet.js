@@ -2,7 +2,7 @@
 const FR_MOIS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
 function moisKey(d){return String(d||'').slice(0,7);}
 function moisLabel(k){const m=k.split('-');if(m.length<2)return k;return FR_MOIS[(+m[1])-1]+' '+m[0];}
-function barRow(label,val,max,unit,color){const w=max>0?Math.round(val/max*100):0;return '<div class="an-bar"><div class="an-bl">'+esc(label)+'</div><div class="an-row2"><div class="an-bt"><div class="an-bf" style="width:'+w+'%'+(color?';background:'+color:'')+'"></div></div><div class="an-bv">'+fmt(Math.round(val*100)/100)+(unit?' '+unit:'')+'</div></div></div>';}
+function barRow(label,val,max,unit,color){const w=max>0?Math.round(val/max*100):0;return '<div class="an-bar"><div class="an-bl">'+hlLaity(label)+'</div><div class="an-row2"><div class="an-bt"><div class="an-bf" style="width:'+w+'%'+(color?';background:'+color:'')+'"></div></div><div class="an-bv">'+fmt(Math.round(val*100)/100)+(unit?' '+unit:'')+'</div></div></div>';}
 function fmtKg(v){v=num(v);return v>=1000?fmt(Math.round(v/10)/100)+' t':fmt(Math.round(v*10)/10)+' kg';}
 function analyseBatchCount(r){return ((r.melanges||[]).filter(b=>b&&(b.heureDebut||b.heureFin||b.batchNum))).length;}
 function analyseBatchKg(info,n){const q=num(info&&info.quantiteProduite);return q>0?q:n*num(info&&info.tailleBatch);}

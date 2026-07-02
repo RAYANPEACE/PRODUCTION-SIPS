@@ -205,7 +205,7 @@ function renderProduction(focusBi){
   if(!PF.agent&&typeof USR!=='undefined'&&USR.nom)PF.agent=USR.nom;
   if(!PF.blocks||!PF.blocks.length)PF.blocks=[freshBlock()];
   const app=$('#app');
-  const finiOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}>${esc(recipeProductLabel(p))}</option>`).join('');
+  const finiOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}${isLaity(recipeProductLabel(p))?' class="laity"':''}>${esc(recipeProductLabel(p))}</option>`).join('');
   let blocksH='';
   PF.blocks.forEach((b,bi)=>{
     const current=currentRecipeProductCode(b.p);if(current&&current!==b.p)b.p=current;
@@ -329,7 +329,7 @@ function bindHistFilter(host,key,loader){
 }
 function histArticleHTML(key){
   const f=HIST_FILTERS[key]||HIST_FILTERS.production;
-  const opts=rows=>rows.map(r=>'<option value="'+esc(r.code)+'"'+(f.article===r.code?' selected':'')+'>'+esc(r.des)+'</option>').join('');
+  const opts=rows=>rows.map(r=>'<option value="'+esc(r.code)+'"'+(f.article===r.code?' selected':'')+(isLaity(r.des)?' class="laity"':'')+'>'+esc(r.des)+'</option>').join('');
   if(key==='production')return '<select class="hist-filter-article"><option value="">Tous produits finis</option>'+opts(finishedProductRefs())+'</select>';
   return '<select class="hist-filter-article"><option value="">Tous articles</option><optgroup label="Produits finis">'+opts(finishedProductRefs())+'</optgroup><optgroup label="Matieres / emballages / autres">'+opts(nonFinishedRefs())+'</optgroup></select>';
 }
@@ -368,7 +368,7 @@ function histProdMini(blocks){
   let h='<div class="hist-mini hist-prod-mini">';
   blocks.slice(0,4).forEach(b=>{
     const waste=prodBlockWasteText(b);
-    h+='<div><span class="hist-tag">Production</span> '+esc(prodName(b.p))+' - qte <b class="hist-qty">'+esc(histQty(b.n))+'</b></div>';
+    h+='<div><span class="hist-tag">Production</span> '+hlLaity(prodName(b.p))+' - qte <b class="hist-qty">'+esc(histQty(b.n))+'</b></div>';
     if(waste)h+='<div><span class="hist-tag hist-tag-waste">Dechets</span> '+waste+'</div>';
   });
   if(blocks.length>4)h+='<div>+'+(blocks.length-4)+' autre(s)...</div>';
@@ -427,7 +427,7 @@ function histMovMini(rec){
   (rec.mp||[]).forEach(x=>{if(x&&x.a&&num(x.q)>0)rows.push({t:'MP',a:x.a,q:x.q,exp:x.exp||''});});
   return histMiniLines(rows,[
     ['t','Type',v=>esc(v)],
-    ['a','Article',v=>esc(v)],
+    ['a','Article',v=>hlLaity(v)],
     ['q','Qte',v=>'qte <b class="hist-qty">'+esc(histQty(v))+'</b>'],
     ['exp','Peremption',v=>'peremption '+esc(v)]
   ],5);
@@ -542,7 +542,7 @@ async function movSubmit(kind,mf){
 }
 function movSectionHTML(mf,sec,title,withExp){
   const arts=movArts(sec);
-  const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}>${esc(r.des)}</option>`).join('');
+  const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}${isLaity(r.des)?' class="laity"':''}>${esc(r.des)}</option>`).join('');
   const expCell=x=>withExp?`<input class="mv-exp" type="date" title="date de péremption" value="${esc(x.exp||'')}">`:'';
   let rows=mf[sec].map((x,i)=>`<div class="pf-row${withExp?' pf-row-exp':''}" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}">${expCell(x)}<button class="mv-del" title="retirer">✕</button></div>`).join('');
   const hint=withExp?'<small style="display:block;font-size:11px;color:var(--mute);margin:2px 0 6px">Renseigne la date de péremption de chaque matière (suivi FEFO).</small>':'';

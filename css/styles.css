@@ -798,3 +798,6 @@
   .q-hist-item button{padding:7px 11px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:600;font-size:13px}
   .q-hist-item .del{border-color:#e3c7cd;color:var(--red)}
   .q-computed{font:700 14px ui-monospace,monospace;color:var(--green);text-align:right}
+  /* Produit LAITY en bleu : le distinguer de DIAMO partout dans l'UI */
+  .laity{color:#1565c0;font-weight:700}
+  option.laity{color:#1565c0;font-weight:700}

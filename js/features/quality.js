@@ -296,7 +296,7 @@ async function renderQualite(){
   h+='<option value="">— Choisir —</option>';
   var curProd=currentRecipeProductCode(QS.informations.refProduit);if(curProd&&curProd!==QS.informations.refProduit)QS.informations.refProduit=curProd;
   var prods=recipeKeys();
-  prods.forEach(function(p){h+='<option value="'+esc(p)+'"'+(productCodeOf(QS.informations.refProduit)===p?' selected':'')+'>'+esc(recipeProductLabel(p))+'</option>';});
+  prods.forEach(function(p){h+='<option value="'+esc(p)+'"'+(productCodeOf(QS.informations.refProduit)===p?' selected':'')+(isLaity(recipeProductLabel(p))?' class="laity"':'')+'>'+esc(recipeProductLabel(p))+'</option>';});
   h+='</select></div>';
   h+='<div class="q-field"><label>Date de production</label><input type="date" id="qDateProd" value="'+esc(QS.informations.dateProduction)+'" onchange="QS.informations.dateProduction=this.value"></div>';
   h+='<div class="q-field"><label>Heure debut<small>Auto (1er batch)</small></label><input type="text" id="qHDeb" value="'+esc(QS.informations.heureDebut)+'" readonly></div>';
@@ -652,7 +652,7 @@ async function qLoadHist(){
           ? sipsNeedsMyQualitySignature(b,(SESSION&&SESSION.canSign)||[])
           : false;
         htm+='<div class="q-hist-item">';
-        htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'---'))+'</b>';
+        htm+='<div class="info"><b>'+hlLaity(recipeProductLabel(info.refProduit||'---'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+sigs+'/2 signature(s) obligatoires - '+(mine?'votre signature est attendue':'en attente admin/autre signature')+'</span></div>';
         htm+='<button data-qpend="'+idx+'">'+(mine?'Ouvrir et signer':'Ouvrir')+'</button>';
         htm+='</div>';
@@ -663,7 +663,7 @@ async function qLoadHist(){
       QSERVER_CORRECTIONS.forEach(function(s,idx){
         var b=s.payload||{},info=b.informations||{};
         htm+='<div class="q-hist-item">';
-        htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'---'))+'</b>';
+        htm+='<div class="info"><b>'+hlLaity(recipeProductLabel(info.refProduit||'---'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' - '+frDate(b.date||info.dateProduction||'')+' - '+esc(s.decisionNote||'Correction demandee')+'</span></div>';
         htm+='<button data-qcorr="'+idx+'">Reprendre correction</button>';
         htm+='</div>';
@@ -675,7 +675,7 @@ async function qLoadHist(){
         var b=r.payload||{},info=b.informations||{},visas=b.visas||{};
         var sigs=qQualitySignedCount(visas);
         htm+='<div class="q-hist-item">';
-        htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'—'))+'</b>';
+        htm+='<div class="info"><b>'+hlLaity(recipeProductLabel(info.refProduit||'—'))+'</b>';
         htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date||info.dateProduction||'')+' — '+sigs+'/2 signature(s) obligatoires — officielle serveur</span></div>';
         htm+='<button data-qserv="'+idx+'">Voir</button>';
         htm+='</div>';
@@ -689,7 +689,7 @@ async function qLoadHist(){
       var visas=b.visas||{};
       var sigs=qQualitySignedCount(visas);
       htm+='<div class="q-hist-item">';
-      htm+='<div class="info"><b>'+esc(recipeProductLabel(info.refProduit||'—'))+'</b>';
+      htm+='<div class="info"><b>'+hlLaity(recipeProductLabel(info.refProduit||'—'))+'</b>';
       htm+='<span>'+esc(info.numeroLot||'')+' — '+frDate(b.date)+' — '+sigs+'/2 signature(s) obligatoires</span></div>';
       htm+='<button data-qlocal="'+esc(b.id)+'">Voir</button>';
       htm+='<button class="del" data-qdel="'+esc(b.id)+'">Suppr</button>';

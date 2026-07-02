@@ -218,13 +218,13 @@ function renderCapacite(){
   h+='<button id="capPDF" class="bil-print" style="width:100%;margin:4px 0 12px">📄 Exporter PDF (capacité & stock)</button>';
   res.forEach(p=>{
     const capN=p.cap==null?0:Math.floor(p.cap);
-    h+='<div class="cap-card"><div class="cap-h"><div class="cap-prod">'+esc(recipeProductLabel(p.produit))+'</div>'
+    h+='<div class="cap-card"><div class="cap-h"><div class="cap-prod">'+hlLaity(recipeProductLabel(p.produit))+'</div>'
       +'<div class="cap-val'+(capN<=0?' zero':'')+'"><b>'+fmtq(capN)+'</b><small>unités</small></div></div>'
-      +'<div class="cap-goulot"><span>goulot</span><b>'+esc(p.goulot||'—')+'</b></div>'
+      +'<div class="cap-goulot"><span>goulot</span><b>'+hlLaity(p.goulot||'—')+'</b></div>'
       +'<details class="cap-det"><summary>Détail des matières</summary><div class="cap-lines">';
     p.lignes.forEach(l=>{
       const isG=l.nom===p.goulot;
-      h+='<div class="cap-line'+(isG?' g':'')+'"><div class="cl-l"><span class="cl-nom">'+esc(l.nom)+'</span>'
+      h+='<div class="cap-line'+(isG?' g':'')+'"><div class="cl-l"><span class="cl-nom">'+hlLaity(l.nom)+'</span>'
         +'<span class="cl-sub">'+fmtq(l.q)+'/u · stock '+fmtq(l.stock)+'</span></div>'
         +'<div class="cl-r">≈ '+(l.poss==null?'—':fmtq(Math.floor(l.poss)))+'<small>u</small></div></div>';
     });
@@ -403,7 +403,7 @@ function renderPlan(){
   let h='<div class="plan-wrap">';
   h+='<div class="bil-src">'+liveStockNote()+'</div>';
   h+='<p class="ref-hint">Pour chaque produit : une <b>priorité</b> (obligatoire pour l\u2019activer), puis <b>soit</b> une <b>quantité</b> ferme <b>soit</b> une <b>part %</b> du reste. Les quantités fermes sont produites d\u2019abord (par priorité), puis le stock restant est partagé au prorata du tonnage selon les % (somme ≤ 100 %).</p>';
-  h+='<div class="plan-pick"><select id="planPick"><option value="">Choisir un produit fini</option>'+addable.map(p=>'<option value="'+esc(p)+'">'+esc(recipeProductLabel(p))+'</option>').join('')+'</select><button id="planAdd" type="button">+ Ajouter</button></div>';
+  h+='<div class="plan-pick"><select id="planPick"><option value="">Choisir un produit fini</option>'+addable.map(p=>'<option value="'+esc(p)+'"'+(isLaity(recipeProductLabel(p))?' class="laity"':'')+'>'+hlLaity(recipeProductLabel(p))+'</option>').join('')+'</select><button id="planAdd" type="button">+ Ajouter</button></div>';
   h+='<button id="planReset" class="plan-reset" type="button">Repartir a zero</button>';
   h+='<div class="plan-rows">';
   if(!rows.length)h+='<p class="hist-empty">Aucun produit dans ce plan. Choisis un produit fini puis ajoute-le.</p>';
@@ -413,7 +413,7 @@ function renderPlan(){
     const hasPart=String(r.part).trim()!=='';
     const objDis=!hasPrio||hasPart;
     const partDis=!hasPrio||hasObj;
-    h+='<div class="plan-row'+(hasPrio?'':' off')+'"><div class="pr-head"><div class="pr-prod">'+esc(recipeProductLabel(r.produit))+'</div><button class="pr-remove" data-prod="'+esc(r.produit)+'" type="button">Retirer</button></div><div class="pr-fields">'
+    h+='<div class="plan-row'+(hasPrio?'':' off')+'"><div class="pr-head"><div class="pr-prod">'+hlLaity(recipeProductLabel(r.produit))+'</div><button class="pr-remove" data-prod="'+esc(r.produit)+'" type="button">Retirer</button></div><div class="pr-fields">'
       +'<label>prio<input class="pf pf-prio" data-prod="'+esc(r.produit)+'" data-f="prio" inputmode="numeric" value="'+esc(r.prio)+'"></label>'
       +'<label>quantité<input class="pf pf-obj" data-prod="'+esc(r.produit)+'" data-f="objectif" inputmode="numeric" value="'+esc(r.objectif)+'"'+(objDis?' disabled':'')+'></label>'
       +'<label>part %<input class="pf pf-pct" data-prod="'+esc(r.produit)+'" data-f="part" inputmode="decimal" value="'+esc(r.part)+'"'+(partDis?' disabled':'')+'><span class="part-hint"></span></label>'
@@ -465,10 +465,10 @@ function renderPlan(){
 function planResBHTML(r){
   let h='<div class="plan-res">';
   if(r.resFirm.length){h+='<h4 class="plan-sub">Commandes fermes</h4>';
-    r.resFirm.forEach(x=>{h+='<div class="plr '+(x.ok?'ok':'ko')+'"><div class="plr-h"><b>'+esc(recipeProductLabel(x.produit))+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">prio '+x.prio+' · objectif '+x.objectif+' — '+esc(x.limite)+'</div></div>';});}
+    r.resFirm.forEach(x=>{h+='<div class="plr '+(x.ok?'ok':'ko')+'"><div class="plr-h"><b>'+hlLaity(recipeProductLabel(x.produit))+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">prio '+x.prio+' · objectif '+x.objectif+' — '+esc(x.limite)+'</div></div>';});}
   if(r.resPro.length){h+='<h4 class="plan-sub">Prorata du reste (tonnage)</h4>';
-    r.resPro.forEach(x=>{h+='<div class="plr ok"><div class="plr-h"><b>'+esc(recipeProductLabel(x.produit))+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">part '+fmtq(x.part)+'% · '+fmtq(x.poids)+' kg/u · ≈ '+fmtq(x.tonnage)+' kg</div></div>';});
-    h+='<div class="goulot-box"><span class="gb-tag">⚠ GOULOT</span><span class="gb-nom">'+esc(r.goulot||'—')+'</span><span class="gb-sub">matière qui limite le partage</span></div>';}
+    r.resPro.forEach(x=>{h+='<div class="plr ok"><div class="plr-h"><b>'+hlLaity(recipeProductLabel(x.produit))+'</b> <span class="plr-n">'+fmtq(x.n)+' u</span></div><div class="plr-l">part '+fmtq(x.part)+'% · '+fmtq(x.poids)+' kg/u · ≈ '+fmtq(x.tonnage)+' kg</div></div>';});
+    h+='<div class="goulot-box"><span class="gb-tag">⚠ GOULOT</span><span class="gb-nom">'+hlLaity(r.goulot||'—')+'</span><span class="gb-sub">matière qui limite le partage</span></div>';}
   if(r.exclus.length)h+='<div class="plr nf">Exclus du prorata (matière à 0) : '+r.exclus.map(esc).join(', ')+'</div>';
   if(r.negs.length)h+='<div class="plr ko">⚠ Matières en négatif (objectifs fermes trop ambitieux) : '+r.negs.map(esc).join(' · ')+'</div>';
   h+='</div>';return h;
@@ -485,7 +485,7 @@ function planPDFChargeSummary(items){
 }
 function planPlannedLine(items){
   if(!items.length)return 'Aucune production prevue.';
-  return items.map(x=>esc(recipeProductLabel(x.produit))+' : <b>'+fmtq(x.n)+'</b> u'+(x.objectif&&x.objectif!==x.n?' <small>(objectif '+fmtq(x.objectif)+')</small>':'')).join(' · ');
+  return items.map(x=>hlLaity(recipeProductLabel(x.produit))+' : <b>'+fmtq(x.n)+'</b> u'+(x.objectif&&x.objectif!==x.n?' <small>(objectif '+fmtq(x.objectif)+')</small>':'')).join(' · ');
 }
 function planRemainingCapacityHTML(b){
   const reste=(b&&b.reste)||{};
@@ -496,14 +496,14 @@ function planRemainingCapacityHTML(b){
   h+='<button id="planCapPDF" class="bil-print" style="width:100%;margin:0 0 4px">📄 Exporter PDF (capacit&eacute; apr&egrave;s plan)</button>';
   caps.forEach(p=>{
     const capN=Math.max(0,Math.floor(p.cap==null?0:p.cap));
-    h+='<div class="cap-card plan-cap-card"><div class="cap-h"><div class="cap-prod">'+esc(recipeProductLabel(p.produit))+'</div>'
+    h+='<div class="cap-card plan-cap-card"><div class="cap-h"><div class="cap-prod">'+hlLaity(recipeProductLabel(p.produit))+'</div>'
       +'<div class="cap-val'+(capN<=0?' zero':'')+'"><b>'+fmtq(capN)+'</b><small>unit&eacute;s</small></div></div>'
-      +'<div class="cap-goulot"><span>goulot</span><b>'+(p.goulot?esc(p.goulot):'&mdash;')+'</b></div>'
+      +'<div class="cap-goulot"><span>goulot</span><b>'+(p.goulot?hlLaity(p.goulot):'&mdash;')+'</b></div>'
       +'<details class="cap-det"><summary>D&eacute;tail des mati&egrave;res restantes</summary><div class="cap-lines">';
     p.lignes.forEach(l=>{
       const isG=l.nom===p.goulot;
       const poss=l.poss==null?null:Math.max(0,Math.floor(l.poss));
-      h+='<div class="cap-line'+(isG?' g':'')+'"><div class="cl-l"><span class="cl-nom">'+esc(l.nom)+'</span>'
+      h+='<div class="cap-line'+(isG?' g':'')+'"><div class="cl-l"><span class="cl-nom">'+hlLaity(l.nom)+'</span>'
         +'<span class="cl-sub">'+fmtq(l.q)+'/u &middot; reste '+fmtq(Math.round(l.stock*100)/100)+'</span></div>'
         +'<div class="cl-r">&asymp; '+(poss==null?'&mdash;':fmtq(poss))+'<small>u</small></div></div>';
     });

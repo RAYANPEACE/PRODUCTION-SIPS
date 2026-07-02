@@ -238,6 +238,10 @@ function recipeProductRef(prod){
 }
 function recipeProductCode(prod){const r=recipeProductRef(prod);return r?r.code:'';}
 function recipeProductLabel(prod){const r=recipeProductRef(prod);return r?(r.code+' - '+r.des):prod;}
+// LAITY en bleu : distinguer visuellement le produit LAITY de DIAMO dans toute l'UI.
+function isLaity(txt){return String(txt||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().indexOf('LAITY')>=0;}
+// Renvoie le texte esc-apé, avec le mot LAITY coloré (contenu HTML uniquement, jamais dans un attribut).
+function hlLaity(txt){const s=esc(String(txt==null?'':txt));return isLaity(txt)?s.replace(/(LAITY)/gi,'<span class="laity">$1</span>'):s;}
 function recipeProductSort(a,b){return String(recipeProductCode(a)||'999999').localeCompare(String(recipeProductCode(b)||'999999'),'fr',{numeric:true})||String(a).localeCompare(String(b),'fr');}
 function recipeForProduct(prod){
   if(RECF&&RECF[prod])return RECF[prod];
@@ -249,7 +253,7 @@ function recipeKeys(){return finishedProductRefs().filter(r=>recipeForProduct(r.
 function currentRecipeProductCode(prod){const r=recipeProductRef(prod);return r&&recipeForProduct(r.code).length?r.code:'';}
 function productCodeOf(prod){const r=recipeProductRef(prod);return r?r.code:String(prod||'');}
 function productArticleOptions(selectedName){
-  return finishedProductRefs().map(r=>'<option value="'+esc(r.code)+'"'+(r.code===productCodeOf(selectedName)?' selected':'')+'>'+esc(r.code+' - '+r.des)+'</option>').join('');
+  return finishedProductRefs().map(r=>'<option value="'+esc(r.code)+'"'+(r.code===productCodeOf(selectedName)?' selected':'')+(isLaity(r.des)?' class="laity"':'')+'>'+esc(r.code+' - '+r.des)+'</option>').join('');
 }
 function methodDefaults(m){
   if(m==='carton')return {etPal:1,cartEt:1};
@@ -834,7 +838,7 @@ function renderCond(body){
     return '<div class="ref-card" data-code="'+r.code+'"><div class="cardh"><b>'+r.code+'</b> '+esc(r.des)+'<span class="ubtag">base : '+r.ub+'</span><button class="cond-del" title="retirer le conditionnement">🗑</button></div><div class="condlvs">'+lvHtml+'</div></div>';
   }).join('');
   const missing=refsByCode(REFS.filter(r=>!has(r)));
-  const addSel='<div class="cond-add"><select id="condAddSel"><option value="">+ Ajouter un conditionnement…</option>'+missing.map(r=>`<option value="${esc(r.code)}">${esc(r.des)} (${esc(r.code)})</option>`).join('')+'</select></div>';
+  const addSel='<div class="cond-add"><select id="condAddSel"><option value="">+ Ajouter un conditionnement…</option>'+missing.map(r=>`<option value="${esc(r.code)}"${isLaity(r.des)?' class="laity"':''}>${esc(r.des)} (${esc(r.code)})</option>`).join('')+'</select></div>';
   body.innerHTML='<p class="ref-hint">Jusqu\u2019à 3 niveaux d\u2019emballage. <b>Taille exprimée en unité de base, déjà multipliée</b> (ex. étage = 150 cartons). Choisis l\u2019article à conditionner dans la liste ci-dessous.</p><div class="ref-cards">'+cards+'</div>'+addSel;
   body.querySelectorAll('.ref-card').forEach(card=>{
     const code=card.dataset.code;
@@ -859,10 +863,10 @@ function renderRecf(body){
       let extra='';if(m.code&&!REFS.some(a=>a.code===m.code))extra=`<option value="${esc(m.code)}" selected>${esc(m.des||m.code)} (${esc(m.code)})</option>`;
       return '<div class="recrow" data-i="'+i+'"><select class="msel"><option value=""'+(m.code?'':' selected')+'>— choisir un article —</option>'+extra+articleOptions(m.code)+'</select><input class="mqte" inputmode="decimal" placeholder="qté/u" value="'+(m.qte!=null?m.qte:'')+'"><button class="mdel" title="retirer">✕</button></div>';
     }).join('');
-    return '<div class="ref-card" data-prod="'+esc(p)+'"><div class="cardh"><b>'+esc(recipeProductLabel(p))+'</b><button class="rec-delprod" title="supprimer la recette">🗑</button></div><div class="recrows">'+rows+'</div><button class="rec-addrow">+ matière</button></div>';
+    return '<div class="ref-card" data-prod="'+esc(p)+'"><div class="cardh"><b>'+hlLaity(recipeProductLabel(p))+'</b><button class="rec-delprod" title="supprimer la recette">🗑</button></div><div class="recrows">'+rows+'</div><button class="rec-addrow">+ matière</button></div>';
   }).join('');
   const addable=finishedProductRefs().filter(r=>!recipeForProduct(r.code).length);
-  body.innerHTML='<p class="ref-hint">Crée d’abord l’article en <b>Produit fini</b>. La recette est liée à son code article.</p><div class="ref-cards">'+cards+'</div><div class="cond-add"><select id="recAddSel"><option value="">+ Ajouter la recette d’un produit fini…</option>'+addable.map(r=>'<option value="'+esc(r.code)+'">'+esc(r.code+' - '+r.des)+'</option>').join('')+'</select></div>';
+  body.innerHTML='<p class="ref-hint">Crée d’abord l’article en <b>Produit fini</b>. La recette est liée à son code article.</p><div class="ref-cards">'+cards+'</div><div class="cond-add"><select id="recAddSel"><option value="">+ Ajouter la recette d’un produit fini…</option>'+addable.map(r=>'<option value="'+esc(r.code)+'"'+(isLaity(r.des)?' class="laity"':'')+'>'+esc(r.code+' - '+r.des)+'</option>').join('')+'</select></div>';
   const addSel=body.querySelector('#recAddSel');
   if(addSel)addSel.onchange=()=>{const p=addSel.value;if(!p)return;RECF[p]=[{code:'',des:'',qte:0}];lsSet('lep_recf',RECF);scheduleReferentialsPush();renderRef();};
   body.querySelectorAll('.ref-card').forEach(card=>{
@@ -885,7 +889,7 @@ function renderRecf(body){
   });
 }
 function renderMachines(body){
-  const prodOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}>${esc(recipeProductLabel(p))}</option>`).join('');
+  const prodOpts=sel=>recipeKeys().map(p=>`<option value="${esc(p)}"${p===productCodeOf(sel)?' selected':''}${isLaity(recipeProductLabel(p))?' class="laity"':''}>${esc(recipeProductLabel(p))}</option>`).join('');
   const freqOpts=sel=>['once','parprod'].map(f=>`<option value="${f}"${f===sel?' selected':''}>${f==='once'?'une fois':'par produit'}</option>`).join('');
   let h='<p class="ref-hint">Cadence : soit <b>pistes × sachets/min</b> (débit calculé via «\u00a0sachets/u.b.\u00a0»), soit un <b>débit direct</b> par produit (sacs/h). Dans le Plan, <b>Démarrage</b> sert au lancement du jour, <b>Fin</b> réserve seulement une fin de journée quand la production déborde, et <b>Changement/Bobine</b> sert aux transitions entre produits.</p>';
   h+='<div class="prodcfg"><label>Heures/quart<input id="pcHq" inputmode="decimal" value="'+esc(PRODCFG.heuresQuart)+'"></label>'
@@ -954,7 +958,7 @@ function planChargeHTML(items){
   if(!ms.length&&!nonEst.length)return '';
   let h='<div class="charge-box"><h4 class="plan-sub">⏱ Charge de production estimée</h4>';
   ms.forEach(m=>{h+='<div class="charge-m"><div class="cm-h"><b>'+esc(m.m.nom)+'</b><span>'+fmtH(m.totH)+'</span></div>';
-    m.lines.forEach(l=>{h+='<div class="cm-l">'+esc(recipeProductLabel(l.p))+' — '+fmt(l.n)+' u · '+fmtH(l.h)+'</div>';});
+    m.lines.forEach(l=>{h+='<div class="cm-l">'+hlLaity(recipeProductLabel(l.p))+' — '+fmt(l.n)+' u · '+fmtH(l.h)+'</div>';});
     const bits=[];
     if(m.startupMin>0)bits.push('démarrage '+fmtH(m.startupMin/60));
     if(m.restartMin>0)bits.push('reprise/bascule '+fmtH(m.restartMin/60));

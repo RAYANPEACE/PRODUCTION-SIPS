@@ -175,7 +175,7 @@ function stockSheetHTML(data){
       const fluxClass = x.flux > 0 ? 'pos' : (x.flux < 0 ? 'neg' : 'zero');
       const mvClass = x.arrow > 0 ? ' mv-up' : (x.arrow < 0 ? ' mv-down' : '');
       h += '<div class="bil-line' + mvClass + '">'
-        + '<div class="bl-id"><span class="bl-code">' + x.code + '</span> ' + esc(x.des) + '</div>'
+        + '<div class="bl-id"><span class="bl-code">' + x.code + '</span> ' + hlLaity(x.des) + '</div>'
         + '<div class="bl-tp">base <b>' + fmtq(x.base) + '</b> · flux <b class="stock-flux ' + fluxClass + '">' + (x.flux > 0 ? '+' : '') + fmtq(x.flux) + '</b></div>'
         + '<div class="bl-ec"><b' + negStyle + '>' + fmtq(x.stock) + ' ' + esc(x.unite) + '</b> ' + ar + '</div>';
       const isMp = x.lotKind === 'mp';

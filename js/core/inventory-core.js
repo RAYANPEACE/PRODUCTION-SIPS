@@ -209,7 +209,7 @@ function buildCard(r){
   const card=document.createElement('div');card.className='card'+(e.counted?'':' nc');card.dataset.code=r.code;
   card.innerHTML=`<div class="top">
       <div class="stripe ${STRIPE[r.m]}"></div>
-      <div class="ttl"><b>${r.des}</b></div>
+      <div class="ttl"><b>${hlLaity(r.des)}</b></div>
       <div class="readout" data-ro></div>
       <span class="counted-by" data-by style="display:none"></span>
       <span class="hasphoto" data-photo style="display:none" title="Photo jointe">📷</span>
@@ -753,7 +753,7 @@ function buildSummaryHTML(){
   GROUPS.forEach(([gid,title])=>{
     const refs=REFS.filter(r=>r.g===gid&&ST.c[r.code].counted);if(!refs.length)return;
     h+='<h4>'+title+'</h4>';
-    refs.forEach(r=>{h+='<div class="r"><span>'+r.des+'</span><b>'+fmt(total(r))+' '+(r.du||r.u)+'</b></div>';});
+    refs.forEach(r=>{h+='<div class="r"><span>'+hlLaity(r.des)+'</span><b>'+fmt(total(r))+' '+(r.du||r.u)+'</b></div>';});
   });
   const nc=nonComptes();
   if(nc.length){h+='<h4>Non comptés (= théorique)</h4><div class="nc">'+nc.map(r=>r.des).join(' · ')+'</div>';}
