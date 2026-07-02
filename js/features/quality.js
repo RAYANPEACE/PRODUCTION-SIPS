@@ -282,7 +282,7 @@ async function renderQualite(){
   var app=$('#app');
   var h='<div class="q-wrap">';
   h+='<h2 class="q-title">Suivi Qualité — Fiche de Lot</h2>';
-  h+='<button id="qGoHist" class="hist-jump">Historique</button>';
+  h+='<button id="qGoHist" class="hist-jump">Aller à Historique ⬇</button>';
   if(QS_SERVER_VIEW)h+='<p class="ref-hint" style="background:#eef4fb;border:1px solid #d6e4f2;border-radius:8px;padding:8px 10px">Consultation officielle serveur : lecture seule. Utilisez PDF pour exporter, ou Nouvelle fiche pour reprendre la saisie locale.</p>';
   if(QS_CORRECTION_OF)h+='<p class="ref-hint" style="background:#fff3f0;border:1px solid #efc9c0;border-radius:8px;padding:8px 10px"><b>Correction demandee</b> : '+esc(QS_CORRECTION_NOTE||'Motif non renseigne')+'<br><small>Ancienne soumission : '+esc(QS_CORRECTION_OF.id||'')+'. Corrigez la fiche puis signez operateur avant resoumission.</small></p>';
 

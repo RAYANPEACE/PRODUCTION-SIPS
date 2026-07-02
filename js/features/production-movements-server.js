@@ -243,7 +243,7 @@ function renderProduction(focusBi){
       +'<div class="pb-dech"><div class="pf-h">Déchets</div>'
       +'<div class="pb-drow"><span class="pb-dl">'+esc(prodPackagingLabel(b.p))+'</span><input class="pb-emb" inputmode="decimal" placeholder="qté" value="'+esc(b.w_emb)+'"></div>'
       +'<div class="pb-drow"><span class="pb-dl">'+esc(prodFilmLabel(b.p))+' (déchet)</span><input class="pb-film" inputmode="decimal" placeholder="qté" value="'+esc(b.w_film)+'"></div>'
-      +'<div class="pb-drow"><span class="pb-dl">Mélange (kg)</span><input class="pb-mel" inputmode="decimal" placeholder="kg" value="'+esc(b.w_mel)+'"></div></div>'
+      +'<div class="pb-drow"><span class="pb-dl">Mélange (déchet) (kg)</span><input class="pb-mel" inputmode="decimal" placeholder="kg" value="'+esc(b.w_mel)+'"></div></div>'
       +'<div class="pb-cons"><div class="pf-h">Consommables</div>'
       +scotchRowHTML(b)
       +bobineSectionHTML(b)
@@ -254,7 +254,7 @@ function renderProduction(focusBi){
   });
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">Production</h2>'
-    +'<button id="pfGoHist" class="hist-jump">Historique</button>'
+    +'<button id="pfGoHist" class="hist-jump">Aller à Historique ⬇</button>'
     +'<div class="pf-id"><label>Date<input type="date" id="pfDate" value="'+esc(PF.date)+'"></label><label>Opérateur<input id="pfAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(PF.agent)+'"></label></div>'
     +'<div id="pfBlocks">'+blocksH+'</div>'
     +'<button id="pfAddBlock" class="pf-add" style="margin-bottom:12px">+ Ajouter une production</button>'
@@ -653,7 +653,7 @@ function renderMov(kind,focusSel){
   const app=$('#app');
   app.innerHTML='<div class="prod-wrap">'
     +'<h2 class="prod-title">'+c.title+'</h2>'
-    +'<button id="mvGoHist" class="hist-jump">Historique</button>'
+    +'<button id="mvGoHist" class="hist-jump">Aller à Historique ⬇</button>'
     +'<div class="pf-id"><label>Date<input type="date" id="mvDate" value="'+esc(mf.date)+'"></label><label>Opérateur<input id="mvAgent" readonly style="background:#eef2f6;color:var(--mute)" value="'+esc(mf.agent||'')+'"></label></div>'
     +movFieldsHTML(kind,mf)
     +movSectionHTML(mf,'finis',kind==='entree'?'Produits finis (retours)':'Produits finis')
