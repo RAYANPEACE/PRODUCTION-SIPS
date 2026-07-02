@@ -806,6 +806,14 @@
   .mv-flds{display:grid;gap:8px}
   .mv-fld-lbl{display:flex;flex-direction:column;gap:3px;font-size:12px;font-weight:600;color:var(--mute)}
   .mv-fld{width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:14px;background:#fbfcfb}
+  /* Panneau de gestion des suggestions (retrait manuel des valeurs polluees) */
+  .sug-manage{margin-top:8px;font-size:12px;padding:6px 10px}
+  .sug-panel{margin-top:8px;padding:8px;border:1.5px solid var(--line);border-radius:8px;background:#fbfcfb;display:grid;gap:8px}
+  .sug-lbl{font-size:11px;font-weight:700;color:var(--mute);text-transform:uppercase;margin-bottom:3px}
+  .sug-chips{display:flex;flex-wrap:wrap;gap:6px}
+  .sug-chip{display:inline-flex;align-items:center;gap:4px;background:#eef2f6;border:1px solid var(--line);border-radius:14px;padding:3px 4px 3px 10px;font-size:12px}
+  .sug-x{border:0;background:#d9534f;color:#fff;border-radius:50%;width:18px;height:18px;line-height:1;font-size:11px;cursor:pointer;padding:0}
+  .sug-empty{font-size:12px;color:var(--mute);font-style:italic}
   /* Machine : indicateur encre + changement de cartouches en production */
   .mc-encre-lbl{display:flex;align-items:center;gap:7px;margin:6px 0;font-size:13px;font-weight:600;color:var(--steel-d)}
   .pb-ink{margin-top:10px;padding:9px;border:1.5px solid #cfe0f2;border-radius:9px;background:#f2f7fd}

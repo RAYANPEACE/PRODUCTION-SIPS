@@ -540,6 +540,17 @@ function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),
 let MOV_SUG={matricule:[],chauffeur:[],dest_sortie:[],dest_entree:[]};
 function sugGet(key){const v=lsGet(key,[]);return Array.isArray(v)?v:[];}
 function sugAdd(key,val){val=String(val==null?'':val).trim();if(!val)return;let list=sugGet(key).filter(v=>v!==val);list.unshift(val);if(list.length>50)list=list.slice(0,50);lsSet(key,list);}
+/* Liste de masquage manuelle (lep_sughide, clef = f.sug). On ne supprime JAMAIS une
+   suggestion automatiquement quand un mouvement est supprime (ce serait perdre de bonnes
+   suggestions sur une simple erreur de saisie). L'utilisateur retire a la main les mauvaises
+   via le panneau "Gerer les suggestions" ; le masquage couvre aussi les suggestions derivees
+   du serveur (qu'on ne peut pas effacer ici). */
+function sugHidden(){const v=lsGet('lep_sughide',{});return (v&&typeof v==='object'&&!Array.isArray(v))?v:{};}
+function movSugForget(f,val){
+  val=String(val||'').trim();if(!val)return;
+  lsSet(f.sug,sugGet(f.sug).filter(v=>v!==val));                                   // retire l'echo local
+  const h=sugHidden();h[f.sug]=(h[f.sug]||[]).filter(v=>v!==val);h[f.sug].push(val);lsSet('lep_sughide',h);
+}
 /* Repli sur mf.ref (finding legacy) : un vieux mouvement n'a que `ref` (pas de champs
    structures matricule/chauffeur/dest), et le formulaire ne l'edite pas. Sans ce repli,
    le resave ecraserait la ref historique par '' et changerait la signature de doublon. */
@@ -552,7 +563,8 @@ function movSugFor(kind,f){
   if(f.key==='matricule')shared=MOV_SUG.matricule;
   else if(f.key==='chauffeur')shared=MOV_SUG.chauffeur;
   else if(f.key==='dest')shared=(kind==='sortie'?MOV_SUG.dest_sortie:MOV_SUG.dest_entree);
-  return sugUniq(shared.concat(sugGet(f.sug))).slice(0,80);
+  const hidden=sugHidden()[f.sug]||[];
+  return sugUniq(shared.concat(sugGet(f.sug))).filter(v=>hidden.indexOf(v)<0).slice(0,80);
 }
 /* Recalcule le cache partagé depuis les mouvements validés serveur (entrées + sorties). */
 async function refreshMovSuggestions(){
@@ -587,7 +599,19 @@ function movFieldsHTML(kind,mf){
       +'<input class="mv-fld" data-key="'+f.key+'" list="'+dlId+'" value="'+esc(mf[f.key]||'')+'" placeholder="'+esc(f.place||'')+'" autocomplete="off">'
       +'<datalist id="'+dlId+'">'+opts+'</datalist></label>';
   }).join('');
-  return '<div class="pf-sec"><div class="pf-h">'+esc(c.fieldsTitle||c.refLabel)+'</div><div class="mv-flds">'+flds+'</div></div>';
+  return '<div class="pf-sec"><div class="pf-h">'+esc(c.fieldsTitle||c.refLabel)+'</div><div class="mv-flds">'+flds+'</div>'
+    +'<button type="button" id="mvSugManage" class="b-sec sug-manage">⚙ Gérer les suggestions</button>'
+    +'<div id="mvSugPanel" class="sug-panel" style="display:none"></div></div>';
+}
+/* Panneau lisible pour retirer a la main les suggestions polluees (une par une). */
+function movSugPanelHTML(kind){
+  return (MOVCFG[kind].fields||[]).map(f=>{
+    const vals=movSugFor(kind,f);
+    const chips=vals.length
+      ? vals.map(v=>'<span class="sug-chip">'+esc(v)+'<button type="button" class="sug-x" data-fkey="'+esc(f.key)+'" data-val="'+esc(v)+'" title="retirer">✕</button></span>').join('')
+      : '<span class="sug-empty">— aucune —</span>';
+    return '<div class="sug-grp"><div class="sug-lbl">'+esc(f.label)+'</div><div class="sug-chips">'+chips+'</div></div>';
+  }).join('');
 }
 function movArts(catKind){return catKind==='finis'?finishedProductRefs():nonFinishedRefs();}
 function movHasInput(mf){return (mf.finis||[]).some(x=>x.a&&num(x.q)>0)||(mf.mp||[]).some(x=>x.a&&num(x.q)>0);}
@@ -604,13 +628,13 @@ function movInputGuard(kind,mf){
 /* E3/R3-9 : a l'ENTREE, une matiere perissable (g vrac/tare) avec quantite doit avoir
    une date de peremption (fiabilise le FEFO). Emballages non concernes. Renvoie les
    lignes fautives (vide = OK). */
+/* Peremption pertinente uniquement pour une matiere perissable (g=vrac ou tare) : les
+   emballages (cartons, sacs...) n'ont pas de date. Une seule definition sert a la fois
+   a AFFICHER le champ date et au garde-fou FEFO. */
+function mpNeedsExp(des){const r=REFS.find(rr=>rr.des===des);return !!(r&&(r.g==='vrac'||r.g==='tare'));}
 function entreeMpSansPeremption(kind,mf){
   if(kind!=='entree')return [];
-  return (mf.mp||[]).filter(x=>{
-    if(!x||!x.a||num(x.q)<=0)return false;
-    const r=REFS.find(rr=>rr.des===x.a);
-    return r&&(r.g==='vrac'||r.g==='tare')&&!String(x.exp||'').trim();
-  });
+  return (mf.mp||[]).filter(x=>x&&x.a&&num(x.q)>0&&mpNeedsExp(x.a)&&!String(x.exp||'').trim());
 }
 function movPeremptionGuard(kind,mf){
   const bad=entreeMpSansPeremption(kind,mf);
@@ -641,9 +665,9 @@ async function movSubmit(kind,mf){
 function movSectionHTML(mf,sec,title,withExp){
   const arts=movArts(sec);
   const artOpts=sel=>arts.map(r=>`<option value="${esc(r.des)}"${r.des===sel?' selected':''}>${laityOpt(r.des)}</option>`).join('');
-  const expCell=x=>withExp?`<input class="mv-exp" type="date" title="date de péremption" value="${esc(x.exp||'')}">`:'';
+  const expCell=x=>withExp?`<input class="mv-exp" type="date" title="date de péremption" value="${esc(x.exp||'')}"${mpNeedsExp(x.a)?'':' style="display:none"'}>`:'';
   let rows=mf[sec].map((x,i)=>`<div class="pf-row${withExp?' pf-row-exp':''}" data-sec="${sec}" data-li="${i}"><select class="mv-a"><option value="">— article —</option>${artOpts(x.a)}</select><input class="mv-q" inputmode="decimal" placeholder="qté" value="${esc(x.q)}">${expCell(x)}<button class="mv-del" title="retirer">✕</button></div>`).join('');
-  const hint=withExp?'<small style="display:block;font-size:11px;color:var(--mute);margin:2px 0 6px">Renseigne la date de péremption de chaque matière (suivi FEFO).</small>':'';
+  const hint=withExp?'<small style="display:block;font-size:11px;color:var(--mute);margin:2px 0 6px">Date de péremption demandée seulement pour les matières périssables (vrac/tare), suivi FEFO.</small>':'';
   return '<div class="pf-sec"><div class="pf-h">'+title+'</div>'+hint+'<div class="mv-lines" data-secwrap="'+sec+'">'+rows+'</div><button class="mv-add pf-add" data-addsec="'+sec+'">+ article</button></div>';
 }
 function renderMov(kind,focusSel){
@@ -670,9 +694,17 @@ function renderMov(kind,focusSel){
   $('#mvGoHist').onclick=()=>scrollToHistory('mvHistory');
   $('#mvDate').onchange=e=>{mf.date=e.target.value;};
   app.querySelectorAll('.mv-fld').forEach(inp=>{inp.oninput=e=>{mf[e.target.dataset.key]=e.target.value;};});
+  const sugPanel=$('#mvSugPanel'),sugBtn=$('#mvSugManage');
+  if(sugBtn&&sugPanel){
+    const paint=()=>{sugPanel.innerHTML=movSugPanelHTML(kind);
+      sugPanel.querySelectorAll('.sug-x').forEach(b=>b.onclick=()=>{
+        const f=(MOVCFG[kind].fields||[]).find(ff=>ff.key===b.dataset.fkey);
+        if(f){movSugForget(f,b.dataset.val);paint();updateMovDatalists();}});};
+    sugBtn.onclick=()=>{const show=sugPanel.style.display==='none';sugPanel.style.display=show?'':'none';if(show)paint();};
+  }
   $('#mvNote').oninput=e=>{mf.note=e.target.value;};
   app.querySelectorAll('.pf-row[data-sec]').forEach(row=>{const sec=row.dataset.sec;const i=+row.dataset.li;
-    row.querySelector('.mv-a').onchange=e=>{mf[sec][i].a=e.target.value;};
+    row.querySelector('.mv-a').onchange=e=>{mf[sec][i].a=e.target.value;const ex=row.querySelector('.mv-exp');if(ex){const need=mpNeedsExp(e.target.value);ex.style.display=need?'':'none';if(!need){ex.value='';mf[sec][i].exp='';}}};
     row.querySelector('.mv-q').oninput=e=>{mf[sec][i].q=e.target.value;};
     const ex=row.querySelector('.mv-exp');if(ex)ex.onchange=e=>{mf[sec][i].exp=e.target.value;};
     row.querySelector('.mv-del').onclick=()=>{mf[sec].splice(i,1);if(!mf[sec].length)mf[sec].push({a:'',q:''});re();};});
