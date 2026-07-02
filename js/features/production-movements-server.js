@@ -502,17 +502,53 @@ const MOVCFG={
 };
 let MOVF={sortie:null,entree:null};
 function freshMov(){return {date:'',agent:(typeof USR!=='undefined'?USR.nom:''),ref:'',matricule:'',chauffeur:'',dest:'',finis:[{a:'',q:''}],mp:[{a:'',q:'',exp:''}],photos:[],note:''};}
-/* Suggestions évolutives (datalist) persistées en localStorage : une valeur saisie puis
-   validée revient dans les suggestions de la prochaine saisie (matricule, chauffeur, etc.). */
+/* Suggestions évolutives (datalist). Deux sources fusionnées :
+   1) PARTAGÉ : dérivé des mouvements VALIDÉS serveur (matricule/chauffeur/dest de tous
+      les postes) — pas de nouveau stockage, tout utilisateur qui valide alimente la liste.
+   2) LOCAL (localStorage lep_sug_*) : echo immédiat + repli hors-ligne sur cet appareil. */
+let MOV_SUG={matricule:[],chauffeur:[],dest_sortie:[],dest_entree:[]};
 function sugGet(key){const v=lsGet(key,[]);return Array.isArray(v)?v:[];}
 function sugAdd(key,val){val=String(val==null?'':val).trim();if(!val)return;let list=sugGet(key).filter(v=>v!==val);list.unshift(val);if(list.length>50)list=list.slice(0,50);lsSet(key,list);}
 function movRefCombined(mf){return [mf.matricule,mf.chauffeur,mf.dest].map(v=>String(v||'').trim()).filter(Boolean).join(' · ');}
 function movRememberSuggestions(kind,mf){(MOVCFG[kind].fields||[]).forEach(f=>sugAdd(f.sug,mf[f.key]));}
+function sugUniq(arr){const seen={},out=[];(arr||[]).forEach(v=>{v=String(v||'').trim();if(v&&!seen[v]){seen[v]=1;out.push(v);}});return out;}
+/* Liste fusionnée (partagé serveur d'abord, puis local) pour un champ donné. */
+function movSugFor(kind,f){
+  let shared=[];
+  if(f.key==='matricule')shared=MOV_SUG.matricule;
+  else if(f.key==='chauffeur')shared=MOV_SUG.chauffeur;
+  else if(f.key==='dest')shared=(kind==='sortie'?MOV_SUG.dest_sortie:MOV_SUG.dest_entree);
+  return sugUniq(shared.concat(sugGet(f.sug))).slice(0,80);
+}
+/* Recalcule le cache partagé depuis les mouvements validés serveur (entrées + sorties). */
+async function refreshMovSuggestions(){
+  let ent=[],sor=[];
+  try{ent=await sipsRecords('entree');}catch(e){}
+  try{sor=await sipsRecords('sortie');}catch(e){}
+  const val=(r,k)=>{const p=(r&&r.payload)?r.payload:(r||{});return p&&p[k]?String(p[k]).trim():'';};
+  const collect=(recs,k)=>(recs||[]).map(r=>val(r,k)).filter(Boolean);
+  MOV_SUG={
+    matricule:sugUniq(collect(ent,'matricule').concat(collect(sor,'matricule'))),
+    chauffeur:sugUniq(collect(ent,'chauffeur').concat(collect(sor,'chauffeur'))),
+    dest_sortie:sugUniq(collect(sor,'dest')),
+    dest_entree:sugUniq(collect(ent,'dest'))
+  };
+  updateMovDatalists();
+}
+/* Réinjecte les options dans les datalists du formulaire mouvement actuellement affiché. */
+function updateMovDatalists(){
+  ['sortie','entree'].forEach(kind=>{
+    (MOVCFG[kind].fields||[]).forEach(f=>{
+      const dl=document.getElementById('dl_'+kind+'_'+f.key);
+      if(dl)dl.innerHTML=movSugFor(kind,f).map(v=>'<option value="'+esc(v)+'"></option>').join('');
+    });
+  });
+}
 function movFieldsHTML(kind,mf){
   const c=MOVCFG[kind];
   const flds=(c.fields||[]).map(f=>{
     const dlId='dl_'+kind+'_'+f.key;
-    const opts=sugGet(f.sug).map(v=>'<option value="'+esc(v)+'"></option>').join('');
+    const opts=movSugFor(kind,f).map(v=>'<option value="'+esc(v)+'"></option>').join('');
     return '<label class="mv-fld-lbl">'+esc(f.label)
       +'<input class="mv-fld" data-key="'+f.key+'" list="'+dlId+'" value="'+esc(mf[f.key]||'')+'" placeholder="'+esc(f.place||'')+'" autocomplete="off">'
       +'<datalist id="'+dlId+'">'+opts+'</datalist></label>';
@@ -612,6 +648,7 @@ function renderMov(kind,focusSel){
   $('#mvSubmit').onclick=async(e)=>{const b=e.currentTarget;if(b.disabled)return;b.disabled=true;const t=b.textContent;b.textContent='Envoi…';try{await movSubmit(kind,mf);}finally{b.disabled=false;b.textContent=t;}};
   $('#mvNew').onclick=()=>{if(confirm('Vider la fiche en cours ?')){MOVF[kind]=freshMov();re();}};
   loadMovHist(kind);
+  refreshMovSuggestions();   // fusionne les suggestions partagées (serveur) dans les datalists
   if(focusSel){const r=app.querySelector('.pf-row[data-sec="'+focusSel.split('-')[0]+'"][data-li="'+focusSel.split('-')[1]+'"]');if(r)setTimeout(()=>scrollCardIntoView(r),60);}
 }
 function renderMovHist(host,kind,recs,serverRows){

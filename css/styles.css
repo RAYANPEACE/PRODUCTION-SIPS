@@ -798,9 +798,9 @@
   .q-hist-item button{padding:7px 11px;border-radius:8px;border:1.5px solid var(--steel);background:#fff;color:var(--steel-d);font-weight:600;font-size:13px}
   .q-hist-item .del{border-color:#e3c7cd;color:var(--red)}
   .q-computed{font:700 14px ui-monospace,monospace;color:var(--green);text-align:right}
-  /* Produit LAITY en bleu : le distinguer de DIAMO partout dans l'UI */
-  .laity{color:#1565c0;font-weight:700}
-  option.laity{color:#1565c0;font-weight:700}
+  /* Produit LAITY surligné en bleu : le distinguer de DIAMO partout dans l'UI */
+  .laity{background:#1565c0;color:#fff;font-weight:700;padding:0 4px;border-radius:3px}
+  option.laity{background:#1565c0;color:#fff;font-weight:700}
   /* Champs évolutifs des mouvements (matricule, chauffeur, destinataire/provenance) */
   .mv-flds{display:grid;gap:8px}
   .mv-fld-lbl{display:flex;flex-direction:column;gap:3px;font-size:12px;font-weight:600;color:var(--mute)}
