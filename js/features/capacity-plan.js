@@ -154,36 +154,19 @@ function planEstimateItems(items){
 let LIVESTOCK=null;                       // {code:qté} ou null si pas encore calculé
 let LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
 async function refreshLiveStock(){
-  LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,nbMov:0};
-  let recs=[];try{recs=await idbAll();}catch(e){recs=[];}
-  // Dernier inventaire VALIDÉ (verrouillé), par date
-  const invs=recs.filter(r=>r.locked&&r.st&&r.st.c&&r.id!=='current'
-    &&String(r.id).indexOf('prod_')!==0&&String(r.id).indexOf('sortie_')!==0
-    &&String(r.id).indexOf('entree_')!==0&&String(r.id).indexOf('fragsess_')!==0)
-    .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||((a.savedAt||0)-(b.savedAt||0)));
-  const base=invs[invs.length-1]||null;
-  // Base par code : physique du dernier inventaire VALIDÉ (calculé depuis son état) ;
-  // à défaut, l'état de stock manuel daté (ETAT_DATE) sert de base.
-  const baseMap={};
-  REFS.forEach(r=>{const v=ETAT[r.code];baseMap[r.code]=(v!=null&&v!=='')?num(v):0;});
-  let baseDate='',baseKind='';
-  if(base&&base.st){
-    baseDate=String(base.date||'');baseKind='inventory';
-    const prevST=ST,prevRO=RO;ST=JSON.parse(JSON.stringify(base.st));RO=true;mergeAndMigrate();
-    REFS.forEach(r=>{if(ST.c[r.code]&&ST.c[r.code].counted)baseMap[r.code]=round2(total(r));});
-    ST=prevST;RO=prevRO;
-  }else if(ETAT_DATE){
-    baseDate=ETAT_DATE;baseKind='etat';
+  // Réutilise la SOURCE OFFICIELLE de l'onglet Stock (computeStockData) pour que
+  // Capacité, Plan et Stock affichent toujours la même valeur. computeStockData
+  // inclut les mouvements du jour de l'inventaire de base (includeStartDate:true)
+  // et privilégie le serveur (repli local). Voir js/features/stock-sheet.js.
+  LIVESTOCK={};LIVEMETA={hasBase:false,baseDate:null,baseKind:'',nbMov:0};
+  try{
+    const data=await computeStockData();
+    (data.rows||[]).forEach(r=>{LIVESTOCK[r.code]=num(r.stock);});
+    const m=data.meta||{};
+    LIVEMETA={hasBase:!!m.hasBase,baseDate:m.baseDate||null,baseKind:m.baseKind||'',nbMov:m.nbMov||0};
+  }catch(e){
+    LIVESTOCK=null;   // repli : stockDispo() retombe sur inventaire courant / ETAT
   }
-  LIVEMETA.hasBase=!!baseDate;LIVEMETA.baseDate=baseDate||null;LIVEMETA.baseKind=baseKind;
-  // Flux postérieurs à la date de base, jusqu'à aujourd'hui
-  const prod=real.filter(r=>String(r.id).indexOf('prod_')===0);
-  const entr=real.filter(r=>String(r.id).indexOf('entree_')===0);
-  const sort=real.filter(r=>String(r.id).indexOf('sortie_')===0);
-  const fl=stockApplyMovements(baseDate,prod,entr,sort,{refs:REFS,recipes:RECF,num:num,round2:round2});
-  LIVEMETA.nbMov=fl.nbMov;
-  REFS.forEach(r=>{const c=r.code;
-    LIVESTOCK[c]=num(baseMap[c])+(fl.add[c]||0)+(fl.en[c]||0)-(fl.so[c]||0)-(fl.conso[c]||0);});
 }
 /* Note explicative affichée sur Capacité / Plan */
 function liveStockNote(){
